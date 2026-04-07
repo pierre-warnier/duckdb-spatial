@@ -11419,6 +11419,142 @@ struct ST_Box2dFromGeoHash {
 	}
 };
 
+//======================================================================================================================
+// ST_AsEWKT
+//======================================================================================================================
+struct ST_AsEWKT {
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto count = args.size();
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, count, [&](const string_t &blob) {
+			// Use DuckDB's built-in GEOMETRY→WKT conversion
+			return Geometry::ToString(result, blob);
+		});
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_AsEWKT", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", LogicalType::GEOMETRY());
+				variant.SetReturnType(LogicalType::VARCHAR);
+				variant.SetFunction(Execute);
+				variant.SetInit(LocalState::Init);
+			});
+			func.SetDescription("Returns the geometry as an Extended WKT (EWKT) string");
+			func.SetExample("SELECT ST_AsEWKT(ST_Point(1, 2))");
+		});
+	}
+};
+
+//======================================================================================================================
+// ST_GeomFromEWKT
+//======================================================================================================================
+struct ST_GeomFromEWKT {
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto count = args.size();
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, count, [&](const string_t &input) {
+			auto &lstate = LocalState::ResetAndGet(state);
+			auto text = input.GetString();
+
+			// Parse optional SRID prefix: "SRID=XXXX;"
+			std::string wkt_part = text;
+			if (text.size() > 5 && (text[0] == 'S' || text[0] == 's') &&
+			    (text[1] == 'R' || text[1] == 'r') &&
+			    (text[2] == 'I' || text[2] == 'i') &&
+			    (text[3] == 'D' || text[3] == 'd') &&
+			    text[4] == '=') {
+				auto semicolon = text.find(';');
+				if (semicolon != std::string::npos) {
+					// Skip SRID prefix (we don't store per-geometry SRIDs)
+					wkt_part = text.substr(semicolon + 1);
+				}
+			}
+
+			// Parse WKT using SGL wkt_reader
+			sgl::geometry geom;
+			auto &alloc = lstate.GetAllocator();
+			sgl::wkt_reader reader(alloc);
+			if (!reader.try_parse(geom, wkt_part.c_str(), wkt_part.size())) {
+				throw InvalidInputException("ST_GeomFromEWKT: invalid WKT: %s", reader.get_error_message());
+			}
+
+			return lstate.Serialize(result, geom);
+		});
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_GeomFromEWKT", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("ewkt", LogicalType::VARCHAR);
+				variant.SetReturnType(LogicalType::GEOMETRY());
+				variant.SetFunction(Execute);
+				variant.SetInit(LocalState::Init);
+			});
+			func.SetDescription("Parses an Extended WKT (EWKT) string, optionally with SRID prefix");
+			func.SetExample("SELECT ST_AsText(ST_GeomFromEWKT('SRID=4326;POINT(1 2)'))");
+		});
+	}
+};
+
+//======================================================================================================================
+// ST_AsEWKB (alias for ST_AsWKB — DuckDB doesn't differentiate WKB and EWKB)
+//======================================================================================================================
+struct ST_AsEWKB {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		return Geometry::ToBinary(args.data[0], result, args.size());
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_AsEWKB", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", LogicalType::GEOMETRY());
+				variant.SetReturnType(LogicalType::BLOB);
+				variant.SetFunction(Execute);
+			});
+			func.SetDescription("Returns the geometry as EWKB (Extended Well-Known Binary). Alias for ST_AsWKB.");
+			func.SetExample("SELECT ST_AsEWKB(ST_Point(1, 2))::BLOB");
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "conversion");
+		});
+	}
+};
+
+//======================================================================================================================
+// ST_GeomFromEWKB (alias for GEOMETRY cast from WKB_BLOB)
+//======================================================================================================================
+struct ST_GeomFromEWKB {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto count = args.size();
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, count, [&](const string_t &blob) {
+			auto &lstate = LocalState::ResetAndGet(state);
+			// Parse WKB/EWKB using SGL's wkb_reader
+			sgl::geometry geom;
+			auto &alloc = lstate.GetAllocator();
+			sgl::wkb_reader reader(alloc);
+			if (!reader.try_parse(geom, blob.GetData(), blob.GetSize())) {
+				throw InvalidInputException("ST_GeomFromEWKB: invalid WKB/EWKB data");
+			}
+			return lstate.Serialize(result, geom);
+		});
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_GeomFromEWKB", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("ewkb", LogicalType::BLOB);
+				variant.SetReturnType(LogicalType::GEOMETRY());
+				variant.SetFunction(Execute);
+				variant.SetInit(LocalState::Init);
+			});
+			func.SetDescription("Creates a geometry from EWKB (Extended Well-Known Binary) data");
+			func.SetExample("SELECT ST_AsText(ST_GeomFromEWKB(ST_AsEWKB(ST_Point(1, 2))))");
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "conversion");
+		});
+	}
+};
+
 } // namespace
 
 // Helper to access the constant distance from the bind data
@@ -11543,6 +11679,10 @@ void RegisterSpatialScalarFunctions(ExtensionLoader &loader) {
 	ST_3DLineInterpolatePoint::Register(loader);
 	ST_GeomFromGeoHash_Func::Register(loader);
 	ST_Box2dFromGeoHash::Register(loader);
+	ST_AsEWKT::Register(loader);
+	ST_GeomFromEWKT::Register(loader);
+	ST_AsEWKB::Register(loader);
+	ST_GeomFromEWKB::Register(loader);
 }
 
 } // namespace duckdb
