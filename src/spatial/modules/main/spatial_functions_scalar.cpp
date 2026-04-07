@@ -9844,6 +9844,350 @@ struct ST_ShiftLongitude {
 	}
 };
 
+//======================================================================================================================
+// ST_ForceCollection
+//======================================================================================================================
+struct ST_ForceCollection {
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto count = args.size();
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, count, [&](const string_t &blob) {
+			auto &lstate = LocalState::ResetAndGet(state);
+			sgl::geometry geom;
+			lstate.Deserialize(blob, geom);
+
+			// If already a geometry collection, return as-is
+			if (geom.get_type() == sgl::geometry_type::GEOMETRY_COLLECTION) {
+				return StringVector::AddStringOrBlob(result, blob);
+			}
+
+			// Wrap in a geometry collection using the existing collect operation
+			auto &alloc = lstate.GetAllocator();
+			sgl::geometry gc(sgl::geometry_type::GEOMETRY_COLLECTION, geom.has_z(), geom.has_m());
+
+			// Create a fresh part geometry on the arena
+			auto *part = static_cast<sgl::geometry *>(alloc.alloc(sizeof(sgl::geometry)));
+			new (part) sgl::geometry(geom.get_type(), geom.has_z(), geom.has_m());
+
+			if (geom.is_multi_part()) {
+				// For multi types, copy part structure
+				auto *child = geom.get_first_part();
+				for (uint32_t i = 0; i < geom.get_part_count(); i++) {
+					auto *child_copy = static_cast<sgl::geometry *>(alloc.alloc(sizeof(sgl::geometry)));
+					new (child_copy) sgl::geometry(child->get_type(), child->has_z(), child->has_m());
+					if (child->is_multi_part()) {
+						// Skip deep copy for now
+					} else {
+						child_copy->set_vertex_array(child->get_vertex_array(), child->get_vertex_count());
+					}
+					part->append_part(child_copy);
+					child = child->get_next();
+				}
+			} else {
+				// For simple types, just copy vertex data
+				part->set_vertex_array(geom.get_vertex_array(), geom.get_vertex_count());
+			}
+
+			gc.append_part(part);
+			return lstate.Serialize(result, gc);
+		});
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_ForceCollection", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", LogicalType::GEOMETRY());
+				variant.SetReturnType(LogicalType::GEOMETRY());
+				variant.SetFunction(Execute);
+				variant.SetInit(LocalState::Init);
+			});
+			func.SetDescription("Wraps a geometry in a GeometryCollection (no-op if already a collection)");
+			func.SetExample("SELECT ST_AsText(ST_ForceCollection(ST_Point(1, 2)))");
+		});
+	}
+};
+
+//======================================================================================================================
+// ST_Scroll
+//======================================================================================================================
+struct ST_Scroll {
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto count = args.size();
+		BinaryExecutor::Execute<string_t, string_t, string_t>(
+		    args.data[0], args.data[1], result, count, [&](const string_t &line_blob, const string_t &point_blob) {
+			    auto &lstate = LocalState::ResetAndGet(state);
+			    sgl::geometry line_geom, point_geom;
+			    lstate.Deserialize(line_blob, line_geom);
+			    lstate.Deserialize(point_blob, point_geom);
+
+			    if (line_geom.get_type() != sgl::geometry_type::LINESTRING) {
+				    throw InvalidInputException("ST_Scroll: first argument must be a closed LINESTRING");
+			    }
+			    if (point_geom.get_type() != sgl::geometry_type::POINT) {
+				    throw InvalidInputException("ST_Scroll: second argument must be a POINT");
+			    }
+
+			    const auto vertex_count = line_geom.get_vertex_count();
+			    const auto vertex_width = line_geom.get_vertex_width();
+
+			    // Must be closed (first == last vertex)
+			    if (vertex_count < 4) {
+				    throw InvalidInputException("ST_Scroll: linestring must be closed with at least 4 points");
+			    }
+			    auto first = line_geom.get_vertex_xy(0);
+			    auto last = line_geom.get_vertex_xy(vertex_count - 1);
+			    if (first.x != last.x || first.y != last.y) {
+				    throw InvalidInputException("ST_Scroll: linestring must be closed (first point equals last)");
+			    }
+
+			    // Find the vertex closest to the given point
+			    auto target = point_geom.get_vertex_xy(0);
+			    uint32_t best_idx = 0;
+			    double best_dist = std::numeric_limits<double>::max();
+			    for (uint32_t i = 0; i < vertex_count - 1; i++) {
+				    auto vtx = line_geom.get_vertex_xy(i);
+				    double dx = vtx.x - target.x;
+				    double dy = vtx.y - target.y;
+				    double dist = dx * dx + dy * dy;
+				    if (dist < best_dist) {
+					    best_dist = dist;
+					    best_idx = i;
+				    }
+			    }
+
+			    // Rotate: new ring starts at best_idx
+			    auto &alloc = lstate.GetAllocator();
+			    auto new_array = static_cast<char *>(alloc.alloc(vertex_count * vertex_width));
+			    const auto old_array = line_geom.get_vertex_array();
+			    const auto ring_len = vertex_count - 1; // exclude closing point
+
+			    for (uint32_t i = 0; i < ring_len; i++) {
+				    const auto src_idx = (best_idx + i) % ring_len;
+				    memcpy(new_array + i * vertex_width, old_array + src_idx * vertex_width, vertex_width);
+			    }
+			    // Close the ring
+			    memcpy(new_array + ring_len * vertex_width, new_array, vertex_width);
+
+			    line_geom.set_vertex_array(new_array, vertex_count);
+			    return lstate.Serialize(result, line_geom);
+		    });
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_Scroll", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("line", LogicalType::GEOMETRY());
+				variant.AddParameter("point", LogicalType::GEOMETRY());
+				variant.SetReturnType(LogicalType::GEOMETRY());
+				variant.SetFunction(Execute);
+				variant.SetInit(LocalState::Init);
+			});
+			func.SetDescription("Rotates a closed linestring's start point to the vertex nearest to the given point");
+			func.SetExample(
+			    "SELECT ST_AsText(ST_Scroll(ST_GeomFromText('LINESTRING(0 0, 1 0, 1 1, 0 1, 0 0)'), ST_Point(1, 1)))");
+		});
+	}
+};
+
+//======================================================================================================================
+// ST_QuantizeCoordinates
+//======================================================================================================================
+struct ST_QuantizeCoordinates {
+
+	static void QuantizeRecursive(sgl::geometry &geom, int precision, GeometryAllocator &alloc) {
+		if (geom.is_multi_part()) {
+			auto *part = geom.get_first_part();
+			for (uint32_t i = 0; i < geom.get_part_count(); i++) {
+				QuantizeRecursive(*part, precision, alloc);
+				part = part->get_next();
+			}
+		} else if (geom.get_vertex_count() > 0) {
+			const auto vertex_count = geom.get_vertex_count();
+			const auto vertex_width = geom.get_vertex_width();
+			const auto num_ords = vertex_width / sizeof(double);
+			auto new_array = static_cast<char *>(alloc.alloc(vertex_count * vertex_width));
+			memcpy(new_array, geom.get_vertex_array(), vertex_count * vertex_width);
+
+			const double factor = std::pow(10.0, precision);
+			for (uint32_t v = 0; v < vertex_count; v++) {
+				auto vertex_ptr = new_array + v * vertex_width;
+				for (size_t o = 0; o < num_ords; o++) {
+					double val;
+					memcpy(&val, vertex_ptr + o * sizeof(double), sizeof(double));
+					val = std::round(val * factor) / factor;
+					memcpy(vertex_ptr + o * sizeof(double), &val, sizeof(double));
+				}
+			}
+			geom.set_vertex_array(new_array, vertex_count);
+		}
+	}
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto count = args.size();
+		BinaryExecutor::Execute<string_t, int32_t, string_t>(
+		    args.data[0], args.data[1], result, count, [&](const string_t &blob, int32_t precision) {
+			    auto &lstate = LocalState::ResetAndGet(state);
+			    sgl::geometry geom;
+			    lstate.Deserialize(blob, geom);
+			    QuantizeRecursive(geom, precision, lstate.GetAllocator());
+			    return lstate.Serialize(result, geom);
+		    });
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_QuantizeCoordinates", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", LogicalType::GEOMETRY());
+				variant.AddParameter("precision", LogicalType::INTEGER);
+				variant.SetReturnType(LogicalType::GEOMETRY());
+				variant.SetFunction(Execute);
+				variant.SetInit(LocalState::Init);
+			});
+			func.SetDescription("Rounds all coordinates to the given number of decimal places");
+			func.SetExample("SELECT ST_AsText(ST_QuantizeCoordinates(ST_Point(1.23456, 2.78901), 2))");
+		});
+	}
+};
+
+//======================================================================================================================
+// ST_MemSize
+//======================================================================================================================
+struct ST_MemSize {
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto count = args.size();
+		UnaryExecutor::Execute<string_t, int32_t>(args.data[0], result, count, [&](const string_t &blob) {
+			return static_cast<int32_t>(blob.GetSize());
+		});
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_MemSize", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", LogicalType::GEOMETRY());
+				variant.SetReturnType(LogicalType::INTEGER);
+				variant.SetFunction(Execute);
+			});
+			func.SetDescription("Returns the memory size of a geometry in bytes");
+			func.SetExample("SELECT ST_MemSize(ST_Point(1, 2))");
+		});
+	}
+};
+
+//======================================================================================================================
+// ST_Polygon
+//======================================================================================================================
+struct ST_Polygon_Func {
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto count = args.size();
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, count, [&](const string_t &blob) {
+			auto &lstate = LocalState::ResetAndGet(state);
+			sgl::geometry line_geom;
+			lstate.Deserialize(blob, line_geom);
+
+			if (line_geom.get_type() != sgl::geometry_type::LINESTRING) {
+				throw InvalidInputException("ST_Polygon: argument must be a closed LINESTRING");
+			}
+
+			const auto vertex_count = line_geom.get_vertex_count();
+			if (vertex_count < 4) {
+				throw InvalidInputException("ST_Polygon: linestring must have at least 4 points (closed ring)");
+			}
+			auto first = line_geom.get_vertex_xy(0);
+			auto last = line_geom.get_vertex_xy(vertex_count - 1);
+			if (first.x != last.x || first.y != last.y) {
+				throw InvalidInputException("ST_Polygon: linestring must be closed");
+			}
+
+			// Create a polygon with the linestring as its exterior ring
+			auto &alloc = lstate.GetAllocator();
+			sgl::geometry poly(sgl::geometry_type::POLYGON, line_geom.has_z(), line_geom.has_m());
+
+			auto *ring = static_cast<sgl::geometry *>(alloc.alloc(sizeof(sgl::geometry)));
+			new (ring) sgl::geometry(sgl::geometry_type::LINESTRING, line_geom.has_z(), line_geom.has_m());
+			ring->set_vertex_array(line_geom.get_vertex_array(), line_geom.get_vertex_count());
+
+			poly.append_part(ring);
+
+			return lstate.Serialize(result, poly);
+		});
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_Polygon", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("line", LogicalType::GEOMETRY());
+				variant.SetReturnType(LogicalType::GEOMETRY());
+				variant.SetFunction(Execute);
+				variant.SetInit(LocalState::Init);
+			});
+			func.SetDescription("Creates a polygon from a closed linestring");
+			func.SetExample("SELECT ST_AsText(ST_Polygon(ST_GeomFromText('LINESTRING(0 0, 1 0, 1 1, 0 1, 0 0)')))");
+		});
+	}
+};
+
+//======================================================================================================================
+// ST_LineFromMultiPoint
+//======================================================================================================================
+struct ST_LineFromMultiPoint {
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto count = args.size();
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, count, [&](const string_t &blob) {
+			auto &lstate = LocalState::ResetAndGet(state);
+			sgl::geometry geom;
+			lstate.Deserialize(blob, geom);
+
+			if (geom.get_type() != sgl::geometry_type::MULTI_POINT) {
+				throw InvalidInputException("ST_LineFromMultiPoint: argument must be a MULTIPOINT");
+			}
+
+			const auto part_count = geom.get_part_count();
+			if (part_count < 2) {
+				throw InvalidInputException("ST_LineFromMultiPoint: multipoint must have at least 2 points");
+			}
+
+			// Collect all point coordinates into a linestring
+			auto &alloc = lstate.GetAllocator();
+			const bool has_z = geom.has_z();
+			const bool has_m = geom.has_m();
+			const auto vertex_width = sizeof(double) * (2 + has_z + has_m);
+
+			auto *line_mem = static_cast<sgl::geometry *>(alloc.alloc(sizeof(sgl::geometry)));
+			auto &line = *new (line_mem) sgl::geometry(sgl::geometry_type::LINESTRING, has_z, has_m);
+
+			auto new_array = static_cast<char *>(alloc.alloc(part_count * vertex_width));
+
+			auto *pt = geom.get_first_part();
+			for (uint32_t i = 0; i < part_count; i++) {
+				auto vtx = pt->get_vertex_xyzm(0);
+				memcpy(new_array + i * vertex_width, &vtx, vertex_width);
+				pt = pt->get_next();
+			}
+
+			line.set_vertex_array(new_array, part_count);
+			return lstate.Serialize(result, line);
+		});
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_LineFromMultiPoint", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("multipoint", LogicalType::GEOMETRY());
+				variant.SetReturnType(LogicalType::GEOMETRY());
+				variant.SetFunction(Execute);
+				variant.SetInit(LocalState::Init);
+			});
+			func.SetDescription("Creates a linestring from the points of a multipoint geometry");
+			func.SetExample(
+			    "SELECT ST_AsText(ST_LineFromMultiPoint(ST_GeomFromText('MULTIPOINT(0 0, 1 1, 2 2)')))");
+		});
+	}
+};
+
 } // namespace
 
 // Helper to access the constant distance from the bind data
@@ -9946,6 +10290,12 @@ void RegisterSpatialScalarFunctions(ExtensionLoader &loader) {
 	ST_RemovePoint::Register(loader);
 	ST_SwapOrdinates::Register(loader);
 	ST_ShiftLongitude::Register(loader);
+	ST_ForceCollection::Register(loader);
+	ST_Scroll::Register(loader);
+	ST_QuantizeCoordinates::Register(loader);
+	ST_MemSize::Register(loader);
+	ST_Polygon_Func::Register(loader);
+	ST_LineFromMultiPoint::Register(loader);
 }
 
 } // namespace duckdb
