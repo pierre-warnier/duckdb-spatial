@@ -1,4 +1,5 @@
 set(EXTENSION_SOURCES
     ${EXTENSION_SOURCES}
     ${CMAKE_CURRENT_SOURCE_DIR}/sgl.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/robust_predicates.cpp
     PARENT_SCOPE)

@@ -1,4 +1,5 @@
 #include "sgl.hpp"
+#include "robust_predicates.hpp"
 
 #include <algorithm>
 #include <cstdlib>
@@ -18,10 +19,12 @@ namespace {
 // TODO: Make robust
 // Returns the orientation of the triplet (p, q, r)
 // 0 if collinear, >0 if clockwise, <0 if counter-clockwise
+// Uses Shewchuk robust predicates for exact results
 int orient2d_fast(const vertex_xy &p, const vertex_xy &q, const vertex_xy &r) {
-	const auto det_l = (p.x - r.x) * (q.y - r.y);
-	const auto det_r = (p.y - r.y) * (q.x - r.x);
-	const auto det = det_l - det_r;
+	const double pa[2] = {p.x, p.y};
+	const double pb[2] = {q.x, q.y};
+	const double pc[2] = {r.x, r.y};
+	const auto det = sgl::robust::orient2d(pa, pb, pc);
 	return (det > 0) - (det < 0);
 }
 
