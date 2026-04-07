@@ -138,14 +138,15 @@ public:
 		return current_position++;
 	}
 
-	static void Sort(vector<uint32_t> &curve, typed_view<Box> &box_array, typed_view<uint32_t> &idx_array) {
+	void SortWithRowPermutation(vector<uint32_t> &curve) {
 		const auto n = curve.size();
-		// Sort by Hilbert value using an index permutation (guaranteed O(n log n))
 		vector<uint32_t> perm(n);
 		std::iota(perm.begin(), perm.end(), 0);
 		std::sort(perm.begin(), perm.end(), [&](uint32_t a, uint32_t b) { return curve[a] < curve[b]; });
 
-		// Apply permutation in-place using cycle decomposition
+		// Apply permutation in-place using cycle decomposition.
+		// Permutes box_array, idx_array, AND row_array (for leaf entries)
+		// so scan accesses row_array sequentially in Hilbert order.
 		vector<bool> visited(n, false);
 		for (uint32_t i = 0; i < n; i++) {
 			if (visited[i] || perm[i] == i) {
@@ -154,6 +155,7 @@ public:
 			auto c = curve[i];
 			auto b = box_array[i];
 			auto x = idx_array[i];
+			auto r = (i < item_count) ? row_array[i] : nullptr;
 			uint32_t j = i;
 			while (!visited[j]) {
 				visited[j] = true;
@@ -162,13 +164,23 @@ public:
 					curve[j] = c;
 					box_array[j] = b;
 					idx_array[j] = x;
+					if (j < item_count) row_array[j] = r;
 				} else {
 					curve[j] = curve[target];
 					box_array[j] = box_array[target];
 					idx_array[j] = idx_array[target];
+					if (j < item_count && target < item_count) {
+						row_array[j] = row_array[target];
+					}
 				}
 				j = target;
 			}
+		}
+
+		// After permutation, leaf idx_array values still map to old positions.
+		// Reset to identity so row_array[idx_array[i]] = row_array[i] (sequential).
+		for (uint32_t i = 0; i < item_count; i++) {
+			idx_array[i] = i;
 		}
 	}
 
@@ -247,7 +259,7 @@ public:
 		}
 
 		// Now, sort the indices based on their curve value
-		Sort(curve, box_array, idx_array);
+		SortWithRowPermutation(curve);
 		//STRSort(box_array, idx_array);
 
 		size_t layer_idx = 0;
