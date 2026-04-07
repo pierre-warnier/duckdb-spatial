@@ -11099,6 +11099,200 @@ struct ST_LineFromEncodedPolyline {
 	}
 };
 
+//======================================================================================================================
+// ST_AddMeasure
+//======================================================================================================================
+struct ST_AddMeasure {
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto count = args.size();
+		auto &line_vec = args.data[0];
+		auto &start_vec = args.data[1];
+		auto &end_vec = args.data[2];
+
+		UnifiedVectorFormat line_fmt, start_fmt, end_fmt;
+		line_vec.ToUnifiedFormat(count, line_fmt);
+		start_vec.ToUnifiedFormat(count, start_fmt);
+		end_vec.ToUnifiedFormat(count, end_fmt);
+
+		const auto line_data = UnifiedVectorFormat::GetData<string_t>(line_fmt);
+		const auto start_data = UnifiedVectorFormat::GetData<double>(start_fmt);
+		const auto end_data = UnifiedVectorFormat::GetData<double>(end_fmt);
+
+		for (idx_t i = 0; i < count; i++) {
+			const auto li = line_fmt.sel->get_index(i);
+			const auto si = start_fmt.sel->get_index(i);
+			const auto ei = end_fmt.sel->get_index(i);
+
+			if (!line_fmt.validity.RowIsValid(li) || !start_fmt.validity.RowIsValid(si) ||
+			    !end_fmt.validity.RowIsValid(ei)) {
+				FlatVector::SetNull(result, i, true);
+				continue;
+			}
+
+			auto &lstate = LocalState::ResetAndGet(state);
+			sgl::geometry geom;
+			lstate.Deserialize(line_data[li], geom);
+
+			if (geom.get_type() != sgl::geometry_type::LINESTRING) {
+				throw InvalidInputException("ST_AddMeasure: argument must be a LINESTRING");
+			}
+
+			const auto n = geom.get_vertex_count();
+			if (n < 2) {
+				FlatVector::SetNull(result, i, true);
+				continue;
+			}
+
+			const double m_start = start_data[si];
+			const double m_end = end_data[ei];
+
+			// Compute cumulative 2D lengths
+			std::vector<double> cum_len(n, 0.0);
+			for (uint32_t j = 1; j < n; j++) {
+				auto v0 = geom.get_vertex_xy(j - 1);
+				auto v1 = geom.get_vertex_xy(j);
+				double dx = v1.x - v0.x;
+				double dy = v1.y - v0.y;
+				cum_len[j] = cum_len[j - 1] + std::sqrt(dx * dx + dy * dy);
+			}
+			double total_len = cum_len[n - 1];
+
+			// Create output with M dimension
+			auto &alloc = lstate.GetAllocator();
+			const bool has_z = geom.has_z();
+			sgl::geometry out_geom(sgl::geometry_type::LINESTRING, has_z, true);
+			const auto out_width = out_geom.get_vertex_width();
+			auto new_array = static_cast<char *>(alloc.alloc(n * out_width));
+
+			for (uint32_t j = 0; j < n; j++) {
+				auto vtx = geom.get_vertex_xyzm(j);
+				double frac = (total_len > 0) ? cum_len[j] / total_len : 0.0;
+				double m_val = m_start + frac * (m_end - m_start);
+
+				auto out_ptr = new_array + j * out_width;
+				memcpy(out_ptr, &vtx.x, sizeof(double));
+				memcpy(out_ptr + sizeof(double), &vtx.y, sizeof(double));
+				if (has_z) {
+					memcpy(out_ptr + 2 * sizeof(double), &vtx.z, sizeof(double));
+					memcpy(out_ptr + 3 * sizeof(double), &m_val, sizeof(double));
+				} else {
+					memcpy(out_ptr + 2 * sizeof(double), &m_val, sizeof(double));
+				}
+			}
+
+			out_geom.set_vertex_array(new_array, n);
+			FlatVector::GetData<string_t>(result)[i] = lstate.Serialize(result, out_geom);
+		}
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_AddMeasure", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("line", LogicalType::GEOMETRY());
+				variant.AddParameter("measure_start", LogicalType::DOUBLE);
+				variant.AddParameter("measure_end", LogicalType::DOUBLE);
+				variant.SetReturnType(LogicalType::GEOMETRY());
+				variant.SetFunction(Execute);
+				variant.SetInit(LocalState::Init);
+			});
+			func.SetDescription("Adds M values along a linestring, interpolated between start and end measures");
+			func.SetExample(
+			    "SELECT ST_AsText(ST_AddMeasure(ST_GeomFromText('LINESTRING(0 0, 5 0, 10 0)'), 0, 100))");
+		});
+	}
+};
+
+//======================================================================================================================
+// ST_3DLineInterpolatePoint
+//======================================================================================================================
+struct ST_3DLineInterpolatePoint {
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto count = args.size();
+		BinaryExecutor::Execute<string_t, double, string_t>(
+		    args.data[0], args.data[1], result, count, [&](const string_t &blob, double fraction) {
+			    auto &lstate = LocalState::ResetAndGet(state);
+			    sgl::geometry geom;
+			    lstate.Deserialize(blob, geom);
+
+			    if (geom.get_type() != sgl::geometry_type::LINESTRING) {
+				    throw InvalidInputException("ST_3DLineInterpolatePoint: argument must be a LINESTRING");
+			    }
+			    if (fraction < 0.0 || fraction > 1.0) {
+				    throw InvalidInputException("ST_3DLineInterpolatePoint: fraction must be between 0 and 1");
+			    }
+
+			    const auto n = geom.get_vertex_count();
+			    if (n < 2) {
+				    throw InvalidInputException("ST_3DLineInterpolatePoint: linestring must have at least 2 points");
+			    }
+
+			    // Compute cumulative 3D distances
+			    std::vector<double> cum_dist(n, 0.0);
+			    for (uint32_t j = 1; j < n; j++) {
+				    auto v0 = geom.get_vertex_xyzm(j - 1);
+				    auto v1 = geom.get_vertex_xyzm(j);
+				    double dx = v1.x - v0.x;
+				    double dy = v1.y - v0.y;
+				    double dz = v1.z - v0.z;
+				    cum_dist[j] = cum_dist[j - 1] + std::sqrt(dx * dx + dy * dy + dz * dz);
+			    }
+			    double total = cum_dist[n - 1];
+			    double target = fraction * total;
+
+			    // Find the segment containing the target distance
+			    for (uint32_t j = 1; j < n; j++) {
+				    if (cum_dist[j] >= target) {
+					    auto v0 = geom.get_vertex_xyzm(j - 1);
+					    auto v1 = geom.get_vertex_xyzm(j);
+					    double seg_len = cum_dist[j] - cum_dist[j - 1];
+					    double t = (seg_len > 0) ? (target - cum_dist[j - 1]) / seg_len : 0.0;
+
+					    auto &alloc = lstate.GetAllocator();
+					    bool has_z = geom.has_z();
+					    sgl::geometry pt(sgl::geometry_type::POINT, has_z, geom.has_m());
+					    const auto vw = pt.get_vertex_width();
+					    auto vtx_array = static_cast<char *>(alloc.alloc(vw));
+
+					    sgl::vertex_xyzm interp = {
+					        v0.x + t * (v1.x - v0.x), v0.y + t * (v1.y - v0.y),
+					        v0.z + t * (v1.z - v0.z), v0.m + t * (v1.m - v0.m)};
+					    memcpy(vtx_array, &interp, vw);
+					    pt.set_vertex_array(vtx_array, 1);
+
+					    return lstate.Serialize(result, pt);
+				    }
+			    }
+
+			    // Fraction == 1.0, return last point
+			    auto last = geom.get_vertex_xyzm(n - 1);
+			    auto &alloc = lstate.GetAllocator();
+			    sgl::geometry pt(sgl::geometry_type::POINT, geom.has_z(), geom.has_m());
+			    const auto vw = pt.get_vertex_width();
+			    auto vtx_array = static_cast<char *>(alloc.alloc(vw));
+			    memcpy(vtx_array, &last, vw);
+			    pt.set_vertex_array(vtx_array, 1);
+			    return lstate.Serialize(result, pt);
+		    });
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_3DLineInterpolatePoint", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("line", LogicalType::GEOMETRY());
+				variant.AddParameter("fraction", LogicalType::DOUBLE);
+				variant.SetReturnType(LogicalType::GEOMETRY());
+				variant.SetFunction(Execute);
+				variant.SetInit(LocalState::Init);
+			});
+			func.SetDescription("Interpolates a point along a linestring at a fraction of its 3D length");
+			func.SetExample(
+			    "SELECT ST_AsText(ST_3DLineInterpolatePoint(ST_GeomFromText('LINESTRING Z(0 0 0, 10 0 10)'), 0.5))");
+		});
+	}
+};
+
 } // namespace
 
 // Helper to access the constant distance from the bind data
@@ -11219,6 +11413,8 @@ void RegisterSpatialScalarFunctions(ExtensionLoader &loader) {
 	ST_AsLatLonText::Register(loader);
 	ST_AsEncodedPolyline::Register(loader);
 	ST_LineFromEncodedPolyline::Register(loader);
+	ST_AddMeasure::Register(loader);
+	ST_3DLineInterpolatePoint::Register(loader);
 }
 
 } // namespace duckdb
