@@ -1,0 +1,143 @@
+require spatial
+
+#======================================================================================================================
+# ST_DumpPoints
+#======================================================================================================================
+
+# Basic linestring
+query II
+SELECT ST_AsText(geom), path FROM ST_DumpPoints('LINESTRING(0 0, 1 1, 2 2)'::GEOMETRY);
+----
+POINT (0 0)	[0]
+POINT (1 1)	[1]
+POINT (2 2)	[2]
+
+# Single point
+query II
+SELECT ST_AsText(geom), path FROM ST_DumpPoints('POINT(5 10)'::GEOMETRY);
+----
+POINT (5 10)	[0]
+
+# Polygon (exterior ring only)
+query II
+SELECT ST_AsText(geom), path FROM ST_DumpPoints('POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))'::GEOMETRY);
+----
+POINT (0 0)	[0, 0]
+POINT (1 0)	[0, 1]
+POINT (1 1)	[0, 2]
+POINT (0 1)	[0, 3]
+POINT (0 0)	[0, 4]
+
+# Polygon with hole
+query II
+SELECT ST_AsText(geom), path FROM ST_DumpPoints('POLYGON((0 0, 10 0, 10 10, 0 10, 0 0), (2 2, 8 2, 8 8, 2 8, 2 2))'::GEOMETRY);
+----
+POINT (0 0)	[0, 0]
+POINT (10 0)	[0, 1]
+POINT (10 10)	[0, 2]
+POINT (0 10)	[0, 3]
+POINT (0 0)	[0, 4]
+POINT (2 2)	[1, 0]
+POINT (8 2)	[1, 1]
+POINT (8 8)	[1, 2]
+POINT (2 8)	[1, 3]
+POINT (2 2)	[1, 4]
+
+# Multipoint
+query II
+SELECT ST_AsText(geom), path FROM ST_DumpPoints('MULTIPOINT(1 1, 2 2, 3 3)'::GEOMETRY);
+----
+POINT (1 1)	[0, 0]
+POINT (2 2)	[1, 0]
+POINT (3 3)	[2, 0]
+
+# Multilinestring
+query II
+SELECT ST_AsText(geom), path FROM ST_DumpPoints('MULTILINESTRING((0 0, 1 1), (2 2, 3 3, 4 4))'::GEOMETRY);
+----
+POINT (0 0)	[0, 0]
+POINT (1 1)	[0, 1]
+POINT (2 2)	[1, 0]
+POINT (3 3)	[1, 1]
+POINT (4 4)	[1, 2]
+
+# Empty geometry returns no rows
+query II
+SELECT ST_AsText(geom), path FROM ST_DumpPoints('POINT EMPTY'::GEOMETRY);
+----
+
+# Empty linestring returns no rows
+query II
+SELECT ST_AsText(geom), path FROM ST_DumpPoints('LINESTRING EMPTY'::GEOMETRY);
+----
+
+#======================================================================================================================
+# ST_DumpRings
+#======================================================================================================================
+
+# Polygon with exterior ring only
+query II
+SELECT ST_AsText(geom), path FROM ST_DumpRings('POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))'::GEOMETRY);
+----
+LINESTRING (0 0, 1 0, 1 1, 0 1, 0 0)	0
+
+# Polygon with hole
+query II
+SELECT ST_AsText(geom), path FROM ST_DumpRings('POLYGON((0 0, 10 0, 10 10, 0 10, 0 0), (2 2, 8 2, 8 8, 2 8, 2 2))'::GEOMETRY);
+----
+LINESTRING (0 0, 10 0, 10 10, 0 10, 0 0)	0
+LINESTRING (2 2, 8 2, 8 8, 2 8, 2 2)	1
+
+# Empty polygon returns no rows
+query II
+SELECT ST_AsText(geom), path FROM ST_DumpRings('POLYGON EMPTY'::GEOMETRY);
+----
+
+# Error on non-polygon
+statement error
+SELECT * FROM ST_DumpRings('LINESTRING(0 0, 1 1)'::GEOMETRY);
+----
+ST_DumpRings: input geometry must be a POLYGON
+
+#======================================================================================================================
+# ST_DumpSegments
+#======================================================================================================================
+
+# Basic linestring
+query II
+SELECT ST_AsText(geom), path FROM ST_DumpSegments('LINESTRING(0 0, 1 1, 2 2)'::GEOMETRY);
+----
+LINESTRING (0 0, 1 1)	0
+LINESTRING (1 1, 2 2)	1
+
+# 2-point linestring produces single segment
+query II
+SELECT ST_AsText(geom), path FROM ST_DumpSegments('LINESTRING(0 0, 5 5)'::GEOMETRY);
+----
+LINESTRING (0 0, 5 5)	0
+
+# Polygon segments (exterior ring)
+query II
+SELECT ST_AsText(geom), path FROM ST_DumpSegments('POLYGON((0 0, 1 0, 1 1, 0 0))'::GEOMETRY);
+----
+LINESTRING (0 0, 1 0)	0
+LINESTRING (1 0, 1 1)	1
+LINESTRING (1 1, 0 0)	2
+
+# Multilinestring
+query II
+SELECT ST_AsText(geom), path FROM ST_DumpSegments('MULTILINESTRING((0 0, 1 1, 2 2), (10 10, 20 20))'::GEOMETRY);
+----
+LINESTRING (0 0, 1 1)	0
+LINESTRING (1 1, 2 2)	1
+LINESTRING (10 10, 20 20)	2
+
+# Point has no segments
+query II
+SELECT ST_AsText(geom), path FROM ST_DumpSegments('POINT(0 0)'::GEOMETRY);
+----
+
+# Empty linestring returns no rows
+query II
+SELECT ST_AsText(geom), path FROM ST_DumpSegments('LINESTRING EMPTY'::GEOMETRY);
+----

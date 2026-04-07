@@ -578,6 +578,538 @@ struct ST_HexagonGrid {
 	}
 };
 
+//======================================================================================================================
+// ST_DumpPoints
+//======================================================================================================================
+
+struct ST_DumpPoints {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Bind
+	//------------------------------------------------------------------------------------------------------------------
+	struct DumpPointsBindData final : TableFunctionData {
+		// Pre-computed output rows
+		vector<string> serialized_points;
+		vector<vector<int32_t>> paths;
+	};
+
+	// Recursively collect all vertices from a geometry tree
+	static void CollectPoints(const sgl::geometry &geom, vector<int32_t> &current_path,
+	                          DumpPointsBindData &bind_data) {
+		switch (geom.get_type()) {
+		case sgl::geometry_type::POINT: {
+			if (!geom.is_empty()) {
+				current_path.push_back(0);
+				sgl::geometry point(sgl::geometry_type::POINT, geom.has_z(), geom.has_m());
+				point.set_vertex_array(geom.get_vertex_array(), 1);
+				const auto size = Serde::GetRequiredSize(point);
+				string buf(size, '\0');
+				Serde::Serialize(point, &buf[0], size);
+				bind_data.serialized_points.push_back(std::move(buf));
+				bind_data.paths.push_back(current_path);
+				current_path.pop_back();
+			}
+			break;
+		}
+		case sgl::geometry_type::LINESTRING: {
+			const auto vert_count = geom.get_vertex_count();
+			const auto vert_width = geom.get_vertex_width();
+			for (uint32_t i = 0; i < vert_count; i++) {
+				current_path.push_back(static_cast<int32_t>(i));
+				sgl::geometry point(sgl::geometry_type::POINT, geom.has_z(), geom.has_m());
+				point.set_vertex_array(geom.get_vertex_array() + i * vert_width, 1);
+				const auto size = Serde::GetRequiredSize(point);
+				string buf(size, '\0');
+				Serde::Serialize(point, &buf[0], size);
+				bind_data.serialized_points.push_back(std::move(buf));
+				bind_data.paths.push_back(current_path);
+				current_path.pop_back();
+			}
+			break;
+		}
+		case sgl::geometry_type::POLYGON: {
+			const auto tail = geom.get_last_part();
+			if (tail) {
+				auto ring = tail;
+				int32_t ring_idx = 0;
+				do {
+					ring = ring->get_next();
+					current_path.push_back(ring_idx);
+					const auto vert_count = ring->get_vertex_count();
+					const auto vert_width = ring->get_vertex_width();
+					for (uint32_t i = 0; i < vert_count; i++) {
+						current_path.push_back(static_cast<int32_t>(i));
+						sgl::geometry point(sgl::geometry_type::POINT, geom.has_z(), geom.has_m());
+						point.set_vertex_array(ring->get_vertex_array() + i * vert_width, 1);
+						const auto size = Serde::GetRequiredSize(point);
+						string buf(size, '\0');
+						Serde::Serialize(point, &buf[0], size);
+						bind_data.serialized_points.push_back(std::move(buf));
+						bind_data.paths.push_back(current_path);
+						current_path.pop_back();
+					}
+					current_path.pop_back();
+					ring_idx++;
+				} while (ring != tail);
+			}
+			break;
+		}
+		case sgl::geometry_type::MULTI_POINT:
+		case sgl::geometry_type::MULTI_LINESTRING:
+		case sgl::geometry_type::MULTI_POLYGON:
+		case sgl::geometry_type::GEOMETRY_COLLECTION: {
+			const auto tail = geom.get_last_part();
+			if (tail) {
+				auto part = tail;
+				int32_t part_idx = 0;
+				do {
+					part = part->get_next();
+					current_path.push_back(part_idx);
+					CollectPoints(*part, current_path, bind_data);
+					current_path.pop_back();
+					part_idx++;
+				} while (part != tail);
+			}
+			break;
+		}
+		default:
+			break;
+		}
+	}
+
+	static unique_ptr<FunctionData> Bind(ClientContext &context, TableFunctionBindInput &input,
+	                                     vector<LogicalType> &return_types, vector<string> &names) {
+		auto result = make_uniq<DumpPointsBindData>();
+
+		return_types.push_back(LogicalType::GEOMETRY());
+		names.push_back("geom");
+
+		return_types.push_back(LogicalType::LIST(LogicalType::INTEGER));
+		names.push_back("path");
+
+		const auto &geom_value = input.inputs[0];
+		const auto blob = geom_value.GetValueUnsafe<string_t>();
+
+		ArenaAllocator arena(Allocator::DefaultAllocator());
+		sgl::geometry geom;
+		Serde::Deserialize(geom, arena, blob.GetDataUnsafe(), blob.GetSize());
+
+		vector<int32_t> current_path;
+		CollectPoints(geom, current_path, *result);
+
+		return std::move(result);
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Init
+	//------------------------------------------------------------------------------------------------------------------
+	struct DumpPointsState final : GlobalTableFunctionState {
+		idx_t current_idx = 0;
+	};
+
+	static unique_ptr<GlobalTableFunctionState> Init(ClientContext &context, TableFunctionInitInput &input) {
+		return make_uniq<DumpPointsState>();
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Execute
+	//------------------------------------------------------------------------------------------------------------------
+	static void Execute(ClientContext &context, TableFunctionInput &data_p, DataChunk &output) {
+		auto &bind_data = data_p.bind_data->Cast<DumpPointsBindData>();
+		auto &state = data_p.global_state->Cast<DumpPointsState>();
+
+		const auto total = bind_data.serialized_points.size();
+		const auto chunk_size = MinValue<idx_t>(STANDARD_VECTOR_SIZE, total - state.current_idx);
+
+		auto &geom_vec = output.data[0];
+		auto &path_vec = output.data[1];
+
+		for (idx_t i = 0; i < chunk_size; i++) {
+			const auto row_idx = state.current_idx + i;
+
+			// Write geometry blob
+			const auto &blob_data = bind_data.serialized_points[row_idx];
+			auto blob = StringVector::EmptyString(geom_vec, blob_data.size());
+			memcpy(blob.GetDataWriteable(), blob_data.data(), blob_data.size());
+			blob.Finalize();
+			FlatVector::GetData<string_t>(geom_vec)[i] = blob;
+
+			// Write path as LIST(INTEGER)
+			const auto &path = bind_data.paths[row_idx];
+			auto path_size = path.size();
+			auto list_offset = ListVector::GetListSize(path_vec);
+			auto list_entry = list_entry_t(list_offset, path_size);
+			auto &list_child = ListVector::GetEntry(path_vec);
+			ListVector::Reserve(path_vec, list_offset + path_size);
+			auto child_data = FlatVector::GetData<int32_t>(list_child);
+			for (idx_t j = 0; j < path_size; j++) {
+				child_data[list_offset + j] = path[j];
+			}
+			ListVector::SetListSize(path_vec, list_offset + path_size);
+			FlatVector::GetData<list_entry_t>(path_vec)[i] = list_entry;
+		}
+
+		state.current_idx += chunk_size;
+		output.SetCardinality(chunk_size);
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Cardinality
+	//------------------------------------------------------------------------------------------------------------------
+	static unique_ptr<NodeStatistics> Cardinality(ClientContext &context, const FunctionData *bind_data_p) {
+		auto &bind_data = bind_data_p->Cast<DumpPointsBindData>();
+		auto count = bind_data.serialized_points.size();
+		return make_uniq<NodeStatistics>(count, count);
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// DOCUMENTATION
+	//------------------------------------------------------------------------------------------------------------------
+	static constexpr auto DESCRIPTION = R"(
+		Extracts all vertices from a geometry as individual point geometries.
+
+		Returns a table with a 'geom' column containing each point and a 'path' column
+		(an integer array) showing the position of each vertex in the geometry tree.
+	)";
+	static constexpr auto EXAMPLE =
+	    "SELECT * FROM ST_DumpPoints('LINESTRING(0 0, 1 1, 2 2)'::GEOMETRY);";
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
+	static void Register(ExtensionLoader &loader) {
+		TableFunctionSet set("ST_DumpPoints");
+
+		TableFunction dump_points({LogicalType::GEOMETRY()}, Execute, Bind, Init);
+		dump_points.cardinality = Cardinality;
+		set.AddFunction(dump_points);
+		loader.RegisterFunction(set);
+
+		InsertionOrderPreservingMap<string> tags;
+		tags.insert("ext", "spatial");
+		FunctionBuilder::AddTableFunctionDocs(loader, "ST_DumpPoints", DESCRIPTION, EXAMPLE, tags);
+	}
+};
+
+//======================================================================================================================
+// ST_DumpRings
+//======================================================================================================================
+
+struct ST_DumpRings {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Bind
+	//------------------------------------------------------------------------------------------------------------------
+	struct DumpRingsBindData final : TableFunctionData {
+		vector<string> serialized_rings;
+		vector<int32_t> paths;
+	};
+
+	static unique_ptr<FunctionData> Bind(ClientContext &context, TableFunctionBindInput &input,
+	                                     vector<LogicalType> &return_types, vector<string> &names) {
+		auto result = make_uniq<DumpRingsBindData>();
+
+		return_types.push_back(LogicalType::GEOMETRY());
+		names.push_back("geom");
+
+		return_types.push_back(LogicalType::INTEGER);
+		names.push_back("path");
+
+		const auto &geom_value = input.inputs[0];
+		const auto blob = geom_value.GetValueUnsafe<string_t>();
+
+		ArenaAllocator arena(Allocator::DefaultAllocator());
+		sgl::geometry geom;
+		Serde::Deserialize(geom, arena, blob.GetDataUnsafe(), blob.GetSize());
+
+		if (geom.get_type() != sgl::geometry_type::POLYGON) {
+			throw InvalidInputException("ST_DumpRings: input geometry must be a POLYGON");
+		}
+
+		const auto tail = geom.get_last_part();
+		if (tail) {
+			auto ring = tail;
+			int32_t ring_idx = 0;
+			do {
+				ring = ring->get_next();
+				sgl::geometry linestring(sgl::geometry_type::LINESTRING, ring->has_z(), ring->has_m());
+				linestring.set_vertex_array(ring->get_vertex_array(), ring->get_vertex_count());
+				const auto size = Serde::GetRequiredSize(linestring);
+				string buf(size, '\0');
+				Serde::Serialize(linestring, &buf[0], size);
+				result->serialized_rings.push_back(std::move(buf));
+				result->paths.push_back(ring_idx);
+				ring_idx++;
+			} while (ring != tail);
+		}
+
+		return std::move(result);
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Init
+	//------------------------------------------------------------------------------------------------------------------
+	struct DumpRingsState final : GlobalTableFunctionState {
+		idx_t current_idx = 0;
+	};
+
+	static unique_ptr<GlobalTableFunctionState> Init(ClientContext &context, TableFunctionInitInput &input) {
+		return make_uniq<DumpRingsState>();
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Execute
+	//------------------------------------------------------------------------------------------------------------------
+	static void Execute(ClientContext &context, TableFunctionInput &data_p, DataChunk &output) {
+		auto &bind_data = data_p.bind_data->Cast<DumpRingsBindData>();
+		auto &state = data_p.global_state->Cast<DumpRingsState>();
+
+		const auto total = bind_data.serialized_rings.size();
+		const auto chunk_size = MinValue<idx_t>(STANDARD_VECTOR_SIZE, total - state.current_idx);
+
+		auto &geom_vec = output.data[0];
+		auto &path_vec = output.data[1];
+		auto path_data = FlatVector::GetData<int32_t>(path_vec);
+
+		for (idx_t i = 0; i < chunk_size; i++) {
+			const auto row_idx = state.current_idx + i;
+
+			const auto &blob_data = bind_data.serialized_rings[row_idx];
+			auto blob = StringVector::EmptyString(geom_vec, blob_data.size());
+			memcpy(blob.GetDataWriteable(), blob_data.data(), blob_data.size());
+			blob.Finalize();
+			FlatVector::GetData<string_t>(geom_vec)[i] = blob;
+
+			path_data[i] = bind_data.paths[row_idx];
+		}
+
+		state.current_idx += chunk_size;
+		output.SetCardinality(chunk_size);
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Cardinality
+	//------------------------------------------------------------------------------------------------------------------
+	static unique_ptr<NodeStatistics> Cardinality(ClientContext &context, const FunctionData *bind_data_p) {
+		auto &bind_data = bind_data_p->Cast<DumpRingsBindData>();
+		auto count = bind_data.serialized_rings.size();
+		return make_uniq<NodeStatistics>(count, count);
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// DOCUMENTATION
+	//------------------------------------------------------------------------------------------------------------------
+	static constexpr auto DESCRIPTION = R"(
+		Extracts the rings of a polygon geometry.
+
+		Returns a table with a 'geom' column containing each ring as a linestring and
+		a 'path' column (integer) where 0 is the exterior ring and 1,2,... are interior rings (holes).
+		Only works on POLYGON geometries.
+	)";
+	static constexpr auto EXAMPLE =
+	    "SELECT * FROM ST_DumpRings('POLYGON((0 0, 1 0, 1 1, 0 1, 0 0), (0.25 0.25, 0.75 0.25, 0.75 0.75, 0.25 0.75, 0.25 0.25))'::GEOMETRY);";
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
+	static void Register(ExtensionLoader &loader) {
+		TableFunctionSet set("ST_DumpRings");
+
+		TableFunction dump_rings({LogicalType::GEOMETRY()}, Execute, Bind, Init);
+		dump_rings.cardinality = Cardinality;
+		set.AddFunction(dump_rings);
+		loader.RegisterFunction(set);
+
+		InsertionOrderPreservingMap<string> tags;
+		tags.insert("ext", "spatial");
+		FunctionBuilder::AddTableFunctionDocs(loader, "ST_DumpRings", DESCRIPTION, EXAMPLE, tags);
+	}
+};
+
+//======================================================================================================================
+// ST_DumpSegments
+//======================================================================================================================
+
+struct ST_DumpSegments {
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Bind
+	//------------------------------------------------------------------------------------------------------------------
+	struct DumpSegmentsBindData final : TableFunctionData {
+		vector<string> serialized_segments;
+		vector<int32_t> paths;
+	};
+
+	static void CollectSegmentsFromVertexArray(const char *vert_array, uint32_t vert_count, size_t vert_width,
+	                                           bool has_z, bool has_m, int32_t &segment_idx,
+	                                           DumpSegmentsBindData &bind_data) {
+		if (vert_count < 2) {
+			return;
+		}
+		for (uint32_t i = 0; i + 1 < vert_count; i++) {
+			const auto seg_data_size = vert_width * 2;
+
+			// Temporary buffer for the two vertices
+			auto vert_buf = unique_ptr<char[]>(new char[seg_data_size]);
+			memcpy(vert_buf.get(), vert_array + i * vert_width, vert_width);
+			memcpy(vert_buf.get() + vert_width, vert_array + (i + 1) * vert_width, vert_width);
+
+			sgl::geometry segment(sgl::geometry_type::LINESTRING, has_z, has_m);
+			segment.set_vertex_array(vert_buf.get(), 2);
+			const auto size = Serde::GetRequiredSize(segment);
+			string serialized(size, '\0');
+			Serde::Serialize(segment, &serialized[0], size);
+			bind_data.serialized_segments.push_back(std::move(serialized));
+
+			bind_data.paths.push_back(segment_idx);
+			segment_idx++;
+		}
+	}
+
+	static void CollectSegments(const sgl::geometry &geom, int32_t &segment_idx, DumpSegmentsBindData &bind_data) {
+		switch (geom.get_type()) {
+		case sgl::geometry_type::POINT:
+			break;
+		case sgl::geometry_type::LINESTRING: {
+			CollectSegmentsFromVertexArray(geom.get_vertex_array(), geom.get_vertex_count(), geom.get_vertex_width(),
+			                              geom.has_z(), geom.has_m(), segment_idx, bind_data);
+			break;
+		}
+		case sgl::geometry_type::POLYGON: {
+			const auto tail = geom.get_last_part();
+			if (tail) {
+				auto ring = tail;
+				do {
+					ring = ring->get_next();
+					CollectSegmentsFromVertexArray(ring->get_vertex_array(), ring->get_vertex_count(),
+					                              ring->get_vertex_width(), ring->has_z(), ring->has_m(), segment_idx,
+					                              bind_data);
+				} while (ring != tail);
+			}
+			break;
+		}
+		case sgl::geometry_type::MULTI_POINT:
+		case sgl::geometry_type::MULTI_LINESTRING:
+		case sgl::geometry_type::MULTI_POLYGON:
+		case sgl::geometry_type::GEOMETRY_COLLECTION: {
+			const auto tail = geom.get_last_part();
+			if (tail) {
+				auto part = tail;
+				do {
+					part = part->get_next();
+					CollectSegments(*part, segment_idx, bind_data);
+				} while (part != tail);
+			}
+			break;
+		}
+		default:
+			break;
+		}
+	}
+
+	static unique_ptr<FunctionData> Bind(ClientContext &context, TableFunctionBindInput &input,
+	                                     vector<LogicalType> &return_types, vector<string> &names) {
+		auto result = make_uniq<DumpSegmentsBindData>();
+
+		return_types.push_back(LogicalType::GEOMETRY());
+		names.push_back("geom");
+
+		return_types.push_back(LogicalType::INTEGER);
+		names.push_back("path");
+
+		const auto &geom_value = input.inputs[0];
+		const auto blob = geom_value.GetValueUnsafe<string_t>();
+
+		ArenaAllocator arena(Allocator::DefaultAllocator());
+		sgl::geometry geom;
+		Serde::Deserialize(geom, arena, blob.GetDataUnsafe(), blob.GetSize());
+
+		int32_t segment_idx = 0;
+		CollectSegments(geom, segment_idx, *result);
+
+		return std::move(result);
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Init
+	//------------------------------------------------------------------------------------------------------------------
+	struct DumpSegmentsState final : GlobalTableFunctionState {
+		idx_t current_idx = 0;
+	};
+
+	static unique_ptr<GlobalTableFunctionState> Init(ClientContext &context, TableFunctionInitInput &input) {
+		return make_uniq<DumpSegmentsState>();
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Execute
+	//------------------------------------------------------------------------------------------------------------------
+	static void Execute(ClientContext &context, TableFunctionInput &data_p, DataChunk &output) {
+		auto &bind_data = data_p.bind_data->Cast<DumpSegmentsBindData>();
+		auto &state = data_p.global_state->Cast<DumpSegmentsState>();
+
+		const auto total = bind_data.serialized_segments.size();
+		const auto chunk_size = MinValue<idx_t>(STANDARD_VECTOR_SIZE, total - state.current_idx);
+
+		auto &geom_vec = output.data[0];
+		auto &path_vec = output.data[1];
+		auto path_data = FlatVector::GetData<int32_t>(path_vec);
+
+		for (idx_t i = 0; i < chunk_size; i++) {
+			const auto row_idx = state.current_idx + i;
+
+			const auto &blob_data = bind_data.serialized_segments[row_idx];
+			auto blob = StringVector::EmptyString(geom_vec, blob_data.size());
+			memcpy(blob.GetDataWriteable(), blob_data.data(), blob_data.size());
+			blob.Finalize();
+			FlatVector::GetData<string_t>(geom_vec)[i] = blob;
+
+			path_data[i] = bind_data.paths[row_idx];
+		}
+
+		state.current_idx += chunk_size;
+		output.SetCardinality(chunk_size);
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Cardinality
+	//------------------------------------------------------------------------------------------------------------------
+	static unique_ptr<NodeStatistics> Cardinality(ClientContext &context, const FunctionData *bind_data_p) {
+		auto &bind_data = bind_data_p->Cast<DumpSegmentsBindData>();
+		auto count = bind_data.serialized_segments.size();
+		return make_uniq<NodeStatistics>(count, count);
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
+	// DOCUMENTATION
+	//------------------------------------------------------------------------------------------------------------------
+	static constexpr auto DESCRIPTION = R"(
+		Extracts consecutive vertex pairs from a geometry as 2-point linestring segments.
+
+		Returns a table with a 'geom' column containing each segment as a linestring and
+		a 'path' column (integer) with the segment index.
+		For example, LINESTRING(0 0, 1 1, 2 2) produces LINESTRING(0 0, 1 1) and LINESTRING(1 1, 2 2).
+	)";
+	static constexpr auto EXAMPLE =
+	    "SELECT * FROM ST_DumpSegments('LINESTRING(0 0, 1 1, 2 2)'::GEOMETRY);";
+
+	//------------------------------------------------------------------------------------------------------------------
+	// Register
+	//------------------------------------------------------------------------------------------------------------------
+	static void Register(ExtensionLoader &loader) {
+		TableFunctionSet set("ST_DumpSegments");
+
+		TableFunction dump_segments({LogicalType::GEOMETRY()}, Execute, Bind, Init);
+		dump_segments.cardinality = Cardinality;
+		set.AddFunction(dump_segments);
+		loader.RegisterFunction(set);
+
+		InsertionOrderPreservingMap<string> tags;
+		tags.insert("ext", "spatial");
+		FunctionBuilder::AddTableFunctionDocs(loader, "ST_DumpSegments", DESCRIPTION, EXAMPLE, tags);
+	}
+};
+
 } // namespace
 
 //######################################################################################################################
@@ -587,6 +1119,9 @@ void RegisterSpatialTableFunctions(ExtensionLoader &loader) {
 	ST_GeneratePoints::Register(loader);
 	ST_SquareGrid::Register(loader);
 	ST_HexagonGrid::Register(loader);
+	ST_DumpPoints::Register(loader);
+	ST_DumpRings::Register(loader);
+	ST_DumpSegments::Register(loader);
 }
 
 } // namespace duckdb
