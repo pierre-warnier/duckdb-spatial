@@ -2415,7 +2415,9 @@ struct ST_Distance {
 
 		auto out_data = FlatVector::GetData<double>(result);
 		for (idx_t i = 0; i < count; i++) {
-			out_data[i] = std::sqrt(std::pow(left_x[i] - right_x[i], 2) + std::pow(left_y[i] - right_y[i], 2));
+			auto dx = left_x[i] - right_x[i];
+				auto dy = left_y[i] - right_y[i];
+				out_data[i] = std::sqrt(dx * dx + dy * dy);
 		}
 
 		if (count == 1) {
@@ -5784,7 +5786,7 @@ struct ST_Distance_Sphere {
 		unique_ptr<FunctionData> Copy() const override {
 			auto copy = make_uniq<BindData>();
 			copy->always_xy = always_xy;
-			return copy;
+			return std::move(copy);
 		}
 		bool Equals(const FunctionData &other) const override {
 			auto &other_bind = other.Cast<BindData>();
@@ -6732,7 +6734,9 @@ struct ST_Length {
 				auto y1 = y_data[j];
 				auto x2 = x_data[j + 1];
 				auto y2 = y_data[j + 1];
-				sum += std::sqrt(std::pow(x1 - x2, 2) + std::pow(y1 - y2, 2));
+				auto dx = x1 - x2;
+					auto dy = y1 - y2;
+					sum += std::sqrt(dx * dx + dy * dy);
 			}
 			return sum;
 		});
@@ -7738,7 +7742,9 @@ struct ST_Perimeter {
 					auto y1 = y_data[coord_idx];
 					auto x2 = x_data[coord_idx + 1];
 					auto y2 = y_data[coord_idx + 1];
-					perimeter += std::sqrt(std::pow(x1 - x2, 2) + std::pow(y1 - y2, 2));
+					auto dx = x1 - x2;
+						auto dy = y1 - y2;
+						perimeter += std::sqrt(dx * dx + dy * dy);
 				}
 			}
 			return perimeter;

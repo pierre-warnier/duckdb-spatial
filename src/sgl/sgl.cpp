@@ -125,7 +125,9 @@ point_in_polygon_result vertex_in_ring(const vertex_xy &vert, const geometry &ri
 }
 
 double vertex_distance_squared(const vertex_xy &lhs, const vertex_xy &rhs) {
-	return std::pow(lhs.x - rhs.x, 2) + std::pow(lhs.y - rhs.y, 2);
+	const auto dx = lhs.x - rhs.x;
+	const auto dy = lhs.y - rhs.y;
+	return dx * dx + dy * dy;
 }
 
 double vertex_distance(const vertex_xy &lhs, const vertex_xy &rhs) {

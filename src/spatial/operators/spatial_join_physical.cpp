@@ -16,6 +16,9 @@
 
 #include "spatial/util/math.hpp"
 
+#include <algorithm>
+#include <numeric>
+
 namespace duckdb {
 
 //======================================================================================================================
@@ -136,37 +139,36 @@ public:
 	}
 
 	static void Sort(vector<uint32_t> &curve, typed_view<Box> &box_array, typed_view<uint32_t> &idx_array) {
-		Sort(curve, box_array, idx_array, 0, curve.size() - 1);
-	}
+		const auto n = curve.size();
+		// Sort by Hilbert value using an index permutation (guaranteed O(n log n))
+		vector<uint32_t> perm(n);
+		std::iota(perm.begin(), perm.end(), 0);
+		std::sort(perm.begin(), perm.end(), [&](uint32_t a, uint32_t b) { return curve[a] < curve[b]; });
 
-	static void Sort(vector<uint32_t> &curve, typed_view<Box> &box_array, typed_view<uint32_t> &idx_array, size_t l_idx,
-	                 size_t r_idx) {
-		if (l_idx < r_idx) {
-			const auto pivot = curve[(l_idx + r_idx) >> 1];
-			auto pivot_l = l_idx - 1;
-			auto pivot_r = r_idx + 1;
-
-			while (true) {
-				do {
-					++pivot_l;
-				} while (curve[pivot_l] < pivot);
-				do {
-					--pivot_r;
-				} while (curve[pivot_r] > pivot);
-
-				if (pivot_l >= pivot_r) {
-					break;
-				}
-
-				// Reorder the curve, boxes and indices
-				// TODO: Pass callback here and make static
-				std::swap(curve[pivot_l], curve[pivot_r]);
-				std::swap(box_array[pivot_l], box_array[pivot_r]);
-				std::swap(idx_array[pivot_l], idx_array[pivot_r]);
+		// Apply permutation in-place using cycle decomposition
+		vector<bool> visited(n, false);
+		for (uint32_t i = 0; i < n; i++) {
+			if (visited[i] || perm[i] == i) {
+				continue;
 			}
-
-			Sort(curve, box_array, idx_array, l_idx, pivot_r);
-			Sort(curve, box_array, idx_array, pivot_r + 1, r_idx);
+			auto c = curve[i];
+			auto b = box_array[i];
+			auto x = idx_array[i];
+			uint32_t j = i;
+			while (!visited[j]) {
+				visited[j] = true;
+				auto target = perm[j];
+				if (target == i) {
+					curve[j] = c;
+					box_array[j] = b;
+					idx_array[j] = x;
+				} else {
+					curve[j] = curve[target];
+					box_array[j] = box_array[target];
+					idx_array[j] = idx_array[target];
+				}
+				j = target;
+			}
 		}
 	}
 
@@ -229,8 +231,10 @@ public:
 		// TODO: Parallelize this with tasks when the number of items is large?
 
 		constexpr auto max_hilbert = std::numeric_limits<uint16_t>::max();
-		const auto hw = max_hilbert / (tree_box.max.x - tree_box.min.x);
-		const auto hh = max_hilbert / (tree_box.max.y - tree_box.min.y);
+		const auto dx = tree_box.max.x - tree_box.min.x;
+		const auto dy = tree_box.max.y - tree_box.min.y;
+		const auto hw = (dx > 0) ? max_hilbert / dx : 0.0f;
+		const auto hh = (dy > 0) ? max_hilbert / dy : 0.0f;
 
 		vector<uint32_t> curve(item_count);
 		for (idx_t i = 0; i < item_count; i++) {

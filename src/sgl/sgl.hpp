@@ -895,8 +895,9 @@ inline double haversine_distance(const double lat1_p, const double lon1_p, const
 	const auto dlat = lat2 - lat1;
 	const auto dlon = lon2 - lon1;
 
-	const auto a =
-	    std::pow(std::sin(dlat / 2.0), 2.0) + std::cos(lat1) * std::cos(lat2) * std::pow(std::sin(dlon / 2.0), 2.0);
+	const auto sin_dlat = std::sin(dlat / 2.0);
+	const auto sin_dlon = std::sin(dlon / 2.0);
+	const auto a = sin_dlat * sin_dlat + std::cos(lat1) * std::cos(lat2) * sin_dlon * sin_dlon;
 	const auto c = 2.0 * std::atan2(std::sqrt(a), std::sqrt(1.0 - a));
 
 	return R * c;
