@@ -10188,6 +10188,314 @@ struct ST_LineFromMultiPoint {
 	}
 };
 
+//======================================================================================================================
+// ST_3DLength
+//======================================================================================================================
+struct ST_3DLength {
+
+	static double ComputeRecursive(const sgl::geometry &geom) {
+		if (geom.is_multi_part()) {
+			double total = 0;
+			auto *part = geom.get_first_part();
+			for (uint32_t i = 0; i < geom.get_part_count(); i++) {
+				total += ComputeRecursive(*part);
+				part = part->get_next();
+			}
+			return total;
+		}
+		if (geom.get_type() != sgl::geometry_type::LINESTRING || geom.get_vertex_count() < 2) {
+			return 0;
+		}
+		double sum = 0;
+		for (uint32_t i = 0; i < geom.get_vertex_count() - 1; i++) {
+			auto v1 = geom.get_vertex_xyzm(i);
+			auto v2 = geom.get_vertex_xyzm(i + 1);
+			double dx = v1.x - v2.x;
+			double dy = v1.y - v2.y;
+			double dz = v1.z - v2.z;
+			sum += std::sqrt(dx * dx + dy * dy + dz * dz);
+		}
+		return sum;
+	}
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		UnaryExecutor::Execute<string_t, double>(args.data[0], result, args.size(), [&](const string_t &blob) {
+			auto &lstate = LocalState::ResetAndGet(state);
+			sgl::geometry geom;
+			lstate.Deserialize(blob, geom);
+			return ComputeRecursive(geom);
+		});
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_3DLength", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", LogicalType::GEOMETRY());
+				variant.SetReturnType(LogicalType::DOUBLE);
+				variant.SetFunction(Execute);
+				variant.SetInit(LocalState::Init);
+			});
+			func.SetDescription("Returns the 3D length of a linestring (considers Z coordinate)");
+			func.SetExample("SELECT ST_3DLength(ST_GeomFromText('LINESTRING Z(0 0 0, 1 0 0, 1 1 1)'))");
+		});
+	}
+};
+
+//======================================================================================================================
+// ST_3DPerimeter
+//======================================================================================================================
+struct ST_3DPerimeter {
+
+	static double ComputeRecursive(const sgl::geometry &geom) {
+		if (geom.is_multi_part()) {
+			double total = 0;
+			auto *part = geom.get_first_part();
+			for (uint32_t i = 0; i < geom.get_part_count(); i++) {
+				total += ComputeRecursive(*part);
+				part = part->get_next();
+			}
+			return total;
+		}
+		// For a ring (polygon boundary), compute 3D perimeter
+		if (geom.get_vertex_count() < 2) {
+			return 0;
+		}
+		double sum = 0;
+		for (uint32_t i = 0; i < geom.get_vertex_count() - 1; i++) {
+			auto v1 = geom.get_vertex_xyzm(i);
+			auto v2 = geom.get_vertex_xyzm(i + 1);
+			double dx = v1.x - v2.x;
+			double dy = v1.y - v2.y;
+			double dz = v1.z - v2.z;
+			sum += std::sqrt(dx * dx + dy * dy + dz * dz);
+		}
+		return sum;
+	}
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		UnaryExecutor::Execute<string_t, double>(args.data[0], result, args.size(), [&](const string_t &blob) {
+			auto &lstate = LocalState::ResetAndGet(state);
+			sgl::geometry geom;
+			lstate.Deserialize(blob, geom);
+			// Only compute for polygonal geometries (perimeter = boundary length of rings)
+			auto type = geom.get_type();
+			if (type == sgl::geometry_type::POLYGON || type == sgl::geometry_type::MULTI_POLYGON ||
+			    type == sgl::geometry_type::GEOMETRY_COLLECTION) {
+				return ComputeRecursive(geom);
+			}
+			return 0.0;
+		});
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_3DPerimeter", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", LogicalType::GEOMETRY());
+				variant.SetReturnType(LogicalType::DOUBLE);
+				variant.SetFunction(Execute);
+				variant.SetInit(LocalState::Init);
+			});
+			func.SetDescription("Returns the 3D perimeter of a polygon (considers Z coordinate)");
+			func.SetExample("SELECT ST_3DPerimeter(ST_GeomFromText('POLYGON Z((0 0 0, 1 0 0, 1 1 1, 0 1 0, 0 0 0))'))");
+		});
+	}
+};
+
+//======================================================================================================================
+// ST_3DDistance
+//======================================================================================================================
+struct ST_3DDistance {
+
+	static double PointDistance3D(const sgl::geometry &g1, const sgl::geometry &g2) {
+		auto v1 = g1.get_vertex_xyzm(0);
+		auto v2 = g2.get_vertex_xyzm(0);
+		double dx = v1.x - v2.x;
+		double dy = v1.y - v2.y;
+		double dz = v1.z - v2.z;
+		return std::sqrt(dx * dx + dy * dy + dz * dz);
+	}
+
+	// Brute-force minimum 3D distance between all vertex pairs
+	static double MinDistance3DRecursive(const sgl::geometry &g1, const sgl::geometry &g2) {
+		double min_dist = std::numeric_limits<double>::max();
+
+		// Collect all vertices from g1 and g2
+		auto collect = [](const sgl::geometry &g, std::vector<sgl::vertex_xyzm> &pts) {
+			std::function<void(const sgl::geometry &)> visit = [&](const sgl::geometry &geom) {
+				if (geom.is_multi_part()) {
+					auto *part = geom.get_first_part();
+					for (uint32_t i = 0; i < geom.get_part_count(); i++) {
+						visit(*part);
+						part = part->get_next();
+					}
+				} else {
+					for (uint32_t i = 0; i < geom.get_vertex_count(); i++) {
+						pts.push_back(geom.get_vertex_xyzm(i));
+					}
+				}
+			};
+			visit(g);
+		};
+
+		std::vector<sgl::vertex_xyzm> pts1, pts2;
+		collect(g1, pts1);
+		collect(g2, pts2);
+
+		for (const auto &p1 : pts1) {
+			for (const auto &p2 : pts2) {
+				double dx = p1.x - p2.x;
+				double dy = p1.y - p2.y;
+				double dz = p1.z - p2.z;
+				double dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+				if (dist < min_dist) {
+					min_dist = dist;
+				}
+			}
+		}
+
+		return min_dist == std::numeric_limits<double>::max() ? 0.0 : min_dist;
+	}
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto count = args.size();
+		BinaryExecutor::Execute<string_t, string_t, double>(
+		    args.data[0], args.data[1], result, count, [&](const string_t &blob1, const string_t &blob2) {
+			    auto &lstate = LocalState::ResetAndGet(state);
+			    sgl::geometry geom1, geom2;
+			    lstate.Deserialize(blob1, geom1);
+			    lstate.Deserialize(blob2, geom2);
+			    return MinDistance3DRecursive(geom1, geom2);
+		    });
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_3DDistance", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom1", LogicalType::GEOMETRY());
+				variant.AddParameter("geom2", LogicalType::GEOMETRY());
+				variant.SetReturnType(LogicalType::DOUBLE);
+				variant.SetFunction(Execute);
+				variant.SetInit(LocalState::Init);
+			});
+			func.SetDescription("Returns the minimum 3D distance between two geometries");
+			func.SetExample("SELECT ST_3DDistance(ST_GeomFromText('POINT Z(0 0 0)'), ST_GeomFromText('POINT Z(1 1 1)'))");
+		});
+	}
+};
+
+//======================================================================================================================
+// ST_DFullyWithin
+//======================================================================================================================
+struct ST_DFullyWithin {
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto count = args.size();
+
+		auto &geom1_vec = args.data[0];
+		auto &geom2_vec = args.data[1];
+		auto &dist_vec = args.data[2];
+
+		UnifiedVectorFormat g1_fmt, g2_fmt, d_fmt;
+		geom1_vec.ToUnifiedFormat(count, g1_fmt);
+		geom2_vec.ToUnifiedFormat(count, g2_fmt);
+		dist_vec.ToUnifiedFormat(count, d_fmt);
+
+		const auto g1_data = UnifiedVectorFormat::GetData<string_t>(g1_fmt);
+		const auto g2_data = UnifiedVectorFormat::GetData<string_t>(g2_fmt);
+		const auto d_data = UnifiedVectorFormat::GetData<double>(d_fmt);
+
+		auto result_data = FlatVector::GetData<bool>(result);
+
+		for (idx_t i = 0; i < count; i++) {
+			const auto g1i = g1_fmt.sel->get_index(i);
+			const auto g2i = g2_fmt.sel->get_index(i);
+			const auto di = d_fmt.sel->get_index(i);
+
+			if (!g1_fmt.validity.RowIsValid(g1i) || !g2_fmt.validity.RowIsValid(g2i) ||
+			    !d_fmt.validity.RowIsValid(di)) {
+				FlatVector::SetNull(result, i, true);
+				continue;
+			}
+
+			auto &lstate = LocalState::ResetAndGet(state);
+			sgl::geometry geom1, geom2;
+			lstate.Deserialize(g1_data[g1i], geom1);
+			lstate.Deserialize(g2_data[g2i], geom2);
+
+			const double max_dist = d_data[di];
+
+			// Check that the max distance from any vertex in g1 to g2 is within threshold
+			// This means g1 must be FULLY within distance of g2
+			// Implementation: compute max distance between all vertex pairs of the envelopes
+			// A geometry is "fully within" distance d if the farthest point of g1 from g2 is <= d
+			// Simplified: check max distance between all vertices
+			double max_found = 0;
+			bool valid = true;
+
+			auto collect_vertices = [](const sgl::geometry &g, std::vector<sgl::vertex_xy> &pts) {
+				std::function<void(const sgl::geometry &)> visit = [&](const sgl::geometry &geom) {
+					if (geom.is_multi_part()) {
+						auto *part = geom.get_first_part();
+						for (uint32_t j = 0; j < geom.get_part_count(); j++) {
+							visit(*part);
+							part = part->get_next();
+						}
+					} else {
+						for (uint32_t j = 0; j < geom.get_vertex_count(); j++) {
+							pts.push_back(geom.get_vertex_xy(j));
+						}
+					}
+				};
+				visit(g);
+			};
+
+			std::vector<sgl::vertex_xy> pts1, pts2;
+			collect_vertices(geom1, pts1);
+			collect_vertices(geom2, pts2);
+
+			if (pts1.empty() || pts2.empty()) {
+				FlatVector::SetNull(result, i, true);
+				continue;
+			}
+
+			// For each vertex in g1, find its minimum distance to any vertex in g2
+			// Then check if the maximum of these minimums is <= threshold
+			for (const auto &p1 : pts1) {
+				double min_to_g2 = std::numeric_limits<double>::max();
+				for (const auto &p2 : pts2) {
+					double dx = p1.x - p2.x;
+					double dy = p1.y - p2.y;
+					double dist = std::sqrt(dx * dx + dy * dy);
+					if (dist < min_to_g2) {
+						min_to_g2 = dist;
+					}
+				}
+				if (min_to_g2 > max_found) {
+					max_found = min_to_g2;
+				}
+			}
+
+			result_data[i] = max_found <= max_dist;
+		}
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_DFullyWithin", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom1", LogicalType::GEOMETRY());
+				variant.AddParameter("geom2", LogicalType::GEOMETRY());
+				variant.AddParameter("distance", LogicalType::DOUBLE);
+				variant.SetReturnType(LogicalType::BOOLEAN);
+				variant.SetFunction(Execute);
+				variant.SetInit(LocalState::Init);
+			});
+			func.SetDescription(
+			    "Returns true if every point of geom1 is within the given distance of geom2");
+			func.SetExample("SELECT ST_DFullyWithin(ST_Point(0, 0), ST_Point(1, 0), 2.0)");
+		});
+	}
+};
+
 } // namespace
 
 // Helper to access the constant distance from the bind data
@@ -10296,6 +10604,10 @@ void RegisterSpatialScalarFunctions(ExtensionLoader &loader) {
 	ST_MemSize::Register(loader);
 	ST_Polygon_Func::Register(loader);
 	ST_LineFromMultiPoint::Register(loader);
+	ST_3DLength::Register(loader);
+	ST_3DPerimeter::Register(loader);
+	ST_3DDistance::Register(loader);
+	ST_DFullyWithin::Register(loader);
 }
 
 } // namespace duckdb
