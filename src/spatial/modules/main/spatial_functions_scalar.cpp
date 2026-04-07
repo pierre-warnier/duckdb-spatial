@@ -10974,6 +10974,131 @@ struct ST_AsLatLonText {
 	}
 };
 
+//======================================================================================================================
+// ST_AsEncodedPolyline
+//======================================================================================================================
+struct ST_AsEncodedPolyline {
+
+	static void EncodeValue(int32_t value, std::string &out) {
+		// Google's Encoded Polyline Algorithm
+		value = value < 0 ? ~(value << 1) : (value << 1);
+		while (value >= 0x20) {
+			out += static_cast<char>((0x20 | (value & 0x1f)) + 63);
+			value >>= 5;
+		}
+		out += static_cast<char>(value + 63);
+	}
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto count = args.size();
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, count, [&](const string_t &blob) {
+			auto &lstate = LocalState::ResetAndGet(state);
+			sgl::geometry geom;
+			lstate.Deserialize(blob, geom);
+
+			if (geom.get_type() != sgl::geometry_type::LINESTRING) {
+				throw InvalidInputException("ST_AsEncodedPolyline: argument must be a LINESTRING");
+			}
+
+			std::string encoded;
+			int32_t prev_lat = 0, prev_lng = 0;
+
+			for (uint32_t i = 0; i < geom.get_vertex_count(); i++) {
+				auto vtx = geom.get_vertex_xy(i);
+				// Encode lat (y) and lng (x) with 1e5 precision
+				int32_t lat = static_cast<int32_t>(std::round(vtx.y * 1e5));
+				int32_t lng = static_cast<int32_t>(std::round(vtx.x * 1e5));
+				EncodeValue(lat - prev_lat, encoded);
+				EncodeValue(lng - prev_lng, encoded);
+				prev_lat = lat;
+				prev_lng = lng;
+			}
+
+			return StringVector::AddString(result, encoded);
+		});
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_AsEncodedPolyline", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("line", LogicalType::GEOMETRY());
+				variant.SetReturnType(LogicalType::VARCHAR);
+				variant.SetFunction(Execute);
+				variant.SetInit(LocalState::Init);
+			});
+			func.SetDescription("Encodes a linestring as a Google Encoded Polyline string");
+			func.SetExample("SELECT ST_AsEncodedPolyline(ST_GeomFromText('LINESTRING(-120.2 38.5, -120.95 40.7, -126.453 43.252)'))");
+		});
+	}
+};
+
+//======================================================================================================================
+// ST_LineFromEncodedPolyline
+//======================================================================================================================
+struct ST_LineFromEncodedPolyline {
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto count = args.size();
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, count, [&](const string_t &encoded_str) {
+			auto &lstate = LocalState::ResetAndGet(state);
+			auto encoded = encoded_str.GetString();
+
+			std::vector<sgl::vertex_xy> points;
+			int32_t lat = 0, lng = 0;
+			size_t idx = 0;
+
+			while (idx < encoded.size()) {
+				// Decode latitude
+				int32_t shift = 0, result_val = 0;
+				int32_t b;
+				do {
+					b = static_cast<int32_t>(encoded[idx++]) - 63;
+					result_val |= (b & 0x1f) << shift;
+					shift += 5;
+				} while (b >= 0x20 && idx < encoded.size());
+				lat += (result_val & 1) ? ~(result_val >> 1) : (result_val >> 1);
+
+				// Decode longitude
+				shift = 0;
+				result_val = 0;
+				do {
+					b = static_cast<int32_t>(encoded[idx++]) - 63;
+					result_val |= (b & 0x1f) << shift;
+					shift += 5;
+				} while (b >= 0x20 && idx < encoded.size());
+				lng += (result_val & 1) ? ~(result_val >> 1) : (result_val >> 1);
+
+				points.push_back({lng / 1e5, lat / 1e5});
+			}
+
+			if (points.size() < 2) {
+				throw InvalidInputException("ST_LineFromEncodedPolyline: decoded fewer than 2 points");
+			}
+
+			auto &alloc = lstate.GetAllocator();
+			sgl::geometry line(sgl::geometry_type::LINESTRING, false, false);
+			auto vtx_array = static_cast<char *>(alloc.alloc(points.size() * sizeof(sgl::vertex_xy)));
+			memcpy(vtx_array, points.data(), points.size() * sizeof(sgl::vertex_xy));
+			line.set_vertex_array(vtx_array, static_cast<uint32_t>(points.size()));
+
+			return lstate.Serialize(result, line);
+		});
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_LineFromEncodedPolyline", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("encoded", LogicalType::VARCHAR);
+				variant.SetReturnType(LogicalType::GEOMETRY());
+				variant.SetFunction(Execute);
+				variant.SetInit(LocalState::Init);
+			});
+			func.SetDescription("Decodes a Google Encoded Polyline string into a linestring");
+			func.SetExample("SELECT ST_AsText(ST_LineFromEncodedPolyline('_p~iF~ps|U_ulLnnqC_mqNvxq`@'))");
+		});
+	}
+};
+
 } // namespace
 
 // Helper to access the constant distance from the bind data
@@ -11092,6 +11217,8 @@ void RegisterSpatialScalarFunctions(ExtensionLoader &loader) {
 	ST_GeometricMedian::Register(loader);
 	ST_SimplifyVW::Register(loader);
 	ST_AsLatLonText::Register(loader);
+	ST_AsEncodedPolyline::Register(loader);
+	ST_LineFromEncodedPolyline::Register(loader);
 }
 
 } // namespace duckdb
