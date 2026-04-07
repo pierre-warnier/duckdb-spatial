@@ -3137,6 +3137,704 @@ struct ST_CoverageInvalidEdges_Agg : GEOSCoverageAggFunction {
 
 } // namespace
 
+//======================================================================================================================
+// New GEOS Wrappers
+//======================================================================================================================
+
+// --- Overlay / Processing ---
+
+struct ST_SymDifference {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		BinaryExecutor::Execute<string_t, string_t, string_t>(args.data[0], args.data[1], result, args.size(),
+		    [&](const string_t &l, const string_t &r) {
+			    return lstate.Serialize(result, lstate.Deserialize(l).get_sym_difference(lstate.Deserialize(r)));
+		    });
+	}
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_SymDifference", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
+				v.AddParameter("geom1", LogicalType::GEOMETRY()); v.AddParameter("geom2", LogicalType::GEOMETRY());
+				v.SetReturnType(LogicalType::GEOMETRY()); v.SetBind(GeoTypes::PropagateCRS);
+				v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
+			});
+			func.SetDescription("Returns the symmetric difference of two geometries"); func.SetTag("ext", "spatial"); func.SetTag("category", "construction");
+		});
+	}
+};
+
+struct ST_UnaryUnion {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(),
+		    [&](const string_t &blob) { return lstate.Serialize(result, lstate.Deserialize(blob).get_unary_union()); });
+	}
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_UnaryUnion", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
+				v.AddParameter("geom", LogicalType::GEOMETRY()); v.SetReturnType(LogicalType::GEOMETRY());
+				v.SetBind(GeoTypes::PropagateCRS); v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
+			});
+			func.SetDescription("Dissolves a geometry collection into a single geometry"); func.SetTag("ext", "spatial"); func.SetTag("category", "construction");
+		});
+	}
+};
+
+struct ST_SharedPaths {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		BinaryExecutor::Execute<string_t, string_t, string_t>(args.data[0], args.data[1], result, args.size(),
+		    [&](const string_t &l, const string_t &r) {
+			    return lstate.Serialize(result, lstate.Deserialize(l).get_shared_paths(lstate.Deserialize(r)));
+		    });
+	}
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_SharedPaths", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
+				v.AddParameter("geom1", LogicalType::GEOMETRY()); v.AddParameter("geom2", LogicalType::GEOMETRY());
+				v.SetReturnType(LogicalType::GEOMETRY()); v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
+			});
+			func.SetDescription("Returns shared paths between two linear geometries"); func.SetTag("ext", "spatial"); func.SetTag("category", "construction");
+		});
+	}
+};
+
+struct ST_Snap_GEOS {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		TernaryExecutor::Execute<string_t, string_t, double, string_t>(
+		    args.data[0], args.data[1], args.data[2], result, args.size(),
+		    [&](const string_t &l, const string_t &r, double tol) {
+			    return lstate.Serialize(result, lstate.Deserialize(l).get_snap(lstate.Deserialize(r), tol));
+		    });
+	}
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_Snap", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
+				v.AddParameter("geom1", LogicalType::GEOMETRY()); v.AddParameter("geom2", LogicalType::GEOMETRY());
+				v.AddParameter("tolerance", LogicalType::DOUBLE); v.SetReturnType(LogicalType::GEOMETRY());
+				v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
+			});
+			func.SetDescription("Snaps vertices of geom1 to geom2 within tolerance"); func.SetTag("ext", "spatial"); func.SetTag("category", "construction");
+		});
+	}
+};
+
+struct ST_OffsetCurve {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		BinaryExecutor::Execute<string_t, double, string_t>(args.data[0], args.data[1], result, args.size(),
+		    [&](const string_t &blob, double dist) {
+			    return lstate.Serialize(result, lstate.Deserialize(blob).get_offset_curve(dist, 8, 1, 5.0));
+		    });
+	}
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_OffsetCurve", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
+				v.AddParameter("geom", LogicalType::GEOMETRY()); v.AddParameter("distance", LogicalType::DOUBLE);
+				v.SetReturnType(LogicalType::GEOMETRY()); v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
+			});
+			func.SetDescription("Returns an offset curve from a linestring"); func.SetTag("ext", "spatial"); func.SetTag("category", "construction");
+		});
+	}
+};
+
+struct ST_DelaunayTriangles {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(),
+		    [&](const string_t &blob) {
+			    return lstate.Serialize(result, lstate.Deserialize(blob).get_delaunay_triangulation(0.0, false));
+		    });
+	}
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_DelaunayTriangles", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
+				v.AddParameter("geom", LogicalType::GEOMETRY()); v.SetReturnType(LogicalType::GEOMETRY());
+				v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
+			});
+			func.SetDescription("Returns Delaunay triangulation of input geometry vertices"); func.SetTag("ext", "spatial"); func.SetTag("category", "construction");
+		});
+	}
+};
+
+struct ST_TriangulatePolygon {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(),
+		    [&](const string_t &blob) {
+			    return lstate.Serialize(result, lstate.Deserialize(blob).get_constrained_delaunay());
+		    });
+	}
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_TriangulatePolygon", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
+				v.AddParameter("geom", LogicalType::GEOMETRY()); v.SetReturnType(LogicalType::GEOMETRY());
+				v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
+			});
+			func.SetDescription("Returns constrained Delaunay triangulation of a polygon"); func.SetTag("ext", "spatial"); func.SetTag("category", "construction");
+		});
+	}
+};
+
+struct ST_Segmentize {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		BinaryExecutor::Execute<string_t, double, string_t>(args.data[0], args.data[1], result, args.size(),
+		    [&](const string_t &blob, double tol) {
+			    return lstate.Serialize(result, lstate.Deserialize(blob).get_densified(tol));
+		    });
+	}
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_Segmentize", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
+				v.AddParameter("geom", LogicalType::GEOMETRY()); v.AddParameter("max_segment_length", LogicalType::DOUBLE);
+				v.SetReturnType(LogicalType::GEOMETRY()); v.SetBind(GeoTypes::PropagateCRS);
+				v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
+			});
+			func.SetDescription("Densifies a geometry by adding vertices so no segment exceeds max_segment_length"); func.SetTag("ext", "spatial"); func.SetTag("category", "construction");
+		});
+	}
+};
+
+struct ST_SimplifyPolygonHull {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		BinaryExecutor::Execute<string_t, double, string_t>(args.data[0], args.data[1], result, args.size(),
+		    [&](const string_t &blob, double frac) {
+			    return lstate.Serialize(result, lstate.Deserialize(blob).get_polygon_hull_simplified(frac, true));
+		    });
+	}
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_SimplifyPolygonHull", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
+				v.AddParameter("geom", LogicalType::GEOMETRY()); v.AddParameter("vertex_fraction", LogicalType::DOUBLE);
+				v.SetReturnType(LogicalType::GEOMETRY()); v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
+			});
+			func.SetDescription("Simplifies a polygon while preserving topology"); func.SetTag("ext", "spatial"); func.SetTag("category", "construction");
+		});
+	}
+};
+
+struct ST_MinimumBoundingCircle {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(),
+		    [&](const string_t &blob) { return lstate.Serialize(result, lstate.Deserialize(blob).get_minimum_bounding_circle()); });
+	}
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_MinimumBoundingCircle", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
+				v.AddParameter("geom", LogicalType::GEOMETRY()); v.SetReturnType(LogicalType::GEOMETRY());
+				v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
+			});
+			func.SetDescription("Returns the minimum bounding circle of a geometry"); func.SetTag("ext", "spatial"); func.SetTag("category", "construction");
+		});
+	}
+};
+
+struct ST_LargestEmptyCircle {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		BinaryExecutor::Execute<string_t, double, string_t>(args.data[0], args.data[1], result, args.size(),
+		    [&](const string_t &blob, double tol) {
+			    return lstate.Serialize(result, lstate.Deserialize(blob).get_largest_empty_circle(tol));
+		    });
+	}
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_LargestEmptyCircle", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
+				v.AddParameter("geom", LogicalType::GEOMETRY()); v.AddParameter("tolerance", LogicalType::DOUBLE);
+				v.SetReturnType(LogicalType::GEOMETRY()); v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
+			});
+			func.SetDescription("Returns the largest empty circle within a geometry"); func.SetTag("ext", "spatial"); func.SetTag("category", "construction");
+		});
+	}
+};
+
+struct ST_ClipByBox2D {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		BinaryExecutor::Execute<string_t, string_t, string_t>(args.data[0], args.data[1], result, args.size(),
+		    [&](const string_t &geom_blob, const string_t &box_blob) {
+			    const auto geom = lstate.Deserialize(geom_blob);
+			    double xmin, ymin, xmax, ymax;
+			    const auto box = lstate.Deserialize(box_blob);
+			    box.get_extent(xmin, ymin, xmax, ymax);
+			    return lstate.Serialize(result, geom.get_clipped(xmin, ymin, xmax, ymax));
+		    });
+	}
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_ClipByBox2D", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
+				v.AddParameter("geom", LogicalType::GEOMETRY()); v.AddParameter("box", LogicalType::GEOMETRY());
+				v.SetReturnType(LogicalType::GEOMETRY()); v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
+			});
+			func.SetDescription("Clips a geometry by a bounding box"); func.SetTag("ext", "spatial"); func.SetTag("category", "construction");
+		});
+	}
+};
+
+// --- Measurement ---
+
+struct ST_FrechetDistance {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		BinaryExecutor::Execute<string_t, string_t, double>(args.data[0], args.data[1], result, args.size(),
+		    [&](const string_t &l, const string_t &r) {
+			    return lstate.Deserialize(l).frechet_distance_to(lstate.Deserialize(r));
+		    });
+	}
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_FrechetDistance", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
+				v.AddParameter("geom1", LogicalType::GEOMETRY()); v.AddParameter("geom2", LogicalType::GEOMETRY());
+				v.SetReturnType(LogicalType::DOUBLE); v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
+			});
+			func.SetDescription("Returns the Frechet distance between two geometries"); func.SetTag("ext", "spatial"); func.SetTag("category", "property");
+		});
+	}
+};
+
+struct ST_HausdorffDistance {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		BinaryExecutor::Execute<string_t, string_t, double>(args.data[0], args.data[1], result, args.size(),
+		    [&](const string_t &l, const string_t &r) {
+			    return lstate.Deserialize(l).hausdorff_distance_to(lstate.Deserialize(r));
+		    });
+	}
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_HausdorffDistance", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
+				v.AddParameter("geom1", LogicalType::GEOMETRY()); v.AddParameter("geom2", LogicalType::GEOMETRY());
+				v.SetReturnType(LogicalType::DOUBLE); v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
+			});
+			func.SetDescription("Returns the Hausdorff distance between two geometries"); func.SetTag("ext", "spatial"); func.SetTag("category", "property");
+		});
+	}
+};
+
+struct ST_MinimumClearance_GEOS {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		UnaryExecutor::Execute<string_t, double>(args.data[0], result, args.size(),
+		    [&](const string_t &blob) { return lstate.Deserialize(blob).get_minimum_clearance(); });
+	}
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_MinimumClearance", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
+				v.AddParameter("geom", LogicalType::GEOMETRY()); v.SetReturnType(LogicalType::DOUBLE);
+				v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
+			});
+			func.SetDescription("Returns the minimum clearance of a geometry"); func.SetTag("ext", "spatial"); func.SetTag("category", "property");
+		});
+	}
+};
+
+struct ST_MinimumClearanceLine {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(),
+		    [&](const string_t &blob) { return lstate.Serialize(result, lstate.Deserialize(blob).get_minimum_clearance_line()); });
+	}
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_MinimumClearanceLine", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
+				v.AddParameter("geom", LogicalType::GEOMETRY()); v.SetReturnType(LogicalType::GEOMETRY());
+				v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
+			});
+			func.SetDescription("Returns the line spanning the minimum clearance"); func.SetTag("ext", "spatial"); func.SetTag("category", "property");
+		});
+	}
+};
+
+// --- Relationships ---
+
+struct ST_Relate_GEOS {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		BinaryExecutor::Execute<string_t, string_t, string_t>(args.data[0], args.data[1], result, args.size(),
+		    [&](const string_t &l, const string_t &r) {
+			    auto matrix = lstate.Deserialize(l).relate(lstate.Deserialize(r));
+			    auto ret = StringVector::AddString(result, matrix);
+			    GEOSFree_r(lstate.GetContext(), matrix);
+			    return ret;
+		    });
+	}
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_Relate", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
+				v.AddParameter("geom1", LogicalType::GEOMETRY()); v.AddParameter("geom2", LogicalType::GEOMETRY());
+				v.SetReturnType(LogicalType::VARCHAR); v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
+			});
+			func.SetDescription("Returns the DE-9IM intersection matrix string"); func.SetTag("ext", "spatial"); func.SetTag("category", "property");
+		});
+	}
+};
+
+struct ST_OrderingEquals_GEOS : SymmetricPreparedBinaryFunction<ST_OrderingEquals_GEOS> {
+	static bool ExecutePredicateNormal(const GeosGeometry &lhs, const GeosGeometry &rhs) {
+		return lhs.equals_exact(rhs, 0.0);
+	}
+	static bool ExecutePredicatePrepared(const PreparedGeosGeometry &, const GeosGeometry &) {
+		throw NotImplementedException("OrderingEquals does not support prepared geometry");
+	}
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_OrderingEquals", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
+				v.AddParameter("geom1", LogicalType::GEOMETRY()); v.AddParameter("geom2", LogicalType::GEOMETRY());
+				v.SetReturnType(LogicalType::BOOLEAN); v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
+			});
+			func.SetDescription("Returns true if two geometries are exactly equal (same vertex order)"); func.SetTag("ext", "spatial"); func.SetTag("category", "property");
+		});
+	}
+};
+
+// --- Editors ---
+
+struct ST_ForcePolygonCCW {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(),
+		    [&](const string_t &blob) {
+			    auto geom = lstate.Deserialize(blob);
+			    geom.orient_polygons(false); // ext_cw=false → CCW exterior
+			    return lstate.Serialize(result, geom);
+		    });
+	}
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_ForcePolygonCCW", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
+				v.AddParameter("geom", LogicalType::GEOMETRY()); v.SetReturnType(LogicalType::GEOMETRY());
+				v.SetBind(GeoTypes::PropagateCRS); v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
+			});
+			func.SetDescription("Forces polygon exterior rings to be counter-clockwise"); func.SetTag("ext", "spatial"); func.SetTag("category", "construction");
+		});
+	}
+};
+
+struct ST_ForcePolygonCW {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(),
+		    [&](const string_t &blob) {
+			    auto geom = lstate.Deserialize(blob);
+			    geom.orient_polygons(true); // ext_cw=true → CW exterior
+			    return lstate.Serialize(result, geom);
+		    });
+	}
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_ForcePolygonCW", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
+				v.AddParameter("geom", LogicalType::GEOMETRY()); v.SetReturnType(LogicalType::GEOMETRY());
+				v.SetBind(GeoTypes::PropagateCRS); v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
+			});
+			func.SetDescription("Forces polygon exterior rings to be clockwise"); func.SetTag("ext", "spatial"); func.SetTag("category", "construction");
+		});
+	}
+};
+
+// --- Measurement additions ---
+
+struct ST_Angle_GEOS {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		BinaryExecutor::Execute<string_t, string_t, double>(args.data[0], args.data[1], result, args.size(),
+		    [&](const string_t &l_blob, const string_t &r_blob) {
+			    auto ctx = lstate.GetContext();
+			    const auto l_geom = lstate.Deserialize(l_blob);
+			    const auto r_geom = lstate.Deserialize(r_blob);
+			    double lx = 0, ly = 0, rx = 0, ry = 0;
+			    auto l_centroid = GEOSGetCentroid_r(ctx, l_geom.get_raw());
+			    auto r_centroid = GEOSGetCentroid_r(ctx, r_geom.get_raw());
+			    GEOSGeomGetX_r(ctx, l_centroid, &lx);
+			    GEOSGeomGetY_r(ctx, l_centroid, &ly);
+			    GEOSGeomGetX_r(ctx, r_centroid, &rx);
+			    GEOSGeomGetY_r(ctx, r_centroid, &ry);
+			    GEOSGeom_destroy_r(ctx, l_centroid);
+			    GEOSGeom_destroy_r(ctx, r_centroid);
+			    return std::atan2(ry - ly, rx - lx);
+		    });
+	}
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_Angle", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
+				v.AddParameter("point1", LogicalType::GEOMETRY()); v.AddParameter("point2", LogicalType::GEOMETRY());
+				v.SetReturnType(LogicalType::DOUBLE); v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
+			});
+			func.SetDescription("Returns the angle in radians between two points"); func.SetTag("ext", "spatial"); func.SetTag("category", "property");
+		});
+	}
+};
+
+// --- Editors ---
+
+struct ST_SnapToGrid_GEOS {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		BinaryExecutor::Execute<string_t, double, string_t>(args.data[0], args.data[1], result, args.size(),
+		    [&](const string_t &blob, double size) {
+			    return lstate.Serialize(result, lstate.Deserialize(blob).get_gridded(size));
+		    });
+	}
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_SnapToGrid", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
+				v.AddParameter("geom", LogicalType::GEOMETRY()); v.AddParameter("size", LogicalType::DOUBLE);
+				v.SetReturnType(LogicalType::GEOMETRY()); v.SetBind(GeoTypes::PropagateCRS);
+				v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
+			});
+			func.SetDescription("Snaps all coordinates to a grid of the given size"); func.SetTag("ext", "spatial"); func.SetTag("category", "construction");
+		});
+	}
+};
+
+// --- Validation ---
+
+struct ST_IsValidReason {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(),
+		    [&](const string_t &blob) {
+			    auto reason = lstate.Deserialize(blob).is_valid_reason();
+			    auto ret = StringVector::AddString(result, reason);
+			    GEOSFree_r(lstate.GetContext(), reason);
+			    return ret;
+		    });
+	}
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_IsValidReason", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
+				v.AddParameter("geom", LogicalType::GEOMETRY()); v.SetReturnType(LogicalType::VARCHAR);
+				v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
+			});
+			func.SetDescription("Returns text explaining why a geometry is invalid, or 'Valid Geometry'"); func.SetTag("ext", "spatial"); func.SetTag("category", "property");
+		});
+	}
+};
+
+// --- Accessors ---
+
+struct ST_CoordDim_GEOS {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		UnaryExecutor::Execute<string_t, int32_t>(args.data[0], result, args.size(),
+		    [&](const string_t &blob) -> int32_t {
+			    const auto geom = lstate.Deserialize(blob);
+			    return GEOSGeom_getCoordinateDimension_r(lstate.GetContext(), geom.get_raw());
+		    });
+	}
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_CoordDim", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
+				v.AddParameter("geom", LogicalType::GEOMETRY()); v.SetReturnType(LogicalType::INTEGER);
+				v.SetInit(LocalState::Init); v.SetFunction(Execute);
+			});
+			func.SetDescription("Returns the coordinate dimension of a geometry"); func.SetTag("ext", "spatial"); func.SetTag("category", "property");
+		});
+	}
+};
+
+struct ST_NDims_GEOS {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		UnaryExecutor::Execute<string_t, int32_t>(args.data[0], result, args.size(),
+		    [&](const string_t &blob) -> int32_t {
+			    const auto geom = lstate.Deserialize(blob);
+			    return GEOSGeom_getDimensions_r(lstate.GetContext(), geom.get_raw());
+		    });
+	}
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_NDims", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
+				v.AddParameter("geom", LogicalType::GEOMETRY()); v.SetReturnType(LogicalType::INTEGER);
+				v.SetInit(LocalState::Init); v.SetFunction(Execute);
+			});
+			func.SetDescription("Returns the topological dimension of a geometry"); func.SetTag("ext", "spatial"); func.SetTag("category", "property");
+		});
+	}
+};
+
+struct ST_NRings_GEOS {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		UnaryExecutor::Execute<string_t, int32_t>(args.data[0], result, args.size(),
+		    [&](const string_t &blob) -> int32_t {
+			    auto ctx = lstate.GetContext();
+			    const auto geom = lstate.Deserialize(blob);
+			    const auto raw = geom.get_raw();
+			    auto type = GEOSGeomTypeId_r(ctx, raw);
+			    if (type != GEOS_POLYGON) return 0;
+			    auto interior = GEOSGetNumInteriorRings_r(ctx, raw);
+			    if (interior < 0) return 0;
+			    return 1 + interior;
+		    });
+	}
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_NRings", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
+				v.AddParameter("geom", LogicalType::GEOMETRY()); v.SetReturnType(LogicalType::INTEGER);
+				v.SetInit(LocalState::Init); v.SetFunction(Execute);
+			});
+			func.SetDescription("Returns the number of rings in a polygon (exterior + interior)"); func.SetTag("ext", "spatial"); func.SetTag("category", "property");
+		});
+	}
+};
+
+struct ST_IsPolygonCCW_GEOS {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		UnaryExecutor::Execute<string_t, bool>(args.data[0], result, args.size(),
+		    [&](const string_t &blob) {
+			    auto ctx = lstate.GetContext();
+			    const auto geom = lstate.Deserialize(blob);
+			    auto type = GEOSGeomTypeId_r(ctx, geom.get_raw());
+			    if (type != GEOS_POLYGON) return false;
+			    auto ring = GEOSGetExteriorRing_r(ctx, geom.get_raw());
+			    auto cs = GEOSGeom_getCoordSeq_r(ctx, ring);
+			    char ccw = 0;
+			    GEOSCoordSeq_isCCW_r(ctx, cs, &ccw);
+			    return ccw != 0;
+		    });
+	}
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_IsPolygonCCW", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
+				v.AddParameter("geom", LogicalType::GEOMETRY()); v.SetReturnType(LogicalType::BOOLEAN);
+				v.SetInit(LocalState::Init); v.SetFunction(Execute);
+			});
+			func.SetDescription("Returns true if the exterior ring of a polygon is counter-clockwise"); func.SetTag("ext", "spatial"); func.SetTag("category", "property");
+		});
+	}
+};
+
+struct ST_IsPolygonCW_GEOS {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		UnaryExecutor::Execute<string_t, bool>(args.data[0], result, args.size(),
+		    [&](const string_t &blob) {
+			    auto ctx = lstate.GetContext();
+			    const auto geom = lstate.Deserialize(blob);
+			    auto type = GEOSGeomTypeId_r(ctx, geom.get_raw());
+			    if (type != GEOS_POLYGON) return false;
+			    auto ring = GEOSGetExteriorRing_r(ctx, geom.get_raw());
+			    auto cs = GEOSGeom_getCoordSeq_r(ctx, ring);
+			    char ccw = 0;
+			    GEOSCoordSeq_isCCW_r(ctx, cs, &ccw);
+			    return ccw == 0;
+		    });
+	}
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_IsPolygonCW", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
+				v.AddParameter("geom", LogicalType::GEOMETRY()); v.SetReturnType(LogicalType::BOOLEAN);
+				v.SetInit(LocalState::Init); v.SetFunction(Execute);
+			});
+			func.SetDescription("Returns true if the exterior ring of a polygon is clockwise"); func.SetTag("ext", "spatial"); func.SetTag("category", "property");
+		});
+	}
+};
+
+struct ST_BoundingDiagonal_GEOS {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(),
+		    [&](const string_t &blob) {
+			    auto geom = lstate.Deserialize(blob);
+			    double xmin, ymin, xmax, ymax;
+			    geom.get_extent(xmin, ymin, xmax, ymax);
+			    auto ctx = lstate.GetContext();
+			    auto cs = GEOSCoordSeq_create_r(ctx, 2, 2);
+			    GEOSCoordSeq_setXY_r(ctx, cs, 0, xmin, ymin);
+			    GEOSCoordSeq_setXY_r(ctx, cs, 1, xmax, ymax);
+			    auto line = GEOSGeom_createLineString_r(ctx, cs);
+			    return lstate.Serialize(result, GeosGeometry(ctx, line));
+		    });
+	}
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_BoundingDiagonal", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
+				v.AddParameter("geom", LogicalType::GEOMETRY()); v.SetReturnType(LogicalType::GEOMETRY());
+				v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
+			});
+			func.SetDescription("Returns the diagonal of the bounding box as a linestring"); func.SetTag("ext", "spatial"); func.SetTag("category", "property");
+		});
+	}
+};
+
+// --- SedonaDB parity: Accessors ---
+
+struct ST_GeometryN_GEOS {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		BinaryExecutor::Execute<string_t, int32_t, string_t>(args.data[0], args.data[1], result, args.size(),
+		    [&](const string_t &blob, int32_t n) {
+			    auto geom = lstate.Deserialize(blob);
+			    auto raw = geom.get_raw();
+			    auto num = GEOSGetNumGeometries_r(lstate.GetContext(), raw);
+			    if (n < 0 || n >= num) {
+				    throw InvalidInputException("ST_GeometryN: index %d out of range [0, %d)", n, num);
+			    }
+			    auto sub = GEOSGetGeometryN_r(lstate.GetContext(), raw, n);
+			    auto clone = GEOSGeom_clone_r(lstate.GetContext(), sub);
+			    return lstate.Serialize(result, GeosGeometry(lstate.GetContext(), clone));
+		    });
+	}
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_GeometryN", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
+				v.AddParameter("geom", LogicalType::GEOMETRY()); v.AddParameter("n", LogicalType::INTEGER);
+				v.SetReturnType(LogicalType::GEOMETRY()); v.SetBind(GeoTypes::PropagateCRS);
+				v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
+			});
+			func.SetDescription("Returns the Nth geometry from a geometry collection (0-indexed)"); func.SetTag("ext", "spatial"); func.SetTag("category", "property");
+		});
+	}
+};
+
+struct ST_IsCollection_GEOS {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		UnaryExecutor::Execute<string_t, bool>(args.data[0], result, args.size(),
+		    [&](const string_t &blob) {
+			    const auto geom = lstate.Deserialize(blob);
+			    auto type = GEOSGeomTypeId_r(lstate.GetContext(), geom.get_raw());
+			    return type == GEOS_MULTIPOINT || type == GEOS_MULTILINESTRING ||
+			           type == GEOS_MULTIPOLYGON || type == GEOS_GEOMETRYCOLLECTION;
+		    });
+	}
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_IsCollection", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
+				v.AddParameter("geom", LogicalType::GEOMETRY()); v.SetReturnType(LogicalType::BOOLEAN);
+				v.SetInit(LocalState::Init); v.SetFunction(Execute);
+			});
+			func.SetDescription("Returns true if geometry is a Multi* or GeometryCollection type"); func.SetTag("ext", "spatial"); func.SetTag("category", "property");
+		});
+	}
+};
+
+struct ST_MaxDistance_GEOS {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		BinaryExecutor::Execute<string_t, string_t, double>(args.data[0], args.data[1], result, args.size(),
+		    [&](const string_t &l, const string_t &r) {
+			    // Use Hausdorff distance as maximum distance (exact for convex, upper bound for concave)
+			    return lstate.Deserialize(l).hausdorff_distance_to(lstate.Deserialize(r));
+		    });
+	}
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_MaxDistance", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
+				v.AddParameter("geom1", LogicalType::GEOMETRY()); v.AddParameter("geom2", LogicalType::GEOMETRY());
+				v.SetReturnType(LogicalType::DOUBLE); v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
+			});
+			func.SetDescription("Returns the maximum distance between two geometries"); func.SetTag("ext", "spatial"); func.SetTag("category", "property");
+		});
+	}
+};
+
 //######################################################################################################################
 // Register Module
 //######################################################################################################################
@@ -3190,6 +3888,40 @@ void RegisterGEOSModule(ExtensionLoader &loader) {
 	ST_Union::Register(loader);
 	ST_VoronoiDiagram::Register(loader);
 	ST_Within::Register(loader);
+
+	// New GEOS wrappers
+	ST_SymDifference::Register(loader);
+	ST_UnaryUnion::Register(loader);
+	ST_SharedPaths::Register(loader);
+	ST_Snap_GEOS::Register(loader);
+	ST_OffsetCurve::Register(loader);
+	ST_DelaunayTriangles::Register(loader);
+	ST_TriangulatePolygon::Register(loader);
+	ST_Segmentize::Register(loader);
+	ST_SimplifyPolygonHull::Register(loader);
+	ST_MinimumBoundingCircle::Register(loader);
+	ST_LargestEmptyCircle::Register(loader);
+	ST_ClipByBox2D::Register(loader);
+	ST_FrechetDistance::Register(loader);
+	ST_HausdorffDistance::Register(loader);
+	ST_MinimumClearance_GEOS::Register(loader);
+	ST_MinimumClearanceLine::Register(loader);
+	ST_Relate_GEOS::Register(loader);
+	ST_OrderingEquals_GEOS::Register(loader);
+	ST_ForcePolygonCCW::Register(loader);
+	ST_ForcePolygonCW::Register(loader);
+	ST_IsValidReason::Register(loader);
+	ST_CoordDim_GEOS::Register(loader);
+	ST_NDims_GEOS::Register(loader);
+	ST_NRings_GEOS::Register(loader);
+	ST_IsPolygonCCW_GEOS::Register(loader);
+	ST_IsPolygonCW_GEOS::Register(loader);
+	ST_BoundingDiagonal_GEOS::Register(loader);
+	ST_GeometryN_GEOS::Register(loader);
+	ST_IsCollection_GEOS::Register(loader);
+	ST_MaxDistance_GEOS::Register(loader);
+	ST_Angle_GEOS::Register(loader);
+	ST_SnapToGrid_GEOS::Register(loader);
 
 	// Aggregate Functions
 	ST_MemUnion_Agg::Register(loader);

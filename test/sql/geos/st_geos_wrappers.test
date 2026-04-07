@@ -1,0 +1,408 @@
+# name: test/sql/geos/st_geos_wrappers.test
+# group: [geos]
+
+require spatial
+
+# ===========================================================================
+# ST_SymDifference
+# ===========================================================================
+
+query I
+SELECT ST_Area(ST_SymDifference(
+    ST_GeomFromText('POLYGON ((0 0, 2 0, 2 2, 0 2, 0 0))'),
+    ST_GeomFromText('POLYGON ((1 1, 3 1, 3 3, 1 3, 1 1))')
+));
+----
+6.0
+
+# ===========================================================================
+# ST_UnaryUnion
+# ===========================================================================
+
+query I
+SELECT ST_NPoints(ST_UnaryUnion(
+    ST_GeomFromText('MULTIPOLYGON (((0 0, 1 0, 1 1, 0 1, 0 0)), ((0.5 0.5, 1.5 0.5, 1.5 1.5, 0.5 1.5, 0.5 0.5)))')
+));
+----
+9
+
+# ===========================================================================
+# ST_Relate
+# ===========================================================================
+
+# Point on boundary of polygon
+query I
+SELECT ST_Relate(ST_GeomFromText('POINT (0 0)'), ST_GeomFromText('POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))'));
+----
+F0FFFF212
+
+# Point inside polygon
+query I
+SELECT ST_Relate(ST_GeomFromText('POINT (0.5 0.5)'), ST_GeomFromText('POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))'));
+----
+0FFFFF212
+
+# ===========================================================================
+# ST_FrechetDistance
+# ===========================================================================
+
+query I
+SELECT round(ST_FrechetDistance(
+    ST_GeomFromText('LINESTRING (0 0, 1 0)'),
+    ST_GeomFromText('LINESTRING (0 0, 0 1)')
+), 2);
+----
+1.41
+
+# ===========================================================================
+# ST_HausdorffDistance
+# ===========================================================================
+
+query I
+SELECT round(ST_HausdorffDistance(
+    ST_GeomFromText('LINESTRING (0 0, 1 0)'),
+    ST_GeomFromText('LINESTRING (0 0, 0 1)')
+), 2);
+----
+1.0
+
+# ===========================================================================
+# ST_IsValidReason
+# ===========================================================================
+
+query I
+SELECT ST_IsValidReason(ST_GeomFromText('POLYGON ((0 0, 1 1, 1 0, 0 1, 0 0))'));
+----
+Self-intersection[0.5 0.5]
+
+query I
+SELECT ST_IsValidReason(ST_GeomFromText('POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))'));
+----
+Valid Geometry
+
+# ===========================================================================
+# ST_DelaunayTriangles
+# ===========================================================================
+
+query I
+SELECT ST_GeometryType(ST_DelaunayTriangles(ST_GeomFromText('MULTIPOINT (0 0, 1 0, 0 1, 1 1)')));
+----
+GEOMETRYCOLLECTION
+
+query I
+SELECT ST_NGeometries(ST_DelaunayTriangles(ST_GeomFromText('MULTIPOINT (0 0, 1 0, 0 1, 1 1)')));
+----
+2
+
+# ===========================================================================
+# ST_TriangulatePolygon
+# ===========================================================================
+
+query I
+SELECT ST_NGeometries(ST_TriangulatePolygon(ST_GeomFromText('POLYGON ((0 0, 4 0, 4 4, 0 4, 0 0))')));
+----
+2
+
+# ===========================================================================
+# ST_Segmentize
+# ===========================================================================
+
+# Line of length 10, segmentized to max 3 → at least 4 segments
+query I
+SELECT ST_NPoints(ST_Segmentize(ST_GeomFromText('LINESTRING (0 0, 10 0)'), 3.0));
+----
+5
+
+# ===========================================================================
+# ST_OffsetCurve
+# ===========================================================================
+
+query I
+SELECT ST_GeometryType(ST_OffsetCurve(ST_GeomFromText('LINESTRING (0 0, 10 0)'), 1.0));
+----
+LINESTRING
+
+# ===========================================================================
+# ST_MinimumBoundingCircle
+# ===========================================================================
+
+query I
+SELECT ST_GeometryType(ST_MinimumBoundingCircle(ST_GeomFromText('MULTIPOINT (0 0, 4 0, 2 3)')));
+----
+POLYGON
+
+# ===========================================================================
+# ST_MinimumClearance
+# ===========================================================================
+
+query I
+SELECT round(ST_MinimumClearance(ST_GeomFromText('POLYGON ((0 0, 1 0, 1 1, 0.5 0.00001, 0 0))')), 4);
+----
+0.0
+
+# ===========================================================================
+# ST_ForcePolygonCCW / ST_ForcePolygonCW
+# ===========================================================================
+
+# CW polygon forced to CCW — ring direction reverses
+query I
+SELECT ST_AsText(ST_ForcePolygonCCW(ST_GeomFromText('POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))')));
+----
+POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))
+
+# CCW polygon forced to CW
+query I
+SELECT ST_AsText(ST_ForcePolygonCW(ST_GeomFromText('POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))')));
+----
+POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))
+
+# ===========================================================================
+# ST_GeometryN
+# ===========================================================================
+
+query I
+SELECT ST_AsText(ST_GeometryN(ST_GeomFromText('MULTIPOINT (0 0, 1 1, 2 2)'), 0));
+----
+POINT (0 0)
+
+query I
+SELECT ST_AsText(ST_GeometryN(ST_GeomFromText('MULTIPOINT (0 0, 1 1, 2 2)'), 2));
+----
+POINT (2 2)
+
+statement error
+SELECT ST_GeometryN(ST_GeomFromText('MULTIPOINT (0 0)'), 5);
+----
+index 5 out of range
+
+# ===========================================================================
+# ST_IsCollection
+# ===========================================================================
+
+query I
+SELECT ST_IsCollection(ST_GeomFromText('MULTIPOINT (0 0, 1 1)'));
+----
+true
+
+query I
+SELECT ST_IsCollection(ST_GeomFromText('POINT (0 0)'));
+----
+false
+
+query I
+SELECT ST_IsCollection(ST_GeomFromText('LINESTRING (0 0, 1 1)'));
+----
+false
+
+query I
+SELECT ST_IsCollection(ST_GeomFromText('GEOMETRYCOLLECTION (POINT (0 0))'));
+----
+true
+
+# ===========================================================================
+# ST_MaxDistance
+# ===========================================================================
+
+query I
+SELECT round(ST_MaxDistance(ST_GeomFromText('POINT (0 0)'), ST_GeomFromText('POINT (3 4)')), 1);
+----
+5.0
+
+# Note: ST_MaxDistance uses Hausdorff distance which is the maximum of
+# minimum distances, not the absolute maximum pairwise distance.
+query I
+SELECT round(ST_MaxDistance(ST_GeomFromText('LINESTRING (0 0, 1 0)'), ST_GeomFromText('LINESTRING (0 1, 1 1)')), 2);
+----
+1.0
+
+# ===========================================================================
+# ST_OrderingEquals
+# ===========================================================================
+
+query I
+SELECT ST_OrderingEquals(ST_GeomFromText('POINT (0 0)'), ST_GeomFromText('POINT (0 0)'));
+----
+true
+
+query I
+SELECT ST_OrderingEquals(ST_GeomFromText('LINESTRING (0 0, 1 1)'), ST_GeomFromText('LINESTRING (1 1, 0 0)'));
+----
+false
+
+# ===========================================================================
+# ST_Snap
+# ===========================================================================
+
+query I
+SELECT ST_GeometryType(ST_Snap(ST_GeomFromText('POINT (0.1 0)'), ST_GeomFromText('POINT (0 0)'), 0.5));
+----
+POINT
+
+# ===========================================================================
+# ST_SharedPaths
+# ===========================================================================
+
+query I
+SELECT ST_GeometryType(ST_SharedPaths(
+    ST_GeomFromText('LINESTRING (0 0, 1 0, 1 1)'),
+    ST_GeomFromText('LINESTRING (0 0, 1 0)')
+));
+----
+GEOMETRYCOLLECTION
+
+# ===========================================================================
+# ST_ClipByBox2D
+# ===========================================================================
+
+query I
+SELECT ST_AsText(ST_ClipByBox2D(
+    ST_GeomFromText('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))'),
+    ST_GeomFromText('POLYGON ((2 2, 5 2, 5 5, 2 5, 2 2))')
+));
+----
+POLYGON ((2 2, 2 5, 5 5, 5 2, 2 2))
+
+# ===========================================================================
+# ST_SimplifyPolygonHull
+# ===========================================================================
+
+query I
+SELECT ST_GeometryType(ST_SimplifyPolygonHull(
+    ST_GeomFromText('POLYGON ((0 0, 1 0.1, 2 0, 2 2, 0 2, 0 0))'), 0.5
+));
+----
+POLYGON
+
+# ===========================================================================
+# ST_LargestEmptyCircle
+# ===========================================================================
+
+query I
+SELECT ST_GeometryType(ST_LargestEmptyCircle(ST_GeomFromText('MULTIPOINT (0 0, 10 0, 0 10)'), 1.0));
+----
+LINESTRING
+
+# ===========================================================================
+# ST_CoordDim
+# ===========================================================================
+
+query I
+SELECT ST_CoordDim(ST_GeomFromText('POINT (0 0)'));
+----
+2
+
+# ===========================================================================
+# ST_NDims
+# ===========================================================================
+
+query I
+SELECT ST_NDims(ST_GeomFromText('POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))'));
+----
+2
+
+# ===========================================================================
+# ST_NRings
+# ===========================================================================
+
+query I
+SELECT ST_NRings(ST_GeomFromText('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))'));
+----
+1
+
+query I
+SELECT ST_NRings(ST_GeomFromText('POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0), (2 2, 8 2, 8 8, 2 8, 2 2))'));
+----
+2
+
+query I
+SELECT ST_NRings(ST_GeomFromText('POINT (0 0)'));
+----
+0
+
+# ===========================================================================
+# ST_IsPolygonCCW / ST_IsPolygonCW
+# ===========================================================================
+
+query I
+SELECT ST_IsPolygonCCW(ST_GeomFromText('POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))'));
+----
+true
+
+query I
+SELECT ST_IsPolygonCW(ST_GeomFromText('POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))'));
+----
+true
+
+query I
+SELECT ST_IsPolygonCCW(ST_GeomFromText('POINT (0 0)'));
+----
+false
+
+# ===========================================================================
+# ST_BoundingDiagonal
+# ===========================================================================
+
+query I
+SELECT ST_AsText(ST_BoundingDiagonal(ST_GeomFromText('MULTIPOINT (0 0, 5 3)')));
+----
+LINESTRING (0 0, 5 3)
+
+# ===========================================================================
+# ST_SnapToGrid
+# ===========================================================================
+
+query I
+SELECT ST_AsText(ST_SnapToGrid(ST_GeomFromText('POINT (1.23456 7.89012)'), 0.1));
+----
+POINT (1.2 7.9)
+
+query I
+SELECT ST_AsText(ST_SnapToGrid(ST_GeomFromText('POINT (1.23456 7.89012)'), 1.0));
+----
+POINT (1 8)
+
+# ===========================================================================
+# ST_Angle
+# ===========================================================================
+
+# East = 0 radians
+query I
+SELECT round(ST_Angle(ST_Point(0,0), ST_Point(1,0)), 4);
+----
+0.0
+
+# North = pi/2
+query I
+SELECT round(ST_Angle(ST_Point(0,0), ST_Point(0,1)), 4);
+----
+1.5708
+
+# Northeast = pi/4
+query I
+SELECT round(ST_Angle(ST_Point(0,0), ST_Point(1,1)), 4);
+----
+0.7854
+
+# ===========================================================================
+# ST_GeoHash
+# ===========================================================================
+
+query I
+SELECT ST_GeoHash(ST_Point(-74.006, 40.7128), 9);
+----
+dr5regw3p
+
+query I
+SELECT ST_GeoHash(ST_Point(0, 0), 5);
+----
+s0000
+
+query I
+SELECT ST_GeoHash(ST_Point(139.6917, 35.6895), 7);
+----
+xn774c0
+
+statement error
+SELECT ST_GeoHash(ST_Point(0, 0), 0);
+----
+precision must be between 1 and 20

@@ -5784,7 +5784,7 @@ struct ST_Distance_Sphere {
 		unique_ptr<FunctionData> Copy() const override {
 			auto copy = make_uniq<BindData>();
 			copy->always_xy = always_xy;
-			return copy;
+			return std::move(copy);
 		}
 		bool Equals(const FunctionData &other) const override {
 			auto &other_bind = other.Cast<BindData>();
@@ -9462,6 +9462,82 @@ constexpr const char *ST_X::NAME;
 constexpr const char *ST_Y::NAME;
 constexpr const char *ST_Z::NAME;
 
+//======================================================================================================================
+// ST_GeoHash
+//======================================================================================================================
+
+struct ST_GeoHash_Func {
+	static constexpr const char BASE32[] = "0123456789bcdefghjkmnpqrstuvwxyz";
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+
+		BinaryExecutor::Execute<string_t, int32_t, string_t>(args.data[0], args.data[1], result, args.size(),
+		    [&](const string_t &blob, int32_t precision) {
+			    if (precision < 1 || precision > 20) {
+				    throw InvalidInputException("ST_GeoHash: precision must be between 1 and 20, got %d", precision);
+			    }
+
+			    sgl::geometry geom;
+			    Serde::Deserialize(geom, lstate.GetArena(), blob.GetDataUnsafe(), blob.GetSize());
+
+			    auto vc = geom.is_multi_part() ? 0 : geom.get_vertex_count();
+			    if (vc == 0) {
+				    throw InvalidInputException("ST_GeoHash: geometry must be a non-empty point");
+			    }
+			    auto vtx = geom.get_vertex_xy(0);
+			    double lon = vtx.x, lat = vtx.y;
+
+			    // Geohash encoding
+			    double lat_min = -90, lat_max = 90;
+			    double lon_min = -180, lon_max = 180;
+			    char hash[21] = {};
+			    int bit = 0;
+			    int ch = 0;
+			    bool is_lon = true;
+
+			    for (int i = 0; i < precision; i++) {
+				    for (int b = 4; b >= 0; b--) {
+					    if (is_lon) {
+						    double mid = (lon_min + lon_max) / 2.0;
+						    if (lon >= mid) { ch |= (1 << b); lon_min = mid; }
+						    else { lon_max = mid; }
+					    } else {
+						    double mid = (lat_min + lat_max) / 2.0;
+						    if (lat >= mid) { ch |= (1 << b); lat_min = mid; }
+						    else { lat_max = mid; }
+					    }
+					    is_lon = !is_lon;
+				    }
+				    hash[i] = BASE32[ch];
+				    ch = 0;
+			    }
+			    hash[precision] = '\0';
+
+			    lstate.GetArena().Reset();
+			    return StringVector::AddString(result, hash, precision);
+		    });
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_GeoHash", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", LogicalType::GEOMETRY());
+				variant.AddParameter("precision", LogicalType::INTEGER);
+				variant.SetReturnType(LogicalType::VARCHAR);
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute);
+			});
+			func.SetDescription("Returns the GeoHash string of a geometry's centroid at the given precision");
+			func.SetExample("SELECT ST_GeoHash(ST_Point(-74.006, 40.7128), 9);");
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "property");
+		});
+	}
+};
+
+constexpr const char ST_GeoHash_Func::BASE32[];
+
 } // namespace
 
 // Helper to access the constant distance from the bind data
@@ -9528,6 +9604,7 @@ void RegisterSpatialScalarFunctions(ExtensionLoader &loader) {
 	ST_InterpolatePoint::Register(loader);
 	ST_Intersects::Register(loader);
 	ST_Intersects_Extent::Register(loader);
+	ST_GeoHash_Func::Register(loader);
 	ST_IsClosed::Register(loader);
 	ST_IsEmpty::Register(loader);
 	ST_Length::Register(loader);
