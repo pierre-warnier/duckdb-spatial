@@ -11809,6 +11809,201 @@ struct ST_SetSRID_Func {
 	}
 };
 
+//======================================================================================================================
+// TWKB (Tiny Well-Known Binary) — varint-encoded compact binary format
+//======================================================================================================================
+
+// TWKB varint encoding helpers
+static void twkb_write_varint(std::vector<uint8_t> &buf, int64_t val) {
+	// ZigZag encoding for signed integers
+	uint64_t uval = (val << 1) ^ (val >> 63);
+	while (uval >= 0x80) {
+		buf.push_back(static_cast<uint8_t>(uval | 0x80));
+		uval >>= 7;
+	}
+	buf.push_back(static_cast<uint8_t>(uval));
+}
+
+static int64_t twkb_read_varint(const uint8_t *&ptr, const uint8_t *end) {
+	uint64_t result = 0;
+	int shift = 0;
+	while (ptr < end) {
+		uint8_t b = *ptr++;
+		result |= static_cast<uint64_t>(b & 0x7F) << shift;
+		if ((b & 0x80) == 0) break;
+		shift += 7;
+	}
+	// ZigZag decode
+	return static_cast<int64_t>((result >> 1) ^ -(result & 1));
+}
+
+struct ST_AsTWKB_Func {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto count = args.size();
+		BinaryExecutor::Execute<string_t, int32_t, string_t>(
+		    args.data[0], args.data[1], result, count, [&](const string_t &blob, int32_t precision) {
+			    auto &lstate = LocalState::ResetAndGet(state);
+			    sgl::geometry geom;
+			    lstate.Deserialize(blob, geom);
+
+			    const double scale = std::pow(10.0, precision);
+			    std::vector<uint8_t> buf;
+
+			    // Type byte: geometry type (lower 5 bits) + precision (upper 4 bits shifted)
+			    uint8_t type_id;
+			    switch (geom.get_type()) {
+			    case sgl::geometry_type::POINT: type_id = 1; break;
+			    case sgl::geometry_type::LINESTRING: type_id = 2; break;
+			    case sgl::geometry_type::POLYGON: type_id = 3; break;
+			    default: throw InvalidInputException("ST_AsTWKB: unsupported geometry type");
+			    }
+			    buf.push_back(type_id | ((precision & 0x0F) << 4));
+			    buf.push_back(0); // metadata flags: no bbox, no size, no idlist
+
+			    if (geom.get_type() == sgl::geometry_type::POINT) {
+				    auto vtx = geom.get_vertex_xy(0);
+				    twkb_write_varint(buf, static_cast<int64_t>(std::round(vtx.x * scale)));
+				    twkb_write_varint(buf, static_cast<int64_t>(std::round(vtx.y * scale)));
+			    } else if (geom.get_type() == sgl::geometry_type::LINESTRING) {
+				    twkb_write_varint(buf, geom.get_vertex_count());
+				    int64_t prev_x = 0, prev_y = 0;
+				    for (uint32_t i = 0; i < geom.get_vertex_count(); i++) {
+					    auto vtx = geom.get_vertex_xy(i);
+					    int64_t ix = static_cast<int64_t>(std::round(vtx.x * scale));
+					    int64_t iy = static_cast<int64_t>(std::round(vtx.y * scale));
+					    twkb_write_varint(buf, ix - prev_x);
+					    twkb_write_varint(buf, iy - prev_y);
+					    prev_x = ix;
+					    prev_y = iy;
+				    }
+			    } else if (geom.get_type() == sgl::geometry_type::POLYGON) {
+				    twkb_write_varint(buf, geom.get_part_count());
+				    auto *ring = geom.get_first_part();
+				    for (uint32_t r = 0; r < geom.get_part_count(); r++) {
+					    twkb_write_varint(buf, ring->get_vertex_count());
+					    int64_t prev_x = 0, prev_y = 0;
+					    for (uint32_t i = 0; i < ring->get_vertex_count(); i++) {
+						    auto vtx = ring->get_vertex_xy(i);
+						    int64_t ix = static_cast<int64_t>(std::round(vtx.x * scale));
+						    int64_t iy = static_cast<int64_t>(std::round(vtx.y * scale));
+						    twkb_write_varint(buf, ix - prev_x);
+						    twkb_write_varint(buf, iy - prev_y);
+						    prev_x = ix;
+						    prev_y = iy;
+					    }
+					    ring = ring->get_next();
+				    }
+			    }
+
+			    auto out = StringVector::EmptyString(result, buf.size());
+			    memcpy(out.GetDataWriteable(), buf.data(), buf.size());
+			    out.Finalize();
+			    return out;
+		    });
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_AsTWKB", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", LogicalType::GEOMETRY());
+				variant.AddParameter("precision", LogicalType::INTEGER);
+				variant.SetReturnType(LogicalType::BLOB);
+				variant.SetFunction(Execute);
+				variant.SetInit(LocalState::Init);
+			});
+			func.SetDescription("Encodes geometry as Tiny WKB (TWKB) with specified coordinate precision");
+			func.SetExample("SELECT ST_AsTWKB(ST_Point(1, 2), 0)");
+		});
+	}
+};
+
+struct ST_GeomFromTWKB_Func {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto count = args.size();
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, count, [&](const string_t &blob) {
+			auto &lstate = LocalState::ResetAndGet(state);
+			auto &alloc = lstate.GetAllocator();
+
+			const auto *ptr = reinterpret_cast<const uint8_t *>(blob.GetData());
+			const auto *end = ptr + blob.GetSize();
+
+			if (ptr >= end) throw InvalidInputException("ST_GeomFromTWKB: empty input");
+
+			uint8_t type_byte = *ptr++;
+			uint8_t type_id = type_byte & 0x1F;
+			int precision = (type_byte >> 4) & 0x0F;
+			if (precision > 7) precision -= 16; // sign extend 4-bit
+
+			if (ptr >= end) throw InvalidInputException("ST_GeomFromTWKB: truncated input");
+			ptr++; // skip metadata flags
+
+			double inv_scale = 1.0 / std::pow(10.0, precision);
+
+			if (type_id == 1) {
+				// POINT
+				int64_t x = twkb_read_varint(ptr, end);
+				int64_t y = twkb_read_varint(ptr, end);
+
+				sgl::geometry pt(sgl::geometry_type::POINT, false, false);
+				auto vtx_arr = static_cast<char *>(alloc.alloc(sizeof(sgl::vertex_xy)));
+				sgl::vertex_xy vtx = {x * inv_scale, y * inv_scale};
+				memcpy(vtx_arr, &vtx, sizeof(sgl::vertex_xy));
+				pt.set_vertex_array(vtx_arr, 1);
+				return lstate.Serialize(result, pt);
+			} else if (type_id == 2) {
+				// LINESTRING
+				int64_t n = twkb_read_varint(ptr, end);
+				sgl::geometry line(sgl::geometry_type::LINESTRING, false, false);
+				auto vtx_arr = static_cast<char *>(alloc.alloc(n * sizeof(sgl::vertex_xy)));
+				int64_t cx = 0, cy = 0;
+				for (int64_t i = 0; i < n; i++) {
+					cx += twkb_read_varint(ptr, end);
+					cy += twkb_read_varint(ptr, end);
+					sgl::vertex_xy vtx = {cx * inv_scale, cy * inv_scale};
+					memcpy(vtx_arr + i * sizeof(sgl::vertex_xy), &vtx, sizeof(sgl::vertex_xy));
+				}
+				line.set_vertex_array(vtx_arr, static_cast<uint32_t>(n));
+				return lstate.Serialize(result, line);
+			} else if (type_id == 3) {
+				// POLYGON
+				int64_t nrings = twkb_read_varint(ptr, end);
+				sgl::geometry poly(sgl::geometry_type::POLYGON, false, false);
+				for (int64_t r = 0; r < nrings; r++) {
+					int64_t npts = twkb_read_varint(ptr, end);
+					auto *ring = static_cast<sgl::geometry *>(alloc.alloc(sizeof(sgl::geometry)));
+					new (ring) sgl::geometry(sgl::geometry_type::LINESTRING, false, false);
+					auto vtx_arr = static_cast<char *>(alloc.alloc(npts * sizeof(sgl::vertex_xy)));
+					int64_t cx = 0, cy = 0;
+					for (int64_t i = 0; i < npts; i++) {
+						cx += twkb_read_varint(ptr, end);
+						cy += twkb_read_varint(ptr, end);
+						sgl::vertex_xy vtx = {cx * inv_scale, cy * inv_scale};
+						memcpy(vtx_arr + i * sizeof(sgl::vertex_xy), &vtx, sizeof(sgl::vertex_xy));
+					}
+					ring->set_vertex_array(vtx_arr, static_cast<uint32_t>(npts));
+					poly.append_part(ring);
+				}
+				return lstate.Serialize(result, poly);
+			}
+
+			throw InvalidInputException("ST_GeomFromTWKB: unsupported type %d", type_id);
+		});
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_GeomFromTWKB", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("twkb", LogicalType::BLOB);
+				variant.SetReturnType(LogicalType::GEOMETRY());
+				variant.SetFunction(Execute);
+				variant.SetInit(LocalState::Init);
+			});
+			func.SetDescription("Decodes a Tiny WKB (TWKB) binary into a geometry");
+			func.SetExample("SELECT ST_AsText(ST_GeomFromTWKB(ST_AsTWKB(ST_Point(1, 2), 0)))");
+		});
+	}
+};
+
 } // namespace
 
 // Helper to access the constant distance from the bind data
@@ -11940,6 +12135,8 @@ void RegisterSpatialScalarFunctions(ExtensionLoader &loader) {
 	ST_Project_Func::Register(loader);
 	ST_SRID_Func::Register(loader);
 	ST_SetSRID_Func::Register(loader);
+	ST_AsTWKB_Func::Register(loader);
+	ST_GeomFromTWKB_Func::Register(loader);
 }
 
 } // namespace duckdb
