@@ -10496,6 +10496,143 @@ struct ST_DFullyWithin {
 	}
 };
 
+//======================================================================================================================
+// ST_LongestLine
+//======================================================================================================================
+struct ST_LongestLine {
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto count = args.size();
+		BinaryExecutor::Execute<string_t, string_t, string_t>(
+		    args.data[0], args.data[1], result, count, [&](const string_t &blob1, const string_t &blob2) {
+			    auto &lstate = LocalState::ResetAndGet(state);
+			    sgl::geometry geom1, geom2;
+			    lstate.Deserialize(blob1, geom1);
+			    lstate.Deserialize(blob2, geom2);
+
+			    auto collect_vertices = [](const sgl::geometry &g, std::vector<sgl::vertex_xy> &pts) {
+				    std::function<void(const sgl::geometry &)> visit = [&](const sgl::geometry &geom) {
+					    if (geom.is_multi_part()) {
+						    auto *part = geom.get_first_part();
+						    for (uint32_t j = 0; j < geom.get_part_count(); j++) {
+							    visit(*part);
+							    part = part->get_next();
+						    }
+					    } else {
+						    for (uint32_t j = 0; j < geom.get_vertex_count(); j++) {
+							    pts.push_back(geom.get_vertex_xy(j));
+						    }
+					    }
+				    };
+				    visit(g);
+			    };
+
+			    std::vector<sgl::vertex_xy> pts1, pts2;
+			    collect_vertices(geom1, pts1);
+			    collect_vertices(geom2, pts2);
+
+			    double max_dist = -1;
+			    sgl::vertex_xy best_p1 = {0, 0}, best_p2 = {0, 0};
+
+			    for (const auto &p1 : pts1) {
+				    for (const auto &p2 : pts2) {
+					    double dx = p1.x - p2.x;
+					    double dy = p1.y - p2.y;
+					    double dist = dx * dx + dy * dy;
+					    if (dist > max_dist) {
+						    max_dist = dist;
+						    best_p1 = p1;
+						    best_p2 = p2;
+					    }
+				    }
+			    }
+
+			    // Create a linestring between the two farthest vertices
+			    auto &alloc = lstate.GetAllocator();
+			    sgl::geometry line(sgl::geometry_type::LINESTRING, false, false);
+			    auto vertex_array = static_cast<char *>(alloc.alloc(2 * sizeof(sgl::vertex_xy)));
+			    memcpy(vertex_array, &best_p1, sizeof(sgl::vertex_xy));
+			    memcpy(vertex_array + sizeof(sgl::vertex_xy), &best_p2, sizeof(sgl::vertex_xy));
+			    line.set_vertex_array(vertex_array, 2);
+
+			    return lstate.Serialize(result, line);
+		    });
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_LongestLine", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom1", LogicalType::GEOMETRY());
+				variant.AddParameter("geom2", LogicalType::GEOMETRY());
+				variant.SetReturnType(LogicalType::GEOMETRY());
+				variant.SetFunction(Execute);
+				variant.SetInit(LocalState::Init);
+			});
+			func.SetDescription("Returns the longest line between two geometries (vertex-to-vertex)");
+			func.SetExample("SELECT ST_AsText(ST_LongestLine(ST_Point(0, 0), ST_Point(1, 1)))");
+		});
+	}
+};
+
+//======================================================================================================================
+// ST_Summary
+//======================================================================================================================
+struct ST_Summary_Func {
+
+	static void SummaryRecursive(const sgl::geometry &geom, std::string &out, int depth = 0) {
+		std::string indent(depth * 2, ' ');
+		auto type = geom.get_type();
+
+		const char *type_name = "Unknown";
+		switch (type) {
+		case sgl::geometry_type::POINT: type_name = "Point"; break;
+		case sgl::geometry_type::LINESTRING: type_name = "LineString"; break;
+		case sgl::geometry_type::POLYGON: type_name = "Polygon"; break;
+		case sgl::geometry_type::MULTI_POINT: type_name = "MultiPoint"; break;
+		case sgl::geometry_type::MULTI_LINESTRING: type_name = "MultiLineString"; break;
+		case sgl::geometry_type::MULTI_POLYGON: type_name = "MultiPolygon"; break;
+		case sgl::geometry_type::GEOMETRY_COLLECTION: type_name = "GeometryCollection"; break;
+		default: break;
+		}
+
+		out += indent + type_name;
+		if (geom.has_z()) out += "Z";
+		if (geom.has_m()) out += "M";
+
+		if (geom.is_multi_part()) {
+			out += "[" + std::to_string(geom.get_part_count()) + "]";
+		} else {
+			out += "[" + std::to_string(geom.get_vertex_count()) + "]";
+		}
+	}
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto count = args.size();
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, count, [&](const string_t &blob) {
+			auto &lstate = LocalState::ResetAndGet(state);
+			sgl::geometry geom;
+			lstate.Deserialize(blob, geom);
+
+			std::string summary;
+			SummaryRecursive(geom, summary);
+			return StringVector::AddString(result, summary);
+		});
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_Summary", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", LogicalType::GEOMETRY());
+				variant.SetReturnType(LogicalType::VARCHAR);
+				variant.SetFunction(Execute);
+				variant.SetInit(LocalState::Init);
+			});
+			func.SetDescription("Returns a text summary of a geometry");
+			func.SetExample("SELECT ST_Summary(ST_Point(1, 2))");
+		});
+	}
+};
+
 } // namespace
 
 // Helper to access the constant distance from the bind data
@@ -10608,6 +10745,8 @@ void RegisterSpatialScalarFunctions(ExtensionLoader &loader) {
 	ST_3DPerimeter::Register(loader);
 	ST_3DDistance::Register(loader);
 	ST_DFullyWithin::Register(loader);
+	ST_LongestLine::Register(loader);
+	ST_Summary_Func::Register(loader);
 }
 
 } // namespace duckdb
