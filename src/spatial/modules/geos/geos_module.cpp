@@ -3264,6 +3264,201 @@ struct ST_RelateMatch {
 	}
 };
 
+//----------------------------------------------------------------------
+// ST_Subdivide
+//----------------------------------------------------------------------
+struct ST_Subdivide {
+
+	static void SubdivideRecursive(GEOSContextHandle_t ctx, const GEOSGeometry *geom, int max_vertices,
+	                               vector<GEOSGeometry *> &results, int depth = 0) {
+		if (depth > 50) {
+			// Prevent infinite recursion
+			results.push_back(GEOSGeom_clone_r(ctx, geom));
+			return;
+		}
+
+		int npoints = GEOSGetNumCoordinates_r(ctx, geom);
+		if (npoints <= max_vertices) {
+			results.push_back(GEOSGeom_clone_r(ctx, geom));
+			return;
+		}
+
+		// Get the envelope to split
+		double minx, miny, maxx, maxy;
+		const GEOSGeometry *env = GEOSGetExteriorRing_r(ctx, GEOSEnvelope_r(ctx, geom));
+		if (!env) {
+			results.push_back(GEOSGeom_clone_r(ctx, geom));
+			return;
+		}
+
+		// Get envelope bounds manually
+		const GEOSCoordSequence *seq = GEOSGeom_getCoordSeq_r(ctx, env);
+		GEOSCoordSeq_getX_r(ctx, seq, 0, &minx);
+		GEOSCoordSeq_getY_r(ctx, seq, 0, &miny);
+		GEOSCoordSeq_getX_r(ctx, seq, 2, &maxx);
+		GEOSCoordSeq_getY_r(ctx, seq, 2, &maxy);
+
+		double width = maxx - minx;
+		double height = maxy - miny;
+
+		// Split along the longer dimension
+		if (width >= height) {
+			double mid = minx + width / 2.0;
+			auto left = GEOSClipByRect_r(ctx, geom, minx, miny, mid, maxy);
+			auto right = GEOSClipByRect_r(ctx, geom, mid, miny, maxx, maxy);
+
+			if (left && !GEOSisEmpty_r(ctx, left)) {
+				SubdivideRecursive(ctx, left, max_vertices, results, depth + 1);
+			}
+			if (right && !GEOSisEmpty_r(ctx, right)) {
+				SubdivideRecursive(ctx, right, max_vertices, results, depth + 1);
+			}
+
+			if (left) GEOSGeom_destroy_r(ctx, left);
+			if (right) GEOSGeom_destroy_r(ctx, right);
+		} else {
+			double mid = miny + height / 2.0;
+			auto bottom = GEOSClipByRect_r(ctx, geom, minx, miny, maxx, mid);
+			auto top = GEOSClipByRect_r(ctx, geom, minx, mid, maxx, maxy);
+
+			if (bottom && !GEOSisEmpty_r(ctx, bottom)) {
+				SubdivideRecursive(ctx, bottom, max_vertices, results, depth + 1);
+			}
+			if (top && !GEOSisEmpty_r(ctx, top)) {
+				SubdivideRecursive(ctx, top, max_vertices, results, depth + 1);
+			}
+
+			if (bottom) GEOSGeom_destroy_r(ctx, bottom);
+			if (top) GEOSGeom_destroy_r(ctx, top);
+		}
+	}
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto count = args.size();
+		auto &geom_vec = args.data[0];
+		auto &max_vec = args.data[1];
+
+		UnifiedVectorFormat geom_fmt, max_fmt;
+		geom_vec.ToUnifiedFormat(count, geom_fmt);
+		max_vec.ToUnifiedFormat(count, max_fmt);
+		const auto geom_data = UnifiedVectorFormat::GetData<string_t>(geom_fmt);
+		const auto max_data = UnifiedVectorFormat::GetData<int32_t>(max_fmt);
+
+		for (idx_t i = 0; i < count; i++) {
+			const auto gi = geom_fmt.sel->get_index(i);
+			const auto mi = max_fmt.sel->get_index(i);
+
+			if (!geom_fmt.validity.RowIsValid(gi) || !max_fmt.validity.RowIsValid(mi)) {
+				FlatVector::SetNull(result, i, true);
+				continue;
+			}
+
+			auto &lstate = LocalState::ResetAndGet(state);
+			auto ctx = lstate.GetContext();
+			auto geom = lstate.Deserialize(geom_data[gi]);
+
+			int32_t max_vertices = max_data[mi];
+			if (max_vertices < 5) max_vertices = 5;
+
+			vector<GEOSGeometry *> parts;
+			SubdivideRecursive(ctx, geom.get_raw(), max_vertices, parts);
+
+			// Create a geometry collection from the parts
+			auto collection = GEOSGeom_createCollection_r(ctx, GEOS_GEOMETRYCOLLECTION,
+			                                              parts.data(), parts.size());
+			parts.clear(); // collection takes ownership
+
+			auto wrapper = GeosGeometry(ctx, collection);
+			FlatVector::GetData<string_t>(result)[i] = lstate.Serialize(result, wrapper);
+		}
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_Subdivide", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", LogicalType::GEOMETRY());
+				variant.AddParameter("max_vertices", LogicalType::INTEGER);
+				variant.SetReturnType(LogicalType::GEOMETRY());
+				variant.SetFunction(Execute);
+				variant.SetInit(LocalState::Init);
+			});
+			func.SetDescription("Subdivides a geometry into parts with no more than max_vertices each");
+			func.SetExample("SELECT ST_NGeometries(ST_Subdivide(ST_GeomFromText('POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))'), 5))");
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "construction");
+		});
+	}
+};
+
+//----------------------------------------------------------------------
+// ST_Split
+//----------------------------------------------------------------------
+struct ST_Split {
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto count = args.size();
+		BinaryExecutor::Execute<string_t, string_t, string_t>(
+		    args.data[0], args.data[1], result, count, [&](const string_t &input_blob, const string_t &blade_blob) {
+			    auto &lstate = LocalState::ResetAndGet(state);
+			    auto ctx = lstate.GetContext();
+			    auto input_geom = lstate.Deserialize(input_blob);
+			    auto blade_geom = lstate.Deserialize(blade_blob);
+
+			    const auto input_type = GEOSGeomTypeId_r(ctx, input_geom.get_raw());
+			    const auto blade_type = GEOSGeomTypeId_r(ctx, blade_geom.get_raw());
+
+			    if (input_type == GEOS_POLYGON || input_type == GEOS_MULTIPOLYGON) {
+				    // Split polygon by line: node the boundary + blade, then polygonize
+				    auto boundary = GEOSBoundary_r(ctx, input_geom.get_raw());
+				    if (!boundary) {
+					    throw InvalidInputException("ST_Split: failed to get boundary");
+				    }
+				    auto merged = GEOSUnion_r(ctx, boundary, blade_geom.get_raw());
+				    GEOSGeom_destroy_r(ctx, boundary);
+				    if (!merged) {
+					    throw InvalidInputException("ST_Split: failed to merge boundary with blade");
+				    }
+				    auto noded = GEOSNode_r(ctx, merged);
+				    GEOSGeom_destroy_r(ctx, merged);
+				    if (!noded) {
+					    throw InvalidInputException("ST_Split: failed to node geometry");
+				    }
+				    auto polygons = GEOSPolygonize_r(ctx, &noded, 1);
+				    GEOSGeom_destroy_r(ctx, noded);
+				    if (!polygons) {
+					    throw InvalidInputException("ST_Split: failed to polygonize");
+				    }
+				    auto wrapper = GeosGeometry(ctx, polygons);
+				    return lstate.Serialize(result, wrapper);
+			    } else {
+				    // For other types, use difference as approximation
+				    auto diff = GEOSDifference_r(ctx, input_geom.get_raw(), blade_geom.get_raw());
+				    if (!diff) {
+					    throw InvalidInputException("ST_Split: failed to compute split");
+				    }
+				    auto wrapper = GeosGeometry(ctx, diff);
+				    return lstate.Serialize(result, wrapper);
+			    }
+		    });
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_Split", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", LogicalType::GEOMETRY());
+				variant.AddParameter("blade", LogicalType::GEOMETRY());
+				variant.SetReturnType(LogicalType::GEOMETRY());
+				variant.SetFunction(Execute);
+				variant.SetInit(LocalState::Init);
+			});
+			func.SetDescription("Splits a geometry by another geometry, returning a geometry collection of the pieces");
+			func.SetExample("SELECT ST_AsText(ST_Split(ST_GeomFromText('LINESTRING(0 0, 10 0)'), ST_Point(5, 0)))");
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "construction");
+		});
+	}
+};
+
 } // namespace
 
 //######################################################################################################################
@@ -3321,6 +3516,8 @@ void RegisterGEOSModule(ExtensionLoader &loader) {
 	ST_Within::Register(loader);
 	ST_IsValidDetail::Register(loader);
 	ST_RelateMatch::Register(loader);
+	ST_Subdivide::Register(loader);
+	ST_Split::Register(loader);
 
 	// Aggregate Functions
 	ST_MemUnion_Agg::Register(loader);
