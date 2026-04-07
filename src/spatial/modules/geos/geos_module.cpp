@@ -3459,6 +3459,267 @@ struct ST_Split {
 	}
 };
 
+//----------------------------------------------------------------------
+// ST_ClusterIntersecting (aggregate)
+//----------------------------------------------------------------------
+struct ST_ClusterIntersecting {
+
+	struct State {
+		GEOSContextHandle_t context = nullptr;
+		vector<GEOSGeometry *> geoms;
+	};
+
+	static idx_t StateSize(const AggregateFunction &) { return sizeof(State); }
+
+	static void Initialize(const AggregateFunction &, data_ptr_t state_mem) {
+		auto state = new (state_mem) State();
+		state->context = GEOS_init_r();
+	}
+
+	static void Update(Vector inputs[], AggregateInputData &aggr, idx_t, Vector &state_vec, idx_t count) {
+		auto &geom_vec = inputs[0];
+		UnifiedVectorFormat geom_fmt, state_fmt;
+		geom_vec.ToUnifiedFormat(count, geom_fmt);
+		state_vec.ToUnifiedFormat(count, state_fmt);
+		const auto state_ptr = UnifiedVectorFormat::GetData<State *>(state_fmt);
+		const auto geom_data = UnifiedVectorFormat::GetData<string_t>(geom_fmt);
+
+		for (idx_t i = 0; i < count; i++) {
+			const auto si = state_fmt.sel->get_index(i);
+			const auto gi = geom_fmt.sel->get_index(i);
+			if (!geom_fmt.validity.RowIsValid(gi)) continue;
+			auto &state = *state_ptr[si];
+			auto g = GeosSerde::Deserialize(state.context, aggr.allocator, geom_data[gi].GetData(), geom_data[gi].GetSize());
+			state.geoms.push_back(g);
+		}
+	}
+
+	static void Combine(Vector &state_vec, Vector &combined, AggregateInputData &aggr, idx_t count) {
+		UnifiedVectorFormat state_fmt;
+		state_vec.ToUnifiedFormat(count, state_fmt);
+		const auto state_ptr = UnifiedVectorFormat::GetData<State *>(state_fmt);
+		const auto combined_ptr = FlatVector::GetData<State *>(combined);
+		for (idx_t i = 0; i < count; i++) {
+			const auto si = state_fmt.sel->get_index(i);
+			auto &s = *state_ptr[si];
+			auto &c = *combined_ptr[i];
+			for (auto *g : s.geoms) {
+				c.geoms.push_back(GEOSGeom_clone_r(c.context, g));
+			}
+		}
+	}
+
+	static void Finalize(Vector &state_vec, AggregateInputData &, Vector &result, idx_t count, idx_t offset) {
+		UnifiedVectorFormat state_fmt;
+		state_vec.ToUnifiedFormat(count, state_fmt);
+		const auto state_ptr = UnifiedVectorFormat::GetData<State *>(state_fmt);
+
+		for (idx_t i = 0; i < count; i++) {
+			auto &state = *state_ptr[state_fmt.sel->get_index(i)];
+			const auto out_idx = i + offset;
+			const auto n = state.geoms.size();
+
+			// Union-find for connected components
+			vector<idx_t> parent(n);
+			std::iota(parent.begin(), parent.end(), 0);
+			std::function<idx_t(idx_t)> find = [&](idx_t x) -> idx_t {
+				return parent[x] == x ? x : (parent[x] = find(parent[x]));
+			};
+
+			for (idx_t a = 0; a < n; a++) {
+				for (idx_t b = a + 1; b < n; b++) {
+					if (GEOSIntersects_r(state.context, state.geoms[a], state.geoms[b])) {
+						parent[find(a)] = find(b);
+					}
+				}
+			}
+
+			// Group by cluster
+			std::unordered_map<idx_t, vector<GEOSGeometry *>> clusters;
+			for (idx_t j = 0; j < n; j++) {
+				clusters[find(j)].push_back(state.geoms[j]);
+			}
+
+			// Build result: geometry collection of geometry collections
+			vector<GEOSGeometry *> cluster_geoms;
+			for (auto &[_, members] : clusters) {
+				auto gc = GEOSGeom_createCollection_r(state.context, GEOS_GEOMETRYCOLLECTION,
+				                                      members.data(), members.size());
+				cluster_geoms.push_back(gc);
+			}
+			state.geoms.clear(); // ownership transferred
+
+			auto outer = GEOSGeom_createCollection_r(state.context, GEOS_GEOMETRYCOLLECTION,
+			                                         cluster_geoms.data(), cluster_geoms.size());
+			auto wrapper = GeosGeometry(state.context, outer);
+
+			const auto size = GeosSerde::GetRequiredSize(state.context, outer);
+			auto blob = StringVector::EmptyString(result, size);
+			GeosSerde::Serialize(state.context, outer, blob.GetDataWriteable(), size);
+			blob.Finalize();
+			FlatVector::GetData<string_t>(result)[out_idx] = blob;
+		}
+	}
+
+	static void Destroy(Vector &state_vec, AggregateInputData &, idx_t count) {
+		UnifiedVectorFormat state_fmt;
+		state_vec.ToUnifiedFormat(count, state_fmt);
+		const auto state_ptr = UnifiedVectorFormat::GetData<State *>(state_fmt);
+		for (idx_t i = 0; i < count; i++) {
+			const auto si = state_fmt.sel->get_index(i);
+			if (state_fmt.validity.RowIsValid(si)) {
+				auto &state = *state_ptr[si];
+				for (auto *g : state.geoms) GEOSGeom_destroy_r(state.context, g);
+				state.geoms.clear();
+				if (state.context) { GEOS_finish_r(state.context); state.context = nullptr; }
+			}
+		}
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		AggregateFunction agg({LogicalType::GEOMETRY()}, LogicalType::GEOMETRY(), StateSize, Initialize, Update,
+		                      Combine, Finalize, nullptr, nullptr, Destroy);
+		FunctionBuilder::RegisterAggregate(loader, "ST_ClusterIntersecting", [&](AggregateFunctionBuilder &func) {
+			func.SetFunction(agg);
+			func.SetDescription("Groups intersecting geometries into clusters (returns geometry collection of collections)");
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "construction");
+		});
+	}
+};
+
+//----------------------------------------------------------------------
+// ST_ClusterWithin (aggregate)
+//----------------------------------------------------------------------
+struct ST_ClusterWithin {
+
+	struct State {
+		GEOSContextHandle_t context = nullptr;
+		vector<GEOSGeometry *> geoms;
+		double distance = 0;
+	};
+
+	static idx_t StateSize(const AggregateFunction &) { return sizeof(State); }
+
+	static void Initialize(const AggregateFunction &, data_ptr_t state_mem) {
+		auto state = new (state_mem) State();
+		state->context = GEOS_init_r();
+	}
+
+	static void Update(Vector inputs[], AggregateInputData &aggr, idx_t, Vector &state_vec, idx_t count) {
+		auto &geom_vec = inputs[0];
+		auto &dist_vec = inputs[1];
+		UnifiedVectorFormat geom_fmt, state_fmt, dist_fmt;
+		geom_vec.ToUnifiedFormat(count, geom_fmt);
+		state_vec.ToUnifiedFormat(count, state_fmt);
+		dist_vec.ToUnifiedFormat(count, dist_fmt);
+		const auto state_ptr = UnifiedVectorFormat::GetData<State *>(state_fmt);
+		const auto geom_data = UnifiedVectorFormat::GetData<string_t>(geom_fmt);
+		const auto dist_data = UnifiedVectorFormat::GetData<double>(dist_fmt);
+
+		for (idx_t i = 0; i < count; i++) {
+			const auto si = state_fmt.sel->get_index(i);
+			const auto gi = geom_fmt.sel->get_index(i);
+			const auto di = dist_fmt.sel->get_index(i);
+			if (!geom_fmt.validity.RowIsValid(gi)) continue;
+			auto &state = *state_ptr[si];
+			state.distance = dist_data[di];
+			auto g = GeosSerde::Deserialize(state.context, aggr.allocator, geom_data[gi].GetData(), geom_data[gi].GetSize());
+			state.geoms.push_back(g);
+		}
+	}
+
+	static void Combine(Vector &state_vec, Vector &combined, AggregateInputData &, idx_t count) {
+		UnifiedVectorFormat state_fmt;
+		state_vec.ToUnifiedFormat(count, state_fmt);
+		const auto state_ptr = UnifiedVectorFormat::GetData<State *>(state_fmt);
+		const auto combined_ptr = FlatVector::GetData<State *>(combined);
+		for (idx_t i = 0; i < count; i++) {
+			auto &s = *state_ptr[state_fmt.sel->get_index(i)];
+			auto &c = *combined_ptr[i];
+			c.distance = s.distance;
+			for (auto *g : s.geoms) c.geoms.push_back(GEOSGeom_clone_r(c.context, g));
+		}
+	}
+
+	static void Finalize(Vector &state_vec, AggregateInputData &, Vector &result, idx_t count, idx_t offset) {
+		UnifiedVectorFormat state_fmt;
+		state_vec.ToUnifiedFormat(count, state_fmt);
+		const auto state_ptr = UnifiedVectorFormat::GetData<State *>(state_fmt);
+
+		for (idx_t i = 0; i < count; i++) {
+			auto &state = *state_ptr[state_fmt.sel->get_index(i)];
+			const auto out_idx = i + offset;
+			const auto n = state.geoms.size();
+
+			// Union-find with distance threshold
+			vector<idx_t> parent(n);
+			std::iota(parent.begin(), parent.end(), 0);
+			std::function<idx_t(idx_t)> find = [&](idx_t x) -> idx_t {
+				return parent[x] == x ? x : (parent[x] = find(parent[x]));
+			};
+
+			for (idx_t a = 0; a < n; a++) {
+				for (idx_t b = a + 1; b < n; b++) {
+					if (GEOSDistanceWithin_r(state.context, state.geoms[a], state.geoms[b], state.distance)) {
+						parent[find(a)] = find(b);
+					}
+				}
+			}
+
+			std::unordered_map<idx_t, vector<GEOSGeometry *>> clusters;
+			for (idx_t j = 0; j < n; j++) {
+				clusters[find(j)].push_back(state.geoms[j]);
+			}
+
+			vector<GEOSGeometry *> cluster_geoms;
+			for (auto &[_, members] : clusters) {
+				auto gc = GEOSGeom_createCollection_r(state.context, GEOS_GEOMETRYCOLLECTION,
+				                                      members.data(), members.size());
+				cluster_geoms.push_back(gc);
+			}
+			state.geoms.clear();
+
+			auto outer = GEOSGeom_createCollection_r(state.context, GEOS_GEOMETRYCOLLECTION,
+			                                         cluster_geoms.data(), cluster_geoms.size());
+
+			const auto size = GeosSerde::GetRequiredSize(state.context, outer);
+			auto blob = StringVector::EmptyString(result, size);
+			GeosSerde::Serialize(state.context, outer, blob.GetDataWriteable(), size);
+			blob.Finalize();
+			FlatVector::GetData<string_t>(result)[out_idx] = blob;
+
+			GEOSGeom_destroy_r(state.context, outer);
+		}
+	}
+
+	static void Destroy(Vector &state_vec, AggregateInputData &, idx_t count) {
+		UnifiedVectorFormat state_fmt;
+		state_vec.ToUnifiedFormat(count, state_fmt);
+		const auto state_ptr = UnifiedVectorFormat::GetData<State *>(state_fmt);
+		for (idx_t i = 0; i < count; i++) {
+			const auto si = state_fmt.sel->get_index(i);
+			if (state_fmt.validity.RowIsValid(si)) {
+				auto &state = *state_ptr[si];
+				for (auto *g : state.geoms) GEOSGeom_destroy_r(state.context, g);
+				state.geoms.clear();
+				if (state.context) { GEOS_finish_r(state.context); state.context = nullptr; }
+			}
+		}
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		AggregateFunction agg({LogicalType::GEOMETRY(), LogicalType::DOUBLE}, LogicalType::GEOMETRY(), StateSize,
+		                      Initialize, Update, Combine, Finalize, nullptr, nullptr, Destroy);
+		FunctionBuilder::RegisterAggregate(loader, "ST_ClusterWithin", [&](AggregateFunctionBuilder &func) {
+			func.SetFunction(agg);
+			func.SetDescription("Groups geometries within a given distance into clusters");
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "construction");
+		});
+	}
+};
+
 } // namespace
 
 //######################################################################################################################
@@ -3518,6 +3779,8 @@ void RegisterGEOSModule(ExtensionLoader &loader) {
 	ST_RelateMatch::Register(loader);
 	ST_Subdivide::Register(loader);
 	ST_Split::Register(loader);
+	ST_ClusterIntersecting::Register(loader);
+	ST_ClusterWithin::Register(loader);
 
 	// Aggregate Functions
 	ST_MemUnion_Agg::Register(loader);
