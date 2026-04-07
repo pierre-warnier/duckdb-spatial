@@ -11752,6 +11752,63 @@ struct ST_Project_Func {
 	}
 };
 
+//======================================================================================================================
+// ST_SRID — returns 0 (no per-geometry SRID in DuckDB), for PostGIS compat
+//======================================================================================================================
+struct ST_SRID_Func {
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto count = args.size();
+		// DuckDB doesn't store integer SRIDs per-geometry. Return 0 for all geometries
+		// (PostGIS default for geometries without explicit SRID).
+		UnaryExecutor::Execute<string_t, int32_t>(args.data[0], result, count, [&](const string_t &) {
+			return 0;
+		});
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_SRID", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", LogicalType::GEOMETRY());
+				variant.SetReturnType(LogicalType::INTEGER);
+				variant.SetFunction(Execute);
+			});
+			func.SetDescription("Returns the SRID of a geometry (always 0 — DuckDB uses CRS type metadata instead of per-geometry SRIDs)");
+			func.SetExample("SELECT ST_SRID(ST_Point(1, 2))");
+		});
+	}
+};
+
+//======================================================================================================================
+// ST_SetSRID — returns geometry unchanged (SRID is type-level metadata in DuckDB)
+//======================================================================================================================
+struct ST_SetSRID_Func {
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto count = args.size();
+		// DuckDB stores CRS at the type level, not per-geometry.
+		// ST_SetSRID is a no-op that returns the geometry unchanged,
+		// providing PostGIS API compatibility.
+		BinaryExecutor::Execute<string_t, int32_t, string_t>(
+		    args.data[0], args.data[1], result, count, [&](const string_t &blob, int32_t) {
+			    return StringVector::AddStringOrBlob(result, blob);
+		    });
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_SetSRID", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", LogicalType::GEOMETRY());
+				variant.AddParameter("srid", LogicalType::INTEGER);
+				variant.SetReturnType(LogicalType::GEOMETRY());
+				variant.SetFunction(Execute);
+			});
+			func.SetDescription("Sets the SRID of a geometry (no-op in DuckDB — use GEOMETRY('EPSG:XXXX') type for CRS)");
+			func.SetExample("SELECT ST_SetSRID(ST_Point(1, 2), 4326)");
+		});
+	}
+};
+
 } // namespace
 
 // Helper to access the constant distance from the bind data
@@ -11881,6 +11938,8 @@ void RegisterSpatialScalarFunctions(ExtensionLoader &loader) {
 	ST_AsEWKB::Register(loader);
 	ST_GeomFromEWKB::Register(loader);
 	ST_Project_Func::Register(loader);
+	ST_SRID_Func::Register(loader);
+	ST_SetSRID_Func::Register(loader);
 }
 
 } // namespace duckdb
