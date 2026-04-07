@@ -10633,6 +10633,347 @@ struct ST_Summary_Func {
 	}
 };
 
+//======================================================================================================================
+// ST_ChaikinSmoothing
+//======================================================================================================================
+struct ST_ChaikinSmoothing {
+
+	static void SmoothRecursive(sgl::geometry &geom, int iterations, GeometryAllocator &alloc) {
+		if (geom.is_multi_part()) {
+			auto *part = geom.get_first_part();
+			for (uint32_t i = 0; i < geom.get_part_count(); i++) {
+				SmoothRecursive(*part, iterations, alloc);
+				part = part->get_next();
+			}
+			return;
+		}
+
+		const auto vertex_count = geom.get_vertex_count();
+		if (vertex_count < 3) return;
+
+		const auto vertex_width = geom.get_vertex_width();
+		const bool is_closed = (geom.get_vertex_xy(0).x == geom.get_vertex_xy(vertex_count - 1).x &&
+		                        geom.get_vertex_xy(0).y == geom.get_vertex_xy(vertex_count - 1).y);
+
+		for (int iter = 0; iter < iterations; iter++) {
+			const auto n = geom.get_vertex_count();
+			if (n < 3) break;
+
+			const auto segments = is_closed ? n - 1 : n - 1;
+			const auto new_count = is_closed ? segments * 2 + 1 : segments * 2;
+			auto new_array = static_cast<char *>(alloc.alloc(new_count * vertex_width));
+			uint32_t out_idx = 0;
+
+			for (uint32_t i = 0; i < segments; i++) {
+				auto v0 = geom.get_vertex_xyzm(i);
+				auto v1 = geom.get_vertex_xyzm(i + 1);
+
+				// Q = 0.75*P[i] + 0.25*P[i+1]
+				sgl::vertex_xyzm q = {
+				    0.75 * v0.x + 0.25 * v1.x,
+				    0.75 * v0.y + 0.25 * v1.y,
+				    0.75 * v0.z + 0.25 * v1.z,
+				    0.75 * v0.m + 0.25 * v1.m
+				};
+				memcpy(new_array + out_idx * vertex_width, &q, vertex_width);
+				out_idx++;
+
+				// R = 0.25*P[i] + 0.75*P[i+1]
+				sgl::vertex_xyzm r = {
+				    0.25 * v0.x + 0.75 * v1.x,
+				    0.25 * v0.y + 0.75 * v1.y,
+				    0.25 * v0.z + 0.75 * v1.z,
+				    0.25 * v0.m + 0.75 * v1.m
+				};
+				memcpy(new_array + out_idx * vertex_width, &r, vertex_width);
+				out_idx++;
+			}
+
+			if (is_closed) {
+				// Close the ring
+				memcpy(new_array + out_idx * vertex_width, new_array, vertex_width);
+				out_idx++;
+			}
+
+			geom.set_vertex_array(new_array, out_idx);
+		}
+	}
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto count = args.size();
+		BinaryExecutor::Execute<string_t, int32_t, string_t>(
+		    args.data[0], args.data[1], result, count, [&](const string_t &blob, int32_t iterations) {
+			    auto &lstate = LocalState::ResetAndGet(state);
+			    sgl::geometry geom;
+			    lstate.Deserialize(blob, geom);
+			    if (iterations < 1) iterations = 1;
+			    if (iterations > 10) iterations = 10;
+			    SmoothRecursive(geom, iterations, lstate.GetAllocator());
+			    return lstate.Serialize(result, geom);
+		    });
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_ChaikinSmoothing", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", LogicalType::GEOMETRY());
+				variant.AddParameter("iterations", LogicalType::INTEGER);
+				variant.SetReturnType(LogicalType::GEOMETRY());
+				variant.SetFunction(Execute);
+				variant.SetInit(LocalState::Init);
+			});
+			func.SetDescription("Smooths a geometry using Chaikin's corner-cutting algorithm");
+			func.SetExample("SELECT ST_AsText(ST_ChaikinSmoothing(ST_GeomFromText('LINESTRING(0 0, 5 10, 10 0)'), 1))");
+		});
+	}
+};
+
+//======================================================================================================================
+// ST_GeometricMedian
+//======================================================================================================================
+struct ST_GeometricMedian {
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto count = args.size();
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, count, [&](const string_t &blob) {
+			auto &lstate = LocalState::ResetAndGet(state);
+			sgl::geometry geom;
+			lstate.Deserialize(blob, geom);
+
+			// Collect all vertices
+			std::vector<sgl::vertex_xy> pts;
+			std::function<void(const sgl::geometry &)> collect = [&](const sgl::geometry &g) {
+				if (g.is_multi_part()) {
+					auto *part = g.get_first_part();
+					for (uint32_t i = 0; i < g.get_part_count(); i++) {
+						collect(*part);
+						part = part->get_next();
+					}
+				} else {
+					for (uint32_t i = 0; i < g.get_vertex_count(); i++) {
+						pts.push_back(g.get_vertex_xy(i));
+					}
+				}
+			};
+			collect(geom);
+
+			if (pts.empty()) {
+				return StringVector::AddStringOrBlob(result, blob);
+			}
+
+			// Weiszfeld algorithm for geometric median
+			// Start at centroid
+			double mx = 0, my = 0;
+			for (const auto &p : pts) {
+				mx += p.x;
+				my += p.y;
+			}
+			mx /= pts.size();
+			my /= pts.size();
+
+			for (int iter = 0; iter < 1000; iter++) {
+				double num_x = 0, num_y = 0, denom = 0;
+				for (const auto &p : pts) {
+					double dx = mx - p.x;
+					double dy = my - p.y;
+					double dist = std::sqrt(dx * dx + dy * dy);
+					if (dist < 1e-12) continue;
+					double w = 1.0 / dist;
+					num_x += p.x * w;
+					num_y += p.y * w;
+					denom += w;
+				}
+				if (denom < 1e-12) break;
+				double new_x = num_x / denom;
+				double new_y = num_y / denom;
+				if (std::abs(new_x - mx) + std::abs(new_y - my) < 1e-10) break;
+				mx = new_x;
+				my = new_y;
+			}
+
+			// Create result point
+			auto &alloc = lstate.GetAllocator();
+			sgl::geometry pt(sgl::geometry_type::POINT, false, false);
+			auto vtx_array = static_cast<char *>(alloc.alloc(sizeof(sgl::vertex_xy)));
+			sgl::vertex_xy vtx = {mx, my};
+			memcpy(vtx_array, &vtx, sizeof(sgl::vertex_xy));
+			pt.set_vertex_array(vtx_array, 1);
+
+			return lstate.Serialize(result, pt);
+		});
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_GeometricMedian", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", LogicalType::GEOMETRY());
+				variant.SetReturnType(LogicalType::GEOMETRY());
+				variant.SetFunction(Execute);
+				variant.SetInit(LocalState::Init);
+			});
+			func.SetDescription("Returns the geometric median of a geometry's vertices (Weiszfeld algorithm)");
+			func.SetExample("SELECT ST_AsText(ST_GeometricMedian(ST_GeomFromText('MULTIPOINT(0 0, 10 0, 0 10)')))");
+		});
+	}
+};
+
+//======================================================================================================================
+// ST_SimplifyVW
+//======================================================================================================================
+struct ST_SimplifyVW {
+
+	static double TriangleArea(const sgl::vertex_xy &a, const sgl::vertex_xy &b, const sgl::vertex_xy &c) {
+		return std::abs((b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y)) / 2.0;
+	}
+
+	static void SimplifyRecursive(sgl::geometry &geom, double area_threshold, GeometryAllocator &alloc) {
+		if (geom.is_multi_part()) {
+			auto *part = geom.get_first_part();
+			for (uint32_t i = 0; i < geom.get_part_count(); i++) {
+				SimplifyRecursive(*part, area_threshold, alloc);
+				part = part->get_next();
+			}
+			return;
+		}
+
+		const auto n = geom.get_vertex_count();
+		if (n < 3) return;
+		const auto vertex_width = geom.get_vertex_width();
+
+		// Collect vertices
+		std::vector<sgl::vertex_xyzm> vertices(n);
+		for (uint32_t i = 0; i < n; i++) {
+			vertices[i] = geom.get_vertex_xyzm(i);
+		}
+
+		// Iteratively remove vertex with smallest effective area
+		std::vector<bool> removed(n, false);
+		uint32_t remaining = n;
+
+		while (remaining > 2) {
+			double min_area = std::numeric_limits<double>::max();
+			uint32_t min_idx = UINT32_MAX;
+
+			// Find non-removed vertex with smallest triangle area
+			for (uint32_t i = 1; i < n - 1; i++) {
+				if (removed[i]) continue;
+
+				// Find prev and next non-removed vertices
+				uint32_t prev = i - 1;
+				while (prev > 0 && removed[prev]) prev--;
+				uint32_t next = i + 1;
+				while (next < n - 1 && removed[next]) next++;
+
+				if (removed[prev] || removed[next]) continue;
+
+				sgl::vertex_xy a = {vertices[prev].x, vertices[prev].y};
+				sgl::vertex_xy b = {vertices[i].x, vertices[i].y};
+				sgl::vertex_xy c = {vertices[next].x, vertices[next].y};
+				double area = TriangleArea(a, b, c);
+
+				if (area < min_area) {
+					min_area = area;
+					min_idx = i;
+				}
+			}
+
+			if (min_idx == UINT32_MAX || min_area >= area_threshold) break;
+
+			removed[min_idx] = true;
+			remaining--;
+		}
+
+		// Build result
+		auto new_array = static_cast<char *>(alloc.alloc(remaining * vertex_width));
+		uint32_t out_idx = 0;
+		for (uint32_t i = 0; i < n; i++) {
+			if (!removed[i]) {
+				memcpy(new_array + out_idx * vertex_width, &vertices[i], vertex_width);
+				out_idx++;
+			}
+		}
+		geom.set_vertex_array(new_array, out_idx);
+	}
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto count = args.size();
+		BinaryExecutor::Execute<string_t, double, string_t>(
+		    args.data[0], args.data[1], result, count, [&](const string_t &blob, double area_threshold) {
+			    auto &lstate = LocalState::ResetAndGet(state);
+			    sgl::geometry geom;
+			    lstate.Deserialize(blob, geom);
+			    SimplifyRecursive(geom, area_threshold, lstate.GetAllocator());
+			    return lstate.Serialize(result, geom);
+		    });
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_SimplifyVW", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", LogicalType::GEOMETRY());
+				variant.AddParameter("area_threshold", LogicalType::DOUBLE);
+				variant.SetReturnType(LogicalType::GEOMETRY());
+				variant.SetFunction(Execute);
+				variant.SetInit(LocalState::Init);
+			});
+			func.SetDescription("Simplifies geometry using the Visvalingam-Whyatt area-based algorithm");
+			func.SetExample("SELECT ST_AsText(ST_SimplifyVW(ST_GeomFromText('LINESTRING(0 0, 1 1, 2 0, 3 1, 4 0)'), 0.5))");
+		});
+	}
+};
+
+//======================================================================================================================
+// ST_AsLatLonText
+//======================================================================================================================
+struct ST_AsLatLonText {
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto count = args.size();
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, count, [&](const string_t &blob) {
+			auto &lstate = LocalState::ResetAndGet(state);
+			sgl::geometry geom;
+			lstate.Deserialize(blob, geom);
+
+			if (geom.get_type() != sgl::geometry_type::POINT || geom.get_vertex_count() == 0) {
+				throw InvalidInputException("ST_AsLatLonText: argument must be a POINT");
+			}
+
+			auto vtx = geom.get_vertex_xy(0);
+			double lat = vtx.y;
+			double lon = vtx.x;
+
+			auto format_dms = [](double val, char pos, char neg) -> std::string {
+				char dir = val >= 0 ? pos : neg;
+				val = std::abs(val);
+				int deg = static_cast<int>(val);
+				double rem = (val - deg) * 60;
+				int min = static_cast<int>(rem);
+				double sec = (rem - min) * 60;
+
+				char buf[64];
+				snprintf(buf, sizeof(buf), "%d\xC2\xB0%d'%.3f\"%c", deg, min, sec, dir);
+				return buf;
+			};
+
+			std::string text = format_dms(lat, 'N', 'S') + " " + format_dms(lon, 'E', 'W');
+			return StringVector::AddString(result, text);
+		});
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_AsLatLonText", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", LogicalType::GEOMETRY());
+				variant.SetReturnType(LogicalType::VARCHAR);
+				variant.SetFunction(Execute);
+				variant.SetInit(LocalState::Init);
+			});
+			func.SetDescription("Returns a point as a DMS (degrees-minutes-seconds) latitude/longitude string");
+			func.SetExample("SELECT ST_AsLatLonText(ST_Point(-73.9857, 40.7484))");
+		});
+	}
+};
+
 } // namespace
 
 // Helper to access the constant distance from the bind data
@@ -10747,6 +11088,10 @@ void RegisterSpatialScalarFunctions(ExtensionLoader &loader) {
 	ST_DFullyWithin::Register(loader);
 	ST_LongestLine::Register(loader);
 	ST_Summary_Func::Register(loader);
+	ST_ChaikinSmoothing::Register(loader);
+	ST_GeometricMedian::Register(loader);
+	ST_SimplifyVW::Register(loader);
+	ST_AsLatLonText::Register(loader);
 }
 
 } // namespace duckdb
