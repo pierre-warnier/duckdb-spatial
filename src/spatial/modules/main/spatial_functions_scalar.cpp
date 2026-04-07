@@ -9468,6 +9468,382 @@ constexpr const char *ST_X::NAME;
 constexpr const char *ST_Y::NAME;
 constexpr const char *ST_Z::NAME;
 
+//======================================================================================================================
+// ST_AddPoint
+//======================================================================================================================
+struct ST_AddPoint {
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto count = args.size();
+		BinaryExecutor::Execute<string_t, string_t, string_t>(
+		    args.data[0], args.data[1], result, count, [&](const string_t &line_blob, const string_t &point_blob) {
+			    auto &lstate = LocalState::ResetAndGet(state);
+			    sgl::geometry line_geom, point_geom;
+			    lstate.Deserialize(line_blob, line_geom);
+			    lstate.Deserialize(point_blob, point_geom);
+			    if (line_geom.get_type() != sgl::geometry_type::LINESTRING) {
+				    throw InvalidInputException("ST_AddPoint: first argument must be a LINESTRING");
+			    }
+			    if (point_geom.get_type() != sgl::geometry_type::POINT) {
+				    throw InvalidInputException("ST_AddPoint: second argument must be a POINT");
+			    }
+			    const auto old_count = line_geom.get_vertex_count();
+			    const auto vertex_width = line_geom.get_vertex_width();
+			    const int32_t position = static_cast<int32_t>(old_count);
+			    const auto new_count = old_count + 1;
+			    auto &alloc = lstate.GetAllocator();
+			    auto new_array = static_cast<char *>(alloc.alloc(new_count * vertex_width));
+			    memcpy(new_array, line_geom.get_vertex_array(), old_count * vertex_width);
+			    auto point_vtx = point_geom.get_vertex_xyzm(0);
+			    memcpy(new_array + position * vertex_width, &point_vtx, vertex_width);
+			    line_geom.set_vertex_array(new_array, new_count);
+			    return lstate.Serialize(result, line_geom);
+		    });
+	}
+
+	static void ExecuteWithPosition(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto count = args.size();
+		auto &line_vec = args.data[0];
+		auto &point_vec = args.data[1];
+		auto &pos_vec = args.data[2];
+		UnifiedVectorFormat line_fmt, point_fmt, pos_fmt;
+		line_vec.ToUnifiedFormat(count, line_fmt);
+		point_vec.ToUnifiedFormat(count, point_fmt);
+		pos_vec.ToUnifiedFormat(count, pos_fmt);
+		const auto line_data = UnifiedVectorFormat::GetData<string_t>(line_fmt);
+		const auto point_data = UnifiedVectorFormat::GetData<string_t>(point_fmt);
+		const auto pos_data = UnifiedVectorFormat::GetData<int32_t>(pos_fmt);
+		for (idx_t i = 0; i < count; i++) {
+			const auto li = line_fmt.sel->get_index(i);
+			const auto pi = point_fmt.sel->get_index(i);
+			const auto xi = pos_fmt.sel->get_index(i);
+			if (!line_fmt.validity.RowIsValid(li) || !point_fmt.validity.RowIsValid(pi) ||
+			    !pos_fmt.validity.RowIsValid(xi)) {
+				FlatVector::SetNull(result, i, true);
+				continue;
+			}
+			auto &lstate = LocalState::ResetAndGet(state);
+			sgl::geometry line_geom, point_geom;
+			lstate.Deserialize(line_data[li], line_geom);
+			lstate.Deserialize(point_data[pi], point_geom);
+			if (line_geom.get_type() != sgl::geometry_type::LINESTRING) {
+				throw InvalidInputException("ST_AddPoint: first argument must be a LINESTRING");
+			}
+			if (point_geom.get_type() != sgl::geometry_type::POINT) {
+				throw InvalidInputException("ST_AddPoint: second argument must be a POINT");
+			}
+			const auto old_count = line_geom.get_vertex_count();
+			const auto vertex_width = line_geom.get_vertex_width();
+			const int32_t position = pos_data[xi];
+			if (position < 0 || position > static_cast<int32_t>(old_count)) {
+				throw InvalidInputException("ST_AddPoint: position %d out of range [0, %d]", position, old_count);
+			}
+			const auto new_count = old_count + 1;
+			auto &alloc = lstate.GetAllocator();
+			auto new_array = static_cast<char *>(alloc.alloc(new_count * vertex_width));
+			if (position > 0) {
+				memcpy(new_array, line_geom.get_vertex_array(), position * vertex_width);
+			}
+			auto point_vtx = point_geom.get_vertex_xyzm(0);
+			memcpy(new_array + position * vertex_width, &point_vtx, vertex_width);
+			if (position < static_cast<int32_t>(old_count)) {
+				memcpy(new_array + (position + 1) * vertex_width,
+				       line_geom.get_vertex_array() + position * vertex_width, (old_count - position) * vertex_width);
+			}
+			line_geom.set_vertex_array(new_array, new_count);
+			FlatVector::GetData<string_t>(result)[i] = lstate.Serialize(result, line_geom);
+		}
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_AddPoint", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("line", LogicalType::GEOMETRY());
+				variant.AddParameter("point", LogicalType::GEOMETRY());
+				variant.SetReturnType(LogicalType::GEOMETRY());
+				variant.SetFunction(Execute);
+				variant.SetInit(LocalState::Init);
+			});
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("line", LogicalType::GEOMETRY());
+				variant.AddParameter("point", LogicalType::GEOMETRY());
+				variant.AddParameter("position", LogicalType::INTEGER);
+				variant.SetReturnType(LogicalType::GEOMETRY());
+				variant.SetFunction(ExecuteWithPosition);
+				variant.SetInit(LocalState::Init);
+			});
+			func.SetDescription("Adds a point to a linestring at a given position (default: end)");
+			func.SetExample("SELECT ST_AsText(ST_AddPoint(ST_GeomFromText('LINESTRING(0 0, 2 2)'), ST_Point(1, 1), 1))");
+		});
+	}
+};
+
+//======================================================================================================================
+// ST_SetPoint
+//======================================================================================================================
+struct ST_SetPoint {
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto count = args.size();
+		auto &line_vec = args.data[0];
+		auto &pos_vec = args.data[1];
+		auto &point_vec = args.data[2];
+		UnifiedVectorFormat line_fmt, point_fmt, pos_fmt;
+		line_vec.ToUnifiedFormat(count, line_fmt);
+		point_vec.ToUnifiedFormat(count, point_fmt);
+		pos_vec.ToUnifiedFormat(count, pos_fmt);
+		const auto line_data = UnifiedVectorFormat::GetData<string_t>(line_fmt);
+		const auto point_data = UnifiedVectorFormat::GetData<string_t>(point_fmt);
+		const auto pos_data = UnifiedVectorFormat::GetData<int32_t>(pos_fmt);
+		for (idx_t i = 0; i < count; i++) {
+			const auto li = line_fmt.sel->get_index(i);
+			const auto pi = point_fmt.sel->get_index(i);
+			const auto xi = pos_fmt.sel->get_index(i);
+			if (!line_fmt.validity.RowIsValid(li) || !point_fmt.validity.RowIsValid(pi) ||
+			    !pos_fmt.validity.RowIsValid(xi)) {
+				FlatVector::SetNull(result, i, true);
+				continue;
+			}
+			auto &lstate = LocalState::ResetAndGet(state);
+			sgl::geometry line_geom, point_geom;
+			lstate.Deserialize(line_data[li], line_geom);
+			lstate.Deserialize(point_data[pi], point_geom);
+			if (line_geom.get_type() != sgl::geometry_type::LINESTRING) {
+				throw InvalidInputException("ST_SetPoint: first argument must be a LINESTRING");
+			}
+			if (point_geom.get_type() != sgl::geometry_type::POINT) {
+				throw InvalidInputException("ST_SetPoint: third argument must be a POINT");
+			}
+			const auto vertex_count = line_geom.get_vertex_count();
+			const auto vertex_width = line_geom.get_vertex_width();
+			int32_t position = pos_data[xi];
+			if (position < 0) {
+				position = static_cast<int32_t>(vertex_count) + position;
+			}
+			if (position < 0 || position >= static_cast<int32_t>(vertex_count)) {
+				throw InvalidInputException("ST_SetPoint: position %d out of range [0, %d)", pos_data[xi], vertex_count);
+			}
+			auto &alloc = lstate.GetAllocator();
+			auto new_array = static_cast<char *>(alloc.alloc(vertex_count * vertex_width));
+			memcpy(new_array, line_geom.get_vertex_array(), vertex_count * vertex_width);
+			auto point_vtx = point_geom.get_vertex_xyzm(0);
+			memcpy(new_array + position * vertex_width, &point_vtx, vertex_width);
+			line_geom.set_vertex_array(new_array, vertex_count);
+			FlatVector::GetData<string_t>(result)[i] = lstate.Serialize(result, line_geom);
+		}
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_SetPoint", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("line", LogicalType::GEOMETRY());
+				variant.AddParameter("position", LogicalType::INTEGER);
+				variant.AddParameter("point", LogicalType::GEOMETRY());
+				variant.SetReturnType(LogicalType::GEOMETRY());
+				variant.SetFunction(Execute);
+				variant.SetInit(LocalState::Init);
+			});
+			func.SetDescription("Replaces a point in a linestring (0-indexed, negative from end)");
+			func.SetExample(
+			    "SELECT ST_AsText(ST_SetPoint(ST_GeomFromText('LINESTRING(0 0, 1 1, 2 2)'), 1, ST_Point(5, 5)))");
+		});
+	}
+};
+
+//======================================================================================================================
+// ST_RemovePoint
+//======================================================================================================================
+struct ST_RemovePoint {
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto count = args.size();
+		BinaryExecutor::Execute<string_t, int32_t, string_t>(
+		    args.data[0], args.data[1], result, count, [&](const string_t &line_blob, int32_t position) {
+			    auto &lstate = LocalState::ResetAndGet(state);
+			    sgl::geometry line_geom;
+			    lstate.Deserialize(line_blob, line_geom);
+			    if (line_geom.get_type() != sgl::geometry_type::LINESTRING) {
+				    throw InvalidInputException("ST_RemovePoint: first argument must be a LINESTRING");
+			    }
+			    const auto old_count = line_geom.get_vertex_count();
+			    const auto vertex_width = line_geom.get_vertex_width();
+			    if (old_count <= 2) {
+				    throw InvalidInputException(
+				        "ST_RemovePoint: cannot remove point from linestring with 2 or fewer points");
+			    }
+			    if (position < 0) {
+				    position = static_cast<int32_t>(old_count) + position;
+			    }
+			    if (position < 0 || position >= static_cast<int32_t>(old_count)) {
+				    throw InvalidInputException("ST_RemovePoint: position %d out of range [0, %d)", position, old_count);
+			    }
+			    const auto new_count = old_count - 1;
+			    auto &alloc = lstate.GetAllocator();
+			    auto new_array = static_cast<char *>(alloc.alloc(new_count * vertex_width));
+			    if (position > 0) {
+				    memcpy(new_array, line_geom.get_vertex_array(), position * vertex_width);
+			    }
+			    if (position < static_cast<int32_t>(old_count) - 1) {
+				    memcpy(new_array + position * vertex_width,
+				           line_geom.get_vertex_array() + (position + 1) * vertex_width,
+				           (old_count - position - 1) * vertex_width);
+			    }
+			    line_geom.set_vertex_array(new_array, new_count);
+			    return lstate.Serialize(result, line_geom);
+		    });
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_RemovePoint", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("line", LogicalType::GEOMETRY());
+				variant.AddParameter("position", LogicalType::INTEGER);
+				variant.SetReturnType(LogicalType::GEOMETRY());
+				variant.SetFunction(Execute);
+				variant.SetInit(LocalState::Init);
+			});
+			func.SetDescription("Removes a point from a linestring (0-indexed, negative from end)");
+			func.SetExample(
+			    "SELECT ST_AsText(ST_RemovePoint(ST_GeomFromText('LINESTRING(0 0, 1 1, 2 2)'), 1))");
+		});
+	}
+};
+
+//======================================================================================================================
+// ST_SwapOrdinates
+//======================================================================================================================
+struct ST_SwapOrdinates {
+
+	static void SwapVerticesRecursive(sgl::geometry &geom, int idx_a, int idx_b, GeometryAllocator &alloc) {
+		if (geom.is_multi_part()) {
+			auto *part = geom.get_first_part();
+			for (uint32_t i = 0; i < geom.get_part_count(); i++) {
+				SwapVerticesRecursive(*part, idx_a, idx_b, alloc);
+				part = part->get_next();
+			}
+		} else if (geom.get_vertex_count() > 0) {
+			const auto vertex_count = geom.get_vertex_count();
+			const auto vertex_width = geom.get_vertex_width();
+			auto new_array = static_cast<char *>(alloc.alloc(vertex_count * vertex_width));
+			memcpy(new_array, geom.get_vertex_array(), vertex_count * vertex_width);
+			const auto max_ord = static_cast<int>(vertex_width / sizeof(double));
+			if (idx_a < max_ord && idx_b < max_ord) {
+				for (uint32_t v = 0; v < vertex_count; v++) {
+					auto vertex_ptr = new_array + v * vertex_width;
+					double a, b;
+					memcpy(&a, vertex_ptr + idx_a * sizeof(double), sizeof(double));
+					memcpy(&b, vertex_ptr + idx_b * sizeof(double), sizeof(double));
+					memcpy(vertex_ptr + idx_a * sizeof(double), &b, sizeof(double));
+					memcpy(vertex_ptr + idx_b * sizeof(double), &a, sizeof(double));
+				}
+			}
+			geom.set_vertex_array(new_array, vertex_count);
+		}
+	}
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto count = args.size();
+		BinaryExecutor::Execute<string_t, string_t, string_t>(
+		    args.data[0], args.data[1], result, count, [&](const string_t &blob, const string_t &ords_str) {
+			    auto &lstate = LocalState::ResetAndGet(state);
+			    auto ords = ords_str.GetString();
+			    if (ords.size() != 2) {
+				    throw InvalidInputException("ST_SwapOrdinates: ordinates must be 2 chars (e.g., 'xy')");
+			    }
+			    auto ord_idx = [](char c) -> int {
+				    switch (c) {
+				    case 'x': case 'X': return 0;
+				    case 'y': case 'Y': return 1;
+				    case 'z': case 'Z': return 2;
+				    case 'm': case 'M': return 3;
+				    default:
+					    throw InvalidInputException("ST_SwapOrdinates: invalid ordinate '%c'", c);
+				    }
+			    };
+			    const int idx_a = ord_idx(ords[0]);
+			    const int idx_b = ord_idx(ords[1]);
+			    if (idx_a == idx_b) {
+				    return StringVector::AddStringOrBlob(result, blob);
+			    }
+			    sgl::geometry geom;
+			    lstate.Deserialize(blob, geom);
+			    SwapVerticesRecursive(geom, idx_a, idx_b, lstate.GetAllocator());
+			    return lstate.Serialize(result, geom);
+		    });
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_SwapOrdinates", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", LogicalType::GEOMETRY());
+				variant.AddParameter("ords", LogicalType::VARCHAR);
+				variant.SetReturnType(LogicalType::GEOMETRY());
+				variant.SetFunction(Execute);
+				variant.SetInit(LocalState::Init);
+			});
+			func.SetDescription("Swaps two ordinate values in a geometry (e.g., 'xy' swaps x and y)");
+			func.SetExample("SELECT ST_AsText(ST_SwapOrdinates(ST_Point(1, 2), 'xy'))");
+		});
+	}
+};
+
+//======================================================================================================================
+// ST_ShiftLongitude
+//======================================================================================================================
+struct ST_ShiftLongitude {
+
+	static void ShiftRecursive(sgl::geometry &geom, GeometryAllocator &alloc) {
+		if (geom.is_multi_part()) {
+			auto *part = geom.get_first_part();
+			for (uint32_t i = 0; i < geom.get_part_count(); i++) {
+				ShiftRecursive(*part, alloc);
+				part = part->get_next();
+			}
+		} else if (geom.get_vertex_count() > 0) {
+			const auto vertex_count = geom.get_vertex_count();
+			const auto vertex_width = geom.get_vertex_width();
+			auto new_array = static_cast<char *>(alloc.alloc(vertex_count * vertex_width));
+			memcpy(new_array, geom.get_vertex_array(), vertex_count * vertex_width);
+			for (uint32_t v = 0; v < vertex_count; v++) {
+				auto vertex_ptr = new_array + v * vertex_width;
+				double x;
+				memcpy(&x, vertex_ptr, sizeof(double));
+				if (x < 0) {
+					x += 360.0;
+				} else if (x > 180) {
+					x -= 360.0;
+				}
+				memcpy(vertex_ptr, &x, sizeof(double));
+			}
+			geom.set_vertex_array(new_array, vertex_count);
+		}
+	}
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto count = args.size();
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, count, [&](const string_t &blob) {
+			auto &lstate = LocalState::ResetAndGet(state);
+			sgl::geometry geom;
+			lstate.Deserialize(blob, geom);
+			ShiftRecursive(geom, lstate.GetAllocator());
+			return lstate.Serialize(result, geom);
+		});
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_ShiftLongitude", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", LogicalType::GEOMETRY());
+				variant.SetReturnType(LogicalType::GEOMETRY());
+				variant.SetFunction(Execute);
+				variant.SetInit(LocalState::Init);
+			});
+			func.SetDescription("Shifts longitude: negative values get +360, values >180 get -360");
+			func.SetExample("SELECT ST_AsText(ST_ShiftLongitude(ST_Point(-120, 45)))");
+		});
+	}
+};
+
 } // namespace
 
 // Helper to access the constant distance from the bind data
@@ -9565,6 +9941,11 @@ void RegisterSpatialScalarFunctions(ExtensionLoader &loader) {
 	ST_M::Register(loader);
 	ST_MMax::Register(loader);
 	ST_MMin::Register(loader);
+	ST_AddPoint::Register(loader);
+	ST_SetPoint::Register(loader);
+	ST_RemovePoint::Register(loader);
+	ST_SwapOrdinates::Register(loader);
+	ST_ShiftLongitude::Register(loader);
 }
 
 } // namespace duckdb

@@ -1,0 +1,125 @@
+# name: test/sql/geometry/st_linestring_editors.test
+# description: Test ST_AddPoint, ST_SetPoint, ST_RemovePoint
+# group: [spatial]
+
+require spatial
+
+# ST_AddPoint - append to end
+query I
+SELECT ST_AsText(ST_AddPoint(ST_GeomFromText('LINESTRING(0 0, 2 2)'), ST_Point(3, 3)));
+----
+LINESTRING (0 0, 2 2, 3 3)
+
+# ST_AddPoint - insert at position 0
+query I
+SELECT ST_AsText(ST_AddPoint(ST_GeomFromText('LINESTRING(0 0, 2 2)'), ST_Point(-1, -1), 0));
+----
+LINESTRING (-1 -1, 0 0, 2 2)
+
+# ST_AddPoint - insert at position 1
+query I
+SELECT ST_AsText(ST_AddPoint(ST_GeomFromText('LINESTRING(0 0, 2 2)'), ST_Point(1, 1), 1));
+----
+LINESTRING (0 0, 1 1, 2 2)
+
+# ST_AddPoint - insert at end via position
+query I
+SELECT ST_AsText(ST_AddPoint(ST_GeomFromText('LINESTRING(0 0, 2 2)'), ST_Point(3, 3), 2));
+----
+LINESTRING (0 0, 2 2, 3 3)
+
+# ST_AddPoint - error on non-linestring
+statement error
+SELECT ST_AddPoint(ST_Point(0, 0), ST_Point(1, 1));
+----
+ST_AddPoint: first argument must be a LINESTRING
+
+# ST_AddPoint - error on non-point second arg
+statement error
+SELECT ST_AddPoint(ST_GeomFromText('LINESTRING(0 0, 1 1)'), ST_GeomFromText('LINESTRING(2 2, 3 3)'));
+----
+ST_AddPoint: second argument must be a POINT
+
+# ST_AddPoint - error on out-of-range position
+statement error
+SELECT ST_AddPoint(ST_GeomFromText('LINESTRING(0 0, 1 1)'), ST_Point(2, 2), 5);
+----
+ST_AddPoint: position 5 out of range
+
+# ST_SetPoint - replace middle point
+query I
+SELECT ST_AsText(ST_SetPoint(ST_GeomFromText('LINESTRING(0 0, 1 1, 2 2)'), 1, ST_Point(5, 5)));
+----
+LINESTRING (0 0, 5 5, 2 2)
+
+# ST_SetPoint - replace first point
+query I
+SELECT ST_AsText(ST_SetPoint(ST_GeomFromText('LINESTRING(0 0, 1 1, 2 2)'), 0, ST_Point(9, 9)));
+----
+LINESTRING (9 9, 1 1, 2 2)
+
+# ST_SetPoint - negative index (last point)
+query I
+SELECT ST_AsText(ST_SetPoint(ST_GeomFromText('LINESTRING(0 0, 1 1, 2 2)'), -1, ST_Point(9, 9)));
+----
+LINESTRING (0 0, 1 1, 9 9)
+
+# ST_SetPoint - negative index (second to last)
+query I
+SELECT ST_AsText(ST_SetPoint(ST_GeomFromText('LINESTRING(0 0, 1 1, 2 2)'), -2, ST_Point(9, 9)));
+----
+LINESTRING (0 0, 9 9, 2 2)
+
+# ST_SetPoint - error on non-linestring
+statement error
+SELECT ST_SetPoint(ST_Point(0, 0), 0, ST_Point(1, 1));
+----
+ST_SetPoint: first argument must be a LINESTRING
+
+# ST_SetPoint - error on out of range
+statement error
+SELECT ST_SetPoint(ST_GeomFromText('LINESTRING(0 0, 1 1)'), 5, ST_Point(2, 2));
+----
+ST_SetPoint: position 5 out of range
+
+# ST_RemovePoint - remove middle point
+query I
+SELECT ST_AsText(ST_RemovePoint(ST_GeomFromText('LINESTRING(0 0, 1 1, 2 2)'), 1));
+----
+LINESTRING (0 0, 2 2)
+
+# ST_RemovePoint - remove first point
+query I
+SELECT ST_AsText(ST_RemovePoint(ST_GeomFromText('LINESTRING(0 0, 1 1, 2 2)'), 0));
+----
+LINESTRING (1 1, 2 2)
+
+# ST_RemovePoint - remove last point
+query I
+SELECT ST_AsText(ST_RemovePoint(ST_GeomFromText('LINESTRING(0 0, 1 1, 2 2)'), 2));
+----
+LINESTRING (0 0, 1 1)
+
+# ST_RemovePoint - negative index
+query I
+SELECT ST_AsText(ST_RemovePoint(ST_GeomFromText('LINESTRING(0 0, 1 1, 2 2)'), -1));
+----
+LINESTRING (0 0, 1 1)
+
+# ST_RemovePoint - error on 2-point linestring
+statement error
+SELECT ST_RemovePoint(ST_GeomFromText('LINESTRING(0 0, 1 1)'), 0);
+----
+ST_RemovePoint: cannot remove point from linestring with 2 or fewer points
+
+# ST_RemovePoint - error on non-linestring
+statement error
+SELECT ST_RemovePoint(ST_Point(0, 0), 0);
+----
+ST_RemovePoint: first argument must be a LINESTRING
+
+# ST_RemovePoint - error on out of range
+statement error
+SELECT ST_RemovePoint(ST_GeomFromText('LINESTRING(0 0, 1 1, 2 2)'), 5);
+----
+ST_RemovePoint: position 5 out of range

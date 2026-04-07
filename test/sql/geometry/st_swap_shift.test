@@ -1,0 +1,83 @@
+# name: test/sql/geometry/st_swap_shift.test
+# description: Test ST_SwapOrdinates and ST_ShiftLongitude
+# group: [spatial]
+
+require spatial
+
+# ST_SwapOrdinates - swap x and y for point
+query I
+SELECT ST_AsText(ST_SwapOrdinates(ST_Point(1, 2), 'xy'));
+----
+POINT (2 1)
+
+# ST_SwapOrdinates - swap x and y for linestring
+query I
+SELECT ST_AsText(ST_SwapOrdinates(ST_GeomFromText('LINESTRING(1 2, 3 4)'), 'xy'));
+----
+LINESTRING (2 1, 4 3)
+
+# ST_SwapOrdinates - swap x and y for polygon
+query I
+SELECT ST_AsText(ST_SwapOrdinates(ST_GeomFromText('POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))'), 'xy'));
+----
+POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))
+
+# ST_SwapOrdinates - same ordinate (no-op)
+query I
+SELECT ST_AsText(ST_SwapOrdinates(ST_Point(1, 2), 'xx'));
+----
+POINT (1 2)
+
+# ST_SwapOrdinates - case insensitive
+query I
+SELECT ST_AsText(ST_SwapOrdinates(ST_Point(1, 2), 'XY'));
+----
+POINT (2 1)
+
+# ST_SwapOrdinates - multipoint
+query I
+SELECT ST_AsText(ST_SwapOrdinates(ST_GeomFromText('MULTIPOINT(1 2, 3 4)'), 'xy'));
+----
+MULTIPOINT (2 1, 4 3)
+
+# ST_SwapOrdinates - error on invalid ordinate
+statement error
+SELECT ST_SwapOrdinates(ST_Point(1, 2), 'xq');
+----
+ST_SwapOrdinates: invalid ordinate 'q'
+
+# ST_SwapOrdinates - error on wrong length
+statement error
+SELECT ST_SwapOrdinates(ST_Point(1, 2), 'xyz');
+----
+ST_SwapOrdinates: ordinates must be 2 chars
+
+# ST_ShiftLongitude - negative longitude
+query I
+SELECT ST_AsText(ST_ShiftLongitude(ST_Point(-120, 45)));
+----
+POINT (240 45)
+
+# ST_ShiftLongitude - longitude > 180
+query I
+SELECT ST_AsText(ST_ShiftLongitude(ST_Point(200, 45)));
+----
+POINT (-160 45)
+
+# ST_ShiftLongitude - longitude in [0, 180] (no change)
+query I
+SELECT ST_AsText(ST_ShiftLongitude(ST_Point(90, 45)));
+----
+POINT (90 45)
+
+# ST_ShiftLongitude - linestring
+query I
+SELECT ST_AsText(ST_ShiftLongitude(ST_GeomFromText('LINESTRING(-120 45, 200 -30)')));
+----
+LINESTRING (240 45, -160 -30)
+
+# ST_ShiftLongitude - multipoint
+query I
+SELECT ST_AsText(ST_ShiftLongitude(ST_GeomFromText('MULTIPOINT(-10 0, 190 0)')));
+----
+MULTIPOINT (350 0, -170 0)
