@@ -1,0 +1,53 @@
+# name: test/sql/geometry/st_geohash_decode.test
+# description: Test ST_GeomFromGeoHash and ST_Box2dFromGeoHash
+# group: [spatial]
+
+require spatial
+
+# ST_GeomFromGeoHash - NYC area
+query I
+SELECT round(ST_X(ST_GeomFromGeoHash('dr5regw3p')), 2);
+----
+-74.01
+
+# ST_GeomFromGeoHash - latitude
+query I
+SELECT round(ST_Y(ST_GeomFromGeoHash('dr5regw3p')), 2);
+----
+40.71
+
+# ST_GeomFromGeoHash - equator/prime meridian
+query I
+SELECT round(ST_X(ST_GeomFromGeoHash('s00000')), 1);
+----
+0.0
+
+# ST_Box2dFromGeoHash - returns polygon
+query I
+SELECT ST_GeometryType(ST_Box2dFromGeoHash('dr5r'));
+----
+POLYGON
+
+# ST_Box2dFromGeoHash - bbox covers expected area
+query I
+SELECT ST_NPoints(ST_Box2dFromGeoHash('dr5r'));
+----
+5
+
+# ST_Box2dFromGeoHash - shorter hash = larger cell
+query I
+SELECT ST_Area(ST_Box2dFromGeoHash('dr')) > ST_Area(ST_Box2dFromGeoHash('dr5r'));
+----
+true
+
+# ST_GeomFromGeoHash - single character
+query I
+SELECT ST_GeometryType(ST_GeomFromGeoHash('d'));
+----
+POINT
+
+# ST_Box2dFromGeoHash - precise hash gives small cell
+query I
+SELECT ST_Area(ST_Box2dFromGeoHash('dr5regw3p')) < 0.001;
+----
+true

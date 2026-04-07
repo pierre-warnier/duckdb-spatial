@@ -11293,6 +11293,132 @@ struct ST_3DLineInterpolatePoint {
 	}
 };
 
+//======================================================================================================================
+// GeoHash decode helper
+//======================================================================================================================
+static void DecodeGeoHash(const std::string &hash, double &lat_min, double &lat_max, double &lon_min, double &lon_max) {
+	static const char base32[] = "0123456789bcdefghjkmnpqrstuvwxyz";
+	lat_min = -90.0;
+	lat_max = 90.0;
+	lon_min = -180.0;
+	lon_max = 180.0;
+	bool is_lon = true;
+
+	for (char c : hash) {
+		const char *pos = std::strchr(base32, c);
+		if (!pos) {
+			throw InvalidInputException("Invalid GeoHash character: '%c'", c);
+		}
+		int val = static_cast<int>(pos - base32);
+		for (int bit = 4; bit >= 0; bit--) {
+			if (is_lon) {
+				double mid = (lon_min + lon_max) / 2.0;
+				if (val & (1 << bit)) {
+					lon_min = mid;
+				} else {
+					lon_max = mid;
+				}
+			} else {
+				double mid = (lat_min + lat_max) / 2.0;
+				if (val & (1 << bit)) {
+					lat_min = mid;
+				} else {
+					lat_max = mid;
+				}
+			}
+			is_lon = !is_lon;
+		}
+	}
+}
+
+//======================================================================================================================
+// ST_GeomFromGeoHash
+//======================================================================================================================
+struct ST_GeomFromGeoHash_Func {
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto count = args.size();
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, count, [&](const string_t &hash_str) {
+			auto &lstate = LocalState::ResetAndGet(state);
+			auto hash = hash_str.GetString();
+
+			double lat_min, lat_max, lon_min, lon_max;
+			DecodeGeoHash(hash, lat_min, lat_max, lon_min, lon_max);
+
+			// Return center point
+			double cx = (lon_min + lon_max) / 2.0;
+			double cy = (lat_min + lat_max) / 2.0;
+
+			auto &alloc = lstate.GetAllocator();
+			sgl::geometry pt(sgl::geometry_type::POINT, false, false);
+			auto vtx_array = static_cast<char *>(alloc.alloc(sizeof(sgl::vertex_xy)));
+			sgl::vertex_xy vtx = {cx, cy};
+			memcpy(vtx_array, &vtx, sizeof(sgl::vertex_xy));
+			pt.set_vertex_array(vtx_array, 1);
+
+			return lstate.Serialize(result, pt);
+		});
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_GeomFromGeoHash", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("hash", LogicalType::VARCHAR);
+				variant.SetReturnType(LogicalType::GEOMETRY());
+				variant.SetFunction(Execute);
+				variant.SetInit(LocalState::Init);
+			});
+			func.SetDescription("Returns the center point of a GeoHash cell");
+			func.SetExample("SELECT ST_AsText(ST_GeomFromGeoHash('dr5regw3p'))");
+		});
+	}
+};
+
+//======================================================================================================================
+// ST_Box2dFromGeoHash
+//======================================================================================================================
+struct ST_Box2dFromGeoHash {
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto count = args.size();
+		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, count, [&](const string_t &hash_str) {
+			auto &lstate = LocalState::ResetAndGet(state);
+			auto hash = hash_str.GetString();
+
+			double lat_min, lat_max, lon_min, lon_max;
+			DecodeGeoHash(hash, lat_min, lat_max, lon_min, lon_max);
+
+			// Return bounding box as polygon
+			auto &alloc = lstate.GetAllocator();
+			sgl::geometry poly(sgl::geometry_type::POLYGON, false, false);
+			auto *ring = static_cast<sgl::geometry *>(alloc.alloc(sizeof(sgl::geometry)));
+			new (ring) sgl::geometry(sgl::geometry_type::LINESTRING, false, false);
+
+			auto vtx_array = static_cast<char *>(alloc.alloc(5 * sizeof(sgl::vertex_xy)));
+			sgl::vertex_xy vertices[5] = {
+			    {lon_min, lat_min}, {lon_max, lat_min}, {lon_max, lat_max}, {lon_min, lat_max}, {lon_min, lat_min}};
+			memcpy(vtx_array, vertices, 5 * sizeof(sgl::vertex_xy));
+			ring->set_vertex_array(vtx_array, 5);
+
+			poly.append_part(ring);
+			return lstate.Serialize(result, poly);
+		});
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_Box2dFromGeoHash", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("hash", LogicalType::VARCHAR);
+				variant.SetReturnType(LogicalType::GEOMETRY());
+				variant.SetFunction(Execute);
+				variant.SetInit(LocalState::Init);
+			});
+			func.SetDescription("Returns the bounding box polygon of a GeoHash cell");
+			func.SetExample("SELECT ST_AsText(ST_Box2dFromGeoHash('dr5regw3p'))");
+		});
+	}
+};
+
 } // namespace
 
 // Helper to access the constant distance from the bind data
@@ -11415,6 +11541,8 @@ void RegisterSpatialScalarFunctions(ExtensionLoader &loader) {
 	ST_LineFromEncodedPolyline::Register(loader);
 	ST_AddMeasure::Register(loader);
 	ST_3DLineInterpolatePoint::Register(loader);
+	ST_GeomFromGeoHash_Func::Register(loader);
+	ST_Box2dFromGeoHash::Register(loader);
 }
 
 } // namespace duckdb
