@@ -232,10 +232,9 @@ static GEOSGeom_t *DeserializeTemplated(BinaryReader &reader, ArenaAllocator &ar
 		if (vert_count == 0) {
 			return GEOSGeom_createEmptyLineString_r(ctx);
 		}
-		auto vert_array = AllocateArray<double>(arena, vert_count * VERTEX_SIZE);
+		// Pass blob pointer directly to GEOS — it copies internally, no need for intermediate buffer
 		auto ptr = reader.Reserve(vert_count * VERTEX_SIZE * sizeof(double));
-		memcpy(vert_array, ptr, vert_count * VERTEX_SIZE * sizeof(double));
-		auto seq = GEOSCoordSeq_copyFromBuffer_r(ctx, vert_array, vert_count, V::HAS_Z, V::HAS_M);
+		auto seq = GEOSCoordSeq_copyFromBuffer_r(ctx, reinterpret_cast<const double *>(ptr), vert_count, V::HAS_Z, V::HAS_M);
 		return GEOSGeom_createLineString_r(ctx, seq);
 	}
 	case sgl::geometry_type::POLYGON: {
@@ -243,13 +242,12 @@ static GEOSGeom_t *DeserializeTemplated(BinaryReader &reader, ArenaAllocator &ar
 		if (ring_count == 0) {
 			return GEOSGeom_createEmptyPolygon_r(ctx);
 		}
-		auto ring_array = AllocateArray<GEOSGeometry *>(ring_count);
+		auto ring_array = AllocateArray<GEOSGeometry *>(arena, ring_count);
 		for (uint32_t i = 0; i < ring_count; i++) {
 			const auto vert_count = reader.Read<uint32_t>();
-			auto vert_array = AllocateArray<double>(arena, vert_count * VERTEX_SIZE);
+			// Pass blob pointer directly to GEOS — it copies internally, no need for intermediate buffer
 			auto ptr = reader.Reserve(vert_count * VERTEX_SIZE * sizeof(double));
-			memcpy(vert_array, ptr, vert_count * VERTEX_SIZE * sizeof(double));
-			auto seq = GEOSCoordSeq_copyFromBuffer_r(ctx, vert_array, vert_count, V::HAS_Z, V::HAS_M);
+			auto seq = GEOSCoordSeq_copyFromBuffer_r(ctx, reinterpret_cast<const double *>(ptr), vert_count, V::HAS_Z, V::HAS_M);
 			ring_array[i] = GEOSGeom_createLinearRing_r(ctx, seq);
 		}
 		return GEOSGeom_createPolygon_r(ctx, ring_array[0], ring_array + 1, ring_count - 1);
