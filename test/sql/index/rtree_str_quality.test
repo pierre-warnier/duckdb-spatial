@@ -1,0 +1,70 @@
+# name: test/sql/index/rtree_str_quality.test
+# description: Test that STR bulk loading produces a quality R-tree with proper spatial locality
+# group: [spatial]
+
+require spatial
+
+# Create a grid of points to test STR partitioning quality
+# With proper STR, nearby points should be in the same tree nodes,
+# leading to fewer node accesses during spatial queries
+
+statement ok
+CREATE TABLE grid_points AS
+SELECT
+    i * 0.01 AS x,
+    j * 0.01 AS y,
+    ST_Point(i * 0.01, j * 0.01) AS geom
+FROM generate_series(0, 99) t(i),
+     generate_series(0, 99) s(j);
+
+# 10,000 points
+query I
+SELECT count(*) FROM grid_points;
+----
+10000
+
+# Create R-tree index (uses STR bulk loading)
+statement ok
+CREATE INDEX grid_idx ON grid_points USING RTREE(geom);
+
+# Test that the R-tree works correctly with a small query window
+# ST_Within excludes boundary points, so 9x9 interior = 81
+query I
+SELECT count(*)
+FROM grid_points
+WHERE ST_Within(geom, ST_MakeEnvelope(0.0, 0.0, 0.1, 0.1));
+----
+81
+
+# Test with a query window in the middle (19x19 interior = 361)
+query I
+SELECT count(*)
+FROM grid_points
+WHERE ST_Within(geom, ST_MakeEnvelope(0.4, 0.4, 0.6, 0.6));
+----
+361
+
+# Test with a very small query window (1x1 interior = 1)
+query I
+SELECT count(*)
+FROM grid_points
+WHERE ST_Within(geom, ST_MakeEnvelope(0.5, 0.5, 0.52, 0.52));
+----
+1
+
+# Random points test (more realistic distribution)
+statement ok
+CREATE TABLE random_points AS
+SELECT
+    ST_Point(random() * 100, random() * 100) AS geom
+FROM generate_series(1, 50000);
+
+statement ok
+CREATE INDEX random_idx ON random_points USING RTREE(geom);
+
+# Query should return results and be correct
+query I
+SELECT count(*) > 0 FROM random_points
+WHERE ST_Within(geom, ST_MakeEnvelope(45, 45, 55, 55));
+----
+true

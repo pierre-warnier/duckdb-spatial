@@ -354,6 +354,35 @@ SinkFinalizeType PhysicalCreateRTreeIndex::Finalize(Pipeline &pipeline, Event &e
 	gstate.slice_buffer =
 	    BufferManager::GetBufferManager(context).GetBufferAllocator().Allocate(gstate.slice_size * sizeof(RTreeEntry));
 
+	// STR algorithm step 1: Sort all entries by X-center for proper vertical strip partitioning.
+	// Without this, the scan slices in BuildRTreeBottomUp contain entries from arbitrary X positions,
+	// defeating the Sort-Tile-Recursive spatial locality. The Y-sort per slice (step 2) is already
+	// done inside BuildRTreeBottomUp.
+	{
+		vector<RTreeEntry> all_entries;
+		all_entries.reserve(gstate.rtree_size);
+
+		ManagedCollectionScanState x_sort_scan;
+		gstate.curr_layer.InitializeScan(x_sort_scan, false);
+
+		auto *buf_begin = reinterpret_cast<RTreeEntry *>(gstate.slice_buffer.get());
+		auto *buf_end = buf_begin + gstate.slice_size;
+
+		auto count = gstate.curr_layer.Scan(x_sort_scan, buf_begin, buf_end);
+		while (count > 0) {
+			all_entries.insert(all_entries.end(), buf_begin, buf_begin + count);
+			count = gstate.curr_layer.Scan(x_sort_scan, buf_begin, buf_end);
+		}
+
+		std::sort(all_entries.begin(), all_entries.end(), [](const RTreeEntry &a, const RTreeEntry &b) {
+			return a.bounds.Center().x < b.bounds.Center().x;
+		});
+
+		gstate.curr_layer.Clear();
+		gstate.curr_layer.InitializeAppend(gstate.append_state);
+		gstate.curr_layer.Append(gstate.append_state, all_entries.data(), all_entries.data() + all_entries.size());
+	}
+
 	// Schedule the construction of the RTree
 	auto construction_event = make_uniq<RTreeIndexConstructionEvent>(gstate, pipeline, *info, table, *this);
 	event.InsertEvent(std::move(construction_event));
