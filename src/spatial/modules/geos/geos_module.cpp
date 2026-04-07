@@ -3135,6 +3135,135 @@ struct ST_CoverageInvalidEdges_Agg : GEOSCoverageAggFunction {
 	}
 };
 
+//----------------------------------------------------------------------
+// ST_IsValidDetail
+//----------------------------------------------------------------------
+struct ST_IsValidDetail {
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto count = args.size();
+		auto &struct_entries = StructVector::GetEntries(result);
+		auto valid_data = FlatVector::GetData<bool>(*struct_entries[0]);
+		auto &reason_vec = *struct_entries[1];
+		auto &location_vec = *struct_entries[2];
+
+		auto &input = args.data[0];
+		UnifiedVectorFormat input_fmt;
+		input.ToUnifiedFormat(count, input_fmt);
+		const auto input_data = UnifiedVectorFormat::GetData<string_t>(input_fmt);
+
+		for (idx_t i = 0; i < count; i++) {
+			const auto idx = input_fmt.sel->get_index(i);
+			if (!input_fmt.validity.RowIsValid(idx)) {
+				FlatVector::SetNull(result, i, true);
+				continue;
+			}
+
+			auto &lstate = LocalState::ResetAndGet(state);
+			auto ctx = lstate.GetContext();
+			auto geom = lstate.Deserialize(input_data[idx]);
+
+			char *reason_str = nullptr;
+			GEOSGeometry *location_geom = nullptr;
+			char is_valid = GEOSisValidDetail_r(ctx, geom.get_raw(), 0, &reason_str, &location_geom);
+
+			valid_data[i] = is_valid == 1;
+
+			if (reason_str) {
+				FlatVector::GetData<string_t>(reason_vec)[i] = StringVector::AddString(reason_vec, reason_str);
+				GEOSFree_r(ctx, reason_str);
+			} else {
+				FlatVector::GetData<string_t>(reason_vec)[i] = StringVector::AddString(reason_vec, "Valid Geometry");
+			}
+
+			if (location_geom) {
+				auto loc_wrapper = GeosGeometry(ctx, location_geom);
+				FlatVector::GetData<string_t>(location_vec)[i] = lstate.Serialize(location_vec, loc_wrapper);
+			} else {
+				FlatVector::SetNull(location_vec, i, true);
+			}
+		}
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_IsValidDetail", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", LogicalType::GEOMETRY());
+
+				child_list_t<LogicalType> struct_types;
+				struct_types.push_back({"valid", LogicalType::BOOLEAN});
+				struct_types.push_back({"reason", LogicalType::VARCHAR});
+				struct_types.push_back({"location", LogicalType::GEOMETRY()});
+				variant.SetReturnType(LogicalType::STRUCT(struct_types));
+
+				variant.SetFunction(Execute);
+				variant.SetInit(LocalState::Init);
+			});
+			func.SetDescription("Returns a struct with validity info: {valid, reason, location}");
+			func.SetExample("SELECT ST_IsValidDetail(ST_GeomFromText('POLYGON((0 0, 1 1, 1 0, 0 1, 0 0))'))");
+
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "property");
+		});
+	}
+};
+
+//----------------------------------------------------------------------
+// ST_RelateMatch
+//----------------------------------------------------------------------
+struct ST_RelateMatch {
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto count = args.size();
+		BinaryExecutor::Execute<string_t, string_t, bool>(
+		    args.data[0], args.data[1], result, count, [&](const string_t &matrix_str, const string_t &pattern_str) {
+			    auto matrix = matrix_str.GetString();
+			    auto pattern = pattern_str.GetString();
+
+			    if (matrix.size() != 9) {
+				    throw InvalidInputException("ST_RelateMatch: matrix must be a 9-character DE-9IM string");
+			    }
+			    if (pattern.size() != 9) {
+				    throw InvalidInputException("ST_RelateMatch: pattern must be a 9-character DE-9IM string");
+			    }
+
+			    // Match DE-9IM: T matches {0,1,2}, F matches {F}, * matches anything
+			    // 0,1,2 match exact dimensions
+			    for (int i = 0; i < 9; i++) {
+				    char m = matrix[i];
+				    char p = pattern[i];
+
+				    if (p == '*') continue;
+
+				    if (p == 'T' || p == 't') {
+					    if (m != '0' && m != '1' && m != '2') return false;
+				    } else if (p == 'F' || p == 'f') {
+					    if (m != 'F' && m != 'f') return false;
+				    } else if (p == '0' || p == '1' || p == '2') {
+					    if (m != p) return false;
+				    }
+			    }
+			    return true;
+		    });
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_RelateMatch", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("matrix", LogicalType::VARCHAR);
+				variant.AddParameter("pattern", LogicalType::VARCHAR);
+				variant.SetReturnType(LogicalType::BOOLEAN);
+				variant.SetFunction(Execute);
+			});
+			func.SetDescription("Tests if a DE-9IM matrix string matches a DE-9IM pattern");
+			func.SetExample("SELECT ST_RelateMatch('FF2FF1FF2', 'FF*FF****')");
+
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "property");
+		});
+	}
+};
+
 } // namespace
 
 //######################################################################################################################
@@ -3190,6 +3319,8 @@ void RegisterGEOSModule(ExtensionLoader &loader) {
 	ST_Union::Register(loader);
 	ST_VoronoiDiagram::Register(loader);
 	ST_Within::Register(loader);
+	ST_IsValidDetail::Register(loader);
+	ST_RelateMatch::Register(loader);
 
 	// Aggregate Functions
 	ST_MemUnion_Agg::Register(loader);
