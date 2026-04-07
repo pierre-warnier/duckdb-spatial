@@ -11555,6 +11555,94 @@ struct ST_GeomFromEWKB {
 	}
 };
 
+//======================================================================================================================
+// ST_Project — geodesic point projection using haversine forward problem
+//======================================================================================================================
+struct ST_Project_Func {
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto count = args.size();
+		auto &pt_vec = args.data[0];
+		auto &dist_vec = args.data[1];
+		auto &azimuth_vec = args.data[2];
+
+		UnifiedVectorFormat pt_fmt, dist_fmt, az_fmt;
+		pt_vec.ToUnifiedFormat(count, pt_fmt);
+		dist_vec.ToUnifiedFormat(count, dist_fmt);
+		azimuth_vec.ToUnifiedFormat(count, az_fmt);
+
+		const auto pt_data = UnifiedVectorFormat::GetData<string_t>(pt_fmt);
+		const auto dist_data = UnifiedVectorFormat::GetData<double>(dist_fmt);
+		const auto az_data = UnifiedVectorFormat::GetData<double>(az_fmt);
+
+		constexpr double EARTH_RADIUS = 6371008.8; // meters
+		constexpr double DEG_TO_RAD = M_PI / 180.0;
+		constexpr double RAD_TO_DEG = 180.0 / M_PI;
+
+		for (idx_t i = 0; i < count; i++) {
+			const auto pi = pt_fmt.sel->get_index(i);
+			const auto di = dist_fmt.sel->get_index(i);
+			const auto ai = az_fmt.sel->get_index(i);
+
+			if (!pt_fmt.validity.RowIsValid(pi) || !dist_fmt.validity.RowIsValid(di) ||
+			    !az_fmt.validity.RowIsValid(ai)) {
+				FlatVector::SetNull(result, i, true);
+				continue;
+			}
+
+			auto &lstate = LocalState::ResetAndGet(state);
+			sgl::geometry geom;
+			lstate.Deserialize(pt_data[pi], geom);
+
+			if (geom.get_type() != sgl::geometry_type::POINT || geom.get_vertex_count() == 0) {
+				throw InvalidInputException("ST_Project: first argument must be a POINT");
+			}
+
+			auto vtx = geom.get_vertex_xy(0);
+			double lon1 = vtx.x * DEG_TO_RAD;
+			double lat1 = vtx.y * DEG_TO_RAD;
+			double distance = dist_data[di];
+			double azimuth = az_data[ai]; // already in radians
+
+			// Haversine forward problem
+			double d_r = distance / EARTH_RADIUS;
+			double sin_d = std::sin(d_r);
+			double cos_d = std::cos(d_r);
+			double sin_lat1 = std::sin(lat1);
+			double cos_lat1 = std::cos(lat1);
+
+			double lat2 = std::asin(sin_lat1 * cos_d + cos_lat1 * sin_d * std::cos(azimuth));
+			double lon2 = lon1 + std::atan2(std::sin(azimuth) * sin_d * cos_lat1,
+			                                cos_d - sin_lat1 * std::sin(lat2));
+
+			// Create result point
+			auto &alloc = lstate.GetAllocator();
+			sgl::geometry pt(sgl::geometry_type::POINT, false, false);
+			auto vtx_array = static_cast<char *>(alloc.alloc(sizeof(sgl::vertex_xy)));
+			sgl::vertex_xy result_vtx = {lon2 * RAD_TO_DEG, lat2 * RAD_TO_DEG};
+			memcpy(vtx_array, &result_vtx, sizeof(sgl::vertex_xy));
+			pt.set_vertex_array(vtx_array, 1);
+
+			FlatVector::GetData<string_t>(result)[i] = lstate.Serialize(result, pt);
+		}
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_Project", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("point", LogicalType::GEOMETRY());
+				variant.AddParameter("distance", LogicalType::DOUBLE);
+				variant.AddParameter("azimuth", LogicalType::DOUBLE);
+				variant.SetReturnType(LogicalType::GEOMETRY());
+				variant.SetFunction(Execute);
+				variant.SetInit(LocalState::Init);
+			});
+			func.SetDescription("Projects a point along the geodesic by a distance (meters) and azimuth (radians)");
+			func.SetExample("SELECT ST_AsText(ST_Project(ST_Point(0, 0), 100000, 0))");
+		});
+	}
+};
+
 } // namespace
 
 // Helper to access the constant distance from the bind data
@@ -11683,6 +11771,7 @@ void RegisterSpatialScalarFunctions(ExtensionLoader &loader) {
 	ST_GeomFromEWKT::Register(loader);
 	ST_AsEWKB::Register(loader);
 	ST_GeomFromEWKB::Register(loader);
+	ST_Project_Func::Register(loader);
 }
 
 } // namespace duckdb

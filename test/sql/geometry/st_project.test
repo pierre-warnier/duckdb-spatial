@@ -1,0 +1,47 @@
+# name: test/sql/geometry/st_project.test
+# description: Test ST_Project geodesic projection
+# group: [spatial]
+
+require spatial
+
+# Project 100km north from equator
+query I
+SELECT round(ST_Y(ST_Project(ST_Point(0, 0), 100000, 0)), 2);
+----
+0.9
+
+# Project north: longitude unchanged
+query I
+SELECT round(ST_X(ST_Project(ST_Point(0, 0), 100000, 0)), 4);
+----
+0.0
+
+# Project east: latitude unchanged
+query I
+SELECT round(ST_Y(ST_Project(ST_Point(0, 0), 100000, 1.5707963267948966)), 2);
+----
+0.0
+
+# Project east: longitude increases
+query I
+SELECT ST_X(ST_Project(ST_Point(0, 0), 100000, 1.5707963267948966)) > 0.8;
+----
+true
+
+# Project south (azimuth = pi)
+query I
+SELECT ST_Y(ST_Project(ST_Point(0, 45), 100000, 3.141592653589793)) < 45;
+----
+true
+
+# Zero distance returns same point
+query I
+SELECT round(ST_X(ST_Project(ST_Point(10, 20), 0, 0)), 4);
+----
+10.0
+
+# Error on non-point
+statement error
+SELECT ST_Project(ST_GeomFromText('LINESTRING(0 0, 1 1)'), 100, 0);
+----
+ST_Project: first argument must be a POINT
