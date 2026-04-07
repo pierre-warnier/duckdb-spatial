@@ -2210,7 +2210,45 @@ bool distance_lines_lines(const geometry &lhs, const geometry &rhs, distance_res
 
 	SGL_ASSERT(lhs_vertex_count >= 2 && rhs_vertex_count >= 2);
 
-	// Otherwise, we have two linestrings with at least 2 vertices each
+	// Envelope pre-check: compute bounding boxes and check minimum distance
+	// between envelopes. If envelopes don't overlap and we already have a better
+	// distance, skip the O(n*m) nested loop entirely.
+	double lhs_xmin = lhs_prev.x, lhs_xmax = lhs_prev.x;
+	double lhs_ymin = lhs_prev.y, lhs_ymax = lhs_prev.y;
+	for (uint32_t i = 0; i < lhs_vertex_count; i++) {
+		vertex_xy v;
+		memcpy(&v, lhs_vertex_array + i * lhs_vertex_width, sizeof(vertex_xy));
+		if (v.x < lhs_xmin) lhs_xmin = v.x;
+		if (v.x > lhs_xmax) lhs_xmax = v.x;
+		if (v.y < lhs_ymin) lhs_ymin = v.y;
+		if (v.y > lhs_ymax) lhs_ymax = v.y;
+	}
+	double rhs_xmin, rhs_xmax, rhs_ymin, rhs_ymax;
+	memcpy(&rhs_prev, rhs_vertex_array, sizeof(vertex_xy));
+	rhs_xmin = rhs_xmax = rhs_prev.x;
+	rhs_ymin = rhs_ymax = rhs_prev.y;
+	for (uint32_t i = 0; i < rhs_vertex_count; i++) {
+		vertex_xy v;
+		memcpy(&v, rhs_vertex_array + i * rhs_vertex_width, sizeof(vertex_xy));
+		if (v.x < rhs_xmin) rhs_xmin = v.x;
+		if (v.x > rhs_xmax) rhs_xmax = v.x;
+		if (v.y < rhs_ymin) rhs_ymin = v.y;
+		if (v.y > rhs_ymax) rhs_ymax = v.y;
+	}
+
+	// Minimum envelope distance
+	double env_dx = 0, env_dy = 0;
+	if (lhs_xmax < rhs_xmin) env_dx = rhs_xmin - lhs_xmax;
+	else if (rhs_xmax < lhs_xmin) env_dx = lhs_xmin - rhs_xmax;
+	if (lhs_ymax < rhs_ymin) env_dy = rhs_ymin - lhs_ymax;
+	else if (rhs_ymax < lhs_ymin) env_dy = lhs_ymin - rhs_ymax;
+	double env_dist = std::sqrt(env_dx * env_dx + env_dy * env_dy);
+
+	if (env_dist >= result.distance) {
+		return true; // Current best is already closer than envelope distance
+	}
+
+	// Nested loop with early exit on zero distance
 	memcpy(&lhs_prev, lhs_vertex_array, sizeof(vertex_xy));
 	for (uint32_t i = 1; i < lhs_vertex_count; i++) {
 		memcpy(&lhs_next, lhs_vertex_array + i * lhs_vertex_width, sizeof(vertex_xy));
@@ -2221,6 +2259,10 @@ bool distance_lines_lines(const geometry &lhs, const geometry &rhs, distance_res
 
 			const auto dist = segment_segment_distance(lhs_prev, lhs_next, rhs_prev, rhs_next);
 			result.set(dist);
+
+			if (result.distance == 0.0) {
+				return true; // Geometries intersect — distance is 0
+			}
 
 			rhs_prev = rhs_next;
 		}

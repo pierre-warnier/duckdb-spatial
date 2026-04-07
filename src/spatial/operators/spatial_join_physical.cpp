@@ -72,7 +72,7 @@ public:
 	idx_t matches_idx = 0;
 
 private:
-	queue<size_t> search_queue;
+	vector<size_t> search_stack;
 	Box search_box;
 	size_t entry_beg = 0;
 	size_t entry_pos = 0;
@@ -289,9 +289,7 @@ public:
 	}
 
 	void InitScan(FlatRTreeScanState &state, const Box &box) const {
-		while (!state.search_queue.empty()) {
-			state.search_queue.pop();
-		}
+		state.search_stack.clear();
 		state.search_box = box;
 		state.entry_beg = box_array.size() - 1;
 		state.entry_pos = state.entry_beg;
@@ -336,7 +334,7 @@ public:
 
 				if (state.entry_beg >= item_count) {
 					// Internal node
-					state.search_queue.push(idx_array[state.entry_pos]);
+					state.search_stack.push_back(idx_array[state.entry_pos]);
 				} else {
 					// Leaf node
 					yield = callback(row_array[idx_array[state.entry_pos]]);
@@ -350,15 +348,15 @@ public:
 				}
 			}
 
-			if (state.search_queue.empty()) {
+			if (state.search_stack.empty()) {
 				// There is no more nodes to search, return false!
 				state.exhausted = true;
 				return;
 			}
 
-			state.entry_beg = state.search_queue.front();
+			state.entry_beg = state.search_stack.back();
 			state.entry_pos = state.entry_beg;
-			state.search_queue.pop();
+			state.search_stack.pop_back();
 		}
 	}
 
