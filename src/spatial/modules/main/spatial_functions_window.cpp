@@ -130,8 +130,12 @@ static void DBSCANWindowInit(AggregateInputData &aggr_input_data, const WindowPa
 	}
 
 	// Phase 1: Extract centroids from the partition's geometry column
+	// Use double-precision coordinates to match GEOMETRY's underlying precision;
+	// storing floats would round near the eps boundary and can flip cluster
+	// membership for closely-spaced points or inputs with large coordinate
+	// magnitudes (e.g., UTM eastings/northings in meters).
 	struct PointEntry {
-		float x, y;
+		double x, y;
 		bool valid;
 	};
 	vector<PointEntry> points(count);
@@ -180,8 +184,7 @@ static void DBSCANWindowInit(AggregateInputData &aggr_input_data, const WindowPa
 			sgl::vertex_xyzm centroid;
 			if (geom.get_type() != sgl::geometry_type::INVALID &&
 			    sgl::ops::get_centroid(geom, centroid)) {
-				points[row_offset + i] = {static_cast<float>(centroid.x),
-				                          static_cast<float>(centroid.y), true};
+				points[row_offset + i] = {centroid.x, centroid.y, true};
 			} else {
 				points[row_offset + i] = {0, 0, false};
 				state.cluster_ids[row_offset + i] = DBSCAN_NOISE;
@@ -206,40 +209,56 @@ static void DBSCANWindowInit(AggregateInputData &aggr_input_data, const WindowPa
 
 	// Phase 2: Build grid index for O(1) neighbor lookups
 	// Grid cells of size epsilon — neighbors within eps are in the 3x3 surrounding cells.
+	// Grid coordinates are int64 rather than int32: with small eps and large
+	// coordinates (e.g., mercator meters), floor(x / eps) can exceed the int32
+	// range and casting an out-of-range double to int32 is undefined behavior.
+	// The hash map is keyed on (gx, gy) so collisions don't merge distinct cells.
 	const auto cell_size = epsilon > 0 ? epsilon : 1.0;
 	const auto inv_cell = 1.0 / cell_size;
 	const auto eps_sq = epsilon * epsilon;
 
-	auto make_key = [](int32_t gx, int32_t gy) -> uint64_t {
-		return (static_cast<uint64_t>(static_cast<uint32_t>(gx)) << 32) | static_cast<uint32_t>(gy);
+	using GridKey = std::pair<int64_t, int64_t>;
+	struct GridKeyHash {
+		size_t operator()(const GridKey &k) const noexcept {
+			auto mix = [](uint64_t v) {
+				v ^= v >> 30;
+				v *= 0xbf58476d1ce4e5b9ULL;
+				v ^= v >> 27;
+				v *= 0x94d049bb133111ebULL;
+				v ^= v >> 31;
+				return v;
+			};
+			return mix(static_cast<uint64_t>(k.first)) ^
+			       (mix(static_cast<uint64_t>(k.second)) + 0x9e3779b97f4a7c15ULL);
+		}
 	};
 
-	std::unordered_map<uint64_t, vector<idx_t>> grid;
+	std::unordered_map<GridKey, vector<idx_t>, GridKeyHash> grid;
 	for (idx_t i = 0; i < count; i++) {
 		if (!points[i].valid) {
 			continue;
 		}
-		auto gx = static_cast<int32_t>(std::floor(static_cast<double>(points[i].x) * inv_cell));
-		auto gy = static_cast<int32_t>(std::floor(static_cast<double>(points[i].y) * inv_cell));
-		grid[make_key(gx, gy)].push_back(i);
+		auto gx = static_cast<int64_t>(std::floor(points[i].x * inv_cell));
+		auto gy = static_cast<int64_t>(std::floor(points[i].y * inv_cell));
+		grid[{gx, gy}].push_back(i);
 	}
 
 	auto find_neighbors = [&](idx_t row_idx) -> vector<idx_t> {
 		vector<idx_t> neighbors;
-		auto px = static_cast<double>(points[row_idx].x);
-		auto py = static_cast<double>(points[row_idx].y);
-		auto gx = static_cast<int32_t>(std::floor(px * inv_cell));
-		auto gy = static_cast<int32_t>(std::floor(py * inv_cell));
+		auto px = points[row_idx].x;
+		auto py = points[row_idx].y;
+		auto gx = static_cast<int64_t>(std::floor(px * inv_cell));
+		auto gy = static_cast<int64_t>(std::floor(py * inv_cell));
 
-		for (int32_t dx = -1; dx <= 1; dx++) {
-			for (int32_t dy = -1; dy <= 1; dy++) {
-				auto it = grid.find(make_key(gx + dx, gy + dy));
+		for (int64_t dx = -1; dx <= 1; dx++) {
+			for (int64_t dy = -1; dy <= 1; dy++) {
+				auto it = grid.find({gx + dx, gy + dy});
 				if (it == grid.end()) {
 					continue;
 				}
 				for (auto candidate : it->second) {
-					auto cdx = px - static_cast<double>(points[candidate].x);
-					auto cdy = py - static_cast<double>(points[candidate].y);
+					auto cdx = px - points[candidate].x;
+					auto cdy = py - points[candidate].y;
 					if (cdx * cdx + cdy * cdy <= eps_sq) {
 						neighbors.push_back(candidate);
 					}
@@ -346,7 +365,10 @@ static void DBSCANWindow(AggregateInputData &, const WindowPartitionInput &, con
 	}
 }
 
-// Dummy callbacks required by the AggregateFunction API but unused for window-only functions
+// Unused callbacks — the window path uses window_init/window_callback and
+// never drives update/combine/finalize. Leave these as no-ops rather than
+// wired to the registration so the planner does not mistake the function for
+// a regular aggregate and route it through a non-custom aggregator.
 static void DBSCANUpdate(Vector[], AggregateInputData &, idx_t, Vector &, idx_t) {
 }
 static void DBSCANCombine(Vector &, Vector &, AggregateInputData &, idx_t) {
@@ -399,8 +421,10 @@ static void KMeansWindowInit(AggregateInputData &aggr_input_data, const WindowPa
 
 	if (count == 0) return;
 
-	// Extract centroids (same pattern as DBSCAN)
-	struct Pt { float x, y; bool valid; };
+	// Extract centroids (same pattern as DBSCAN). Double precision matches
+	// GEOMETRY's underlying precision; float storage rounds coordinates and
+	// can flip assignments/convergence for small distances or large magnitudes.
+	struct Pt { double x, y; bool valid; };
 	vector<Pt> points(count);
 
 	auto &col_types = partition.inputs->Types();
@@ -436,8 +460,7 @@ static void KMeansWindowInit(AggregateInputData &aggr_input_data, const WindowPa
 			sgl::vertex_xyzm centroid;
 			if (geom.get_type() != sgl::geometry_type::INVALID &&
 			    sgl::ops::get_centroid(geom, centroid)) {
-				points[row_offset + i] = {static_cast<float>(centroid.x),
-				                          static_cast<float>(centroid.y), true};
+				points[row_offset + i] = {centroid.x, centroid.y, true};
 			} else {
 				points[row_offset + i] = {0, 0, false};
 				state.cluster_ids[row_offset + i] = -1;
@@ -567,9 +590,9 @@ void RegisterSpatialWindowFunctions(ExtensionLoader &loader) {
 	    LogicalType::INTEGER,
 	    AggregateFunction::StateSize<DBSCANGlobalState>,
 	    DBSCANInit<DBSCANGlobalState>,
-	    nullptr,    // update — force custom window path
-	    nullptr,    // combine
-	    nullptr,    // finalize
+	    nullptr,    // update — all three must be null so the planner picks
+	    nullptr,    // combine — WindowCustomAggregator (CanAggregate() == false)
+	    nullptr,    // finalize — instead of Constant/Segment aggregators
 	    nullptr,    // simple_update
 	    DBSCANBind,
 	    DBSCANDestroy,
@@ -590,6 +613,13 @@ void RegisterSpatialWindowFunctions(ExtensionLoader &loader) {
 			- minpoints: minimum number of points required to form a dense region
 
 			Compatible with PostGIS ST_ClusterDBSCAN.
+
+			Note: OVER (PARTITION BY ...) currently requires an ORDER BY clause
+			(e.g. OVER (PARTITION BY grp ORDER BY id)). Without an ORDER BY,
+			DuckDB's window_self_join optimizer rewrites the query into a grouped
+			aggregate, which this function cannot satisfy. The ORDER BY expression
+			does not affect clustering results — the whole partition is always
+			used — it only disables the rewrite.
 		)");
 		func.SetExample(R"(
 			SELECT ST_ClusterDBSCAN(geom, 5.0, 3) OVER () as cluster_id
@@ -625,6 +655,9 @@ void RegisterSpatialWindowFunctions(ExtensionLoader &loader) {
 			Assigns a k-means cluster ID to each geometry.
 			Returns integer cluster IDs (0 to k-1). Must be used as a window function.
 			Compatible with PostGIS ST_ClusterKMeans.
+
+			Note: OVER (PARTITION BY ...) requires an ORDER BY clause — see
+			ST_ClusterDBSCAN for the rationale.
 		)");
 		func.SetExample(R"(
 			SELECT ST_ClusterKMeans(geom, 3) OVER () as cluster_id

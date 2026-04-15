@@ -269,3 +269,53 @@ SELECT count(*) FROM (
 ) WHERE cluster_id IS NULL;
 ----
 0
+
+# =====================================================================
+# OVER (PARTITION BY ... ORDER BY ...)
+#
+# Known limitation: OVER (PARTITION BY grp) WITHOUT an ORDER BY is
+# rewritten by DuckDB's `window_self_join` optimizer into a grouped
+# aggregate + inner join, which requires the aggregate to provide a
+# combine() method. ST_ClusterDBSCAN and ST_ClusterKMeans compute their
+# state in window_init from the full partition and have no combine, so
+# this rewrite triggers a physical plan crash.
+#
+# Adding an ORDER BY clause makes `window_self_join::CanOptimize` bail
+# out early, so the planner routes the window through the custom window
+# aggregator (which is what we want). This test exercises:
+#  - l_state counter reset across partition boundaries (different g_state)
+#  - the ORDER BY code path through the window callback
+# =====================================================================
+
+statement ok
+CREATE TABLE ordered AS
+SELECT 'a' AS grp, ST_Point(i * 0.1, 0.0) AS geom, i AS id FROM generate_series(0, 9) t(i)
+UNION ALL
+SELECT 'a' AS grp, ST_Point(10 + i * 0.1, 0.0) AS geom, i + 10 AS id FROM generate_series(0, 9) t(i)
+UNION ALL
+SELECT 'b' AS grp, ST_Point(100 + i * 0.1, 0.0) AS geom, i + 20 AS id FROM generate_series(0, 9) t(i)
+UNION ALL
+SELECT 'b' AS grp, ST_Point(200 + i * 0.1, 0.0) AS geom, i + 30 AS id FROM generate_series(0, 9) t(i);
+
+# Each partition is clustered independently. Group 'a' has 2 clusters,
+# group 'b' has 2 clusters — the l_state counter must reset between
+# partitions otherwise 'b' reads stale ids from 'a'.
+query II
+SELECT grp, count(DISTINCT cid) FROM (
+    SELECT grp, ST_ClusterDBSCAN(geom, 1.0, 2) OVER (PARTITION BY grp ORDER BY id) AS cid FROM ordered
+) WHERE cid IS NOT NULL
+GROUP BY grp
+ORDER BY grp;
+----
+a	2
+b	2
+
+query II
+SELECT grp, count(DISTINCT cid) FROM (
+    SELECT grp, ST_ClusterKMeans(geom, 2) OVER (PARTITION BY grp ORDER BY id) AS cid FROM ordered
+)
+GROUP BY grp
+ORDER BY grp;
+----
+a	2
+b	2

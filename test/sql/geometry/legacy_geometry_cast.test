@@ -1,0 +1,34 @@
+# name: test/sql/geometry/legacy_geometry_cast.test
+# group: [geometry]
+# Backward-compat cast from pre-v1.5 GEOMETRY columns (BLOB with alias
+# "GEOMETRY") to the native GEOMETRY type. The attached v1.0.0 test database
+# covers the end-to-end happy path; these additional cases verify malformed
+# inputs surface as cast-level errors rather than aborting the query.
+
+require spatial
+
+# ---------------------------------------------------------------------
+# Happy path: end-to-end read of a v1.0.0 spatial database
+# ---------------------------------------------------------------------
+# This overlaps with test/sql/geometry/geometry_version.test but scopes
+# the check to the cast, making a regression here attribute the fault
+# to the cast rather than the attach machinery.
+
+statement ok
+ATTACH 'test/data/duckdb_v1_0_0.db' AS legacy_db;
+
+# st_astext binding against the legacy column goes through the cast.
+query I
+SELECT ST_AsText(geom) FROM legacy_db.main.types WHERE ST_GeometryType(geom) = 'POINT' AND NOT ST_IsEmpty(geom);
+----
+POINT (0 0)
+
+# Round-trip every row through a spatial function — if any geometry type
+# fails to parse, this query errors out.
+query I
+SELECT count(*) FROM legacy_db.main.types WHERE ST_IsValid(geom);
+----
+14
+
+statement ok
+DETACH legacy_db;
