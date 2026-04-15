@@ -116,6 +116,122 @@ struct GeometryCasts {
 	}
 
 	//------------------------------------------------------------------------------------------------------------------
+	// Legacy pre-v1.5 GEOMETRY blob -> current GEOMETRY
+	//------------------------------------------------------------------------------------------------------------------
+	// Databases written before DuckDB v1.5 stored GEOMETRY as a BLOB with an
+	// alias "GEOMETRY" (because the spatial extension declared the type via a
+	// BLOB alias). The payload used a custom header+bbox+recursive layout that
+	// does not match the native GEOMETRY's WKB-compatible format. Walk the old
+	// layout into an sgl::geometry and reserialize using the current format.
+	static void LegacyDeserializeRecursive(BinaryReader &cursor, sgl::geometry &geom, bool has_z, bool has_m,
+	                                       ArenaAllocator &arena) {
+		const auto count = cursor.Read<uint32_t>();
+		switch (geom.get_type()) {
+		case sgl::geometry_type::POINT:
+		case sgl::geometry_type::LINESTRING: {
+			const auto verts = cursor.Reserve(count * geom.get_vertex_width());
+			geom.set_vertex_array(verts, count);
+			break;
+		}
+		case sgl::geometry_type::POLYGON: {
+			// Polygons store ring counts packed at the front (with 4-byte padding
+			// when the ring count is odd), followed by interleaved vertex blocks.
+			auto ring_cursor = cursor;
+			cursor.Skip((count * 4) + (count % 2 == 1 ? 4 : 0));
+			for (uint32_t i = 0; i < count; i++) {
+				const auto ring_count = ring_cursor.Read<uint32_t>();
+				const auto verts = cursor.Reserve(ring_count * geom.get_vertex_width());
+
+				auto ring_mem = arena.AllocateAligned(sizeof(sgl::geometry));
+				const auto ring = new (ring_mem) sgl::geometry(sgl::geometry_type::LINESTRING, has_z, has_m);
+				ring->set_vertex_array(verts, ring_count);
+				geom.append_part(ring);
+			}
+			break;
+		}
+		case sgl::geometry_type::MULTI_POINT:
+		case sgl::geometry_type::MULTI_LINESTRING:
+		case sgl::geometry_type::MULTI_POLYGON:
+		case sgl::geometry_type::GEOMETRY_COLLECTION: {
+			for (uint32_t i = 0; i < count; i++) {
+				// Legacy bodies store (enum - 1) for each part type.
+				const auto part_type = static_cast<sgl::geometry_type>(cursor.Read<uint32_t>() + 1);
+				auto part_mem = arena.AllocateAligned(sizeof(sgl::geometry));
+				const auto part = new (part_mem) sgl::geometry(part_type, has_z, has_m);
+				LegacyDeserializeRecursive(cursor, *part, has_z, has_m, arena);
+				geom.append_part(part);
+			}
+			break;
+		}
+		default:
+			break;
+		}
+	}
+
+	static bool LegacyBlobToGeometryCast(Vector &source, Vector &result, idx_t count, CastParameters &params) {
+		auto &lstate = LocalState::ResetAndGet(params);
+		auto &arena = lstate.GetArena();
+		bool success = true;
+
+		UnaryExecutor::ExecuteWithNulls<string_t, string_t>(
+		    source, result, count, [&](const string_t &blob, ValidityMask &mask, idx_t row_idx) -> string_t {
+			    const auto ptr = blob.GetDataUnsafe();
+			    const auto len = blob.GetSize();
+
+			    // Legacy header is 8 bytes: type, flags, u16 unused, u32 padding.
+			    if (len < 8) {
+				    if (success) {
+					    success = false;
+					    HandleCastError::AssignError("Legacy GEOMETRY blob too short", params.error_message);
+				    }
+				    mask.SetInvalid(row_idx);
+				    return string_t {};
+			    }
+
+			    BinaryReader cursor(ptr, len);
+			    const auto type = static_cast<sgl::geometry_type>(cursor.Read<uint8_t>() + 1);
+			    const auto flags = cursor.Read<uint8_t>();
+			    cursor.Skip(sizeof(uint16_t));
+			    cursor.Skip(sizeof(uint32_t));
+
+			    const auto has_z = (flags & 0x01) != 0;
+			    const auto has_m = (flags & 0x02) != 0;
+			    const auto has_bbox = (flags & 0x04) != 0;
+			    const auto format_v1 = (flags & 0x40) != 0;
+			    const auto format_v0 = (flags & 0x80) != 0;
+
+			    if (format_v1 || format_v0) {
+				    if (success) {
+					    success = false;
+					    HandleCastError::AssignError("Unsupported legacy GEOMETRY version flags",
+					                                 params.error_message);
+				    }
+				    mask.SetInvalid(row_idx);
+				    return string_t {};
+			    }
+
+			    if (has_bbox) {
+				    // 2 * (2 + has_z + has_m) floats
+				    cursor.Skip(sizeof(float) * 2 * (2 + static_cast<int>(has_z) + static_cast<int>(has_m)));
+			    }
+
+			    sgl::geometry geom;
+			    geom.set_type(type);
+			    geom.set_z(has_z);
+			    geom.set_m(has_m);
+
+			    // Skip the first type id (same as outer type).
+			    cursor.Read<uint32_t>();
+
+			    LegacyDeserializeRecursive(cursor, geom, has_z, has_m, arena);
+
+			    return lstate.Serialize(result, geom);
+		    });
+
+		return success;
+	}
+
+	//------------------------------------------------------------------------------------------------------------------
 	// Register
 	//------------------------------------------------------------------------------------------------------------------
 	static void Register(ExtensionLoader &loader) {
@@ -123,6 +239,15 @@ struct GeometryCasts {
 
 		// Geometry -> BLOB is explicitly castable
 		loader.RegisterCastFunction(geom_type, LogicalType::BLOB, DefaultCasts::ReinterpretCast);
+
+		// Legacy pre-v1.5 GEOMETRY columns are stored as BLOB with alias "GEOMETRY".
+		// Register a free implicit cast that rewrites the legacy header + body into
+		// the native GEOMETRY format so old databases keep binding to spatial
+		// functions end-to-end.
+		LogicalType legacy_geom_type = LogicalType::BLOB;
+		legacy_geom_type.SetAlias("GEOMETRY");
+		loader.RegisterCastFunction(legacy_geom_type, geom_type,
+		                            BoundCastInfo(LegacyBlobToGeometryCast, nullptr, LocalState::InitCast), 0);
 	}
 };
 
