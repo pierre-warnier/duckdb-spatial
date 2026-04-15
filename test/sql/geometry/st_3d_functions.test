@@ -82,22 +82,12 @@ SELECT ST_DFullyWithin(ST_Point(0, 0), ST_Point(2, 0), 2.0);
 ----
 true
 
-# ST_DFullyWithin - linestring fully within
-query I
+# ST_DFullyWithin - non-point input is rejected (point-only in this implementation)
+statement error
 SELECT ST_DFullyWithin(
     ST_GeomFromText('LINESTRING(0 0, 0.5 0)'),
     ST_Point(0.25, 0),
     1.0
 );
 ----
-true
-
-# ST_DFullyWithin - linestring NOT fully within (one end too far)
-query I
-SELECT ST_DFullyWithin(
-    ST_GeomFromText('LINESTRING(0 0, 5 0)'),
-    ST_Point(2.5, 0),
-    2.0
-);
-----
-false
+ST_DFullyWithin: both arguments must be POINT

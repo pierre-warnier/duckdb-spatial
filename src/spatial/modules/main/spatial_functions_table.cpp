@@ -273,7 +273,8 @@ struct ST_SquareGrid {
 		for (idx_t k = 0; k < chunk_size; k++) {
 			const auto flat_idx = state.current_idx + k;
 
-			// Row-major order: iterate j (rows) first, then i (columns)
+			// Row-major order: i (column index) varies fastest within each row,
+			// j (row index) varies slowest.
 			const auto col_offset = flat_idx % cols;
 			const auto row_offset = flat_idx / cols;
 

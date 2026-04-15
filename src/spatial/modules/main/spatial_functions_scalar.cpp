@@ -6547,10 +6547,16 @@ struct ST_Intersects {
 				    }
 			    }
 
-			    // Final fallback: GEOS (for multi/collection types)
-			    // Can't use GEOS from here without the GEOS module context,
-			    // so return bbox intersection as conservative approximation
-			    return has_a && has_b; // bbox already checked above — if we got here, they intersect
+			    // Fallback for multi/collection types: use SGL's generic Euclidean distance,
+			    // which handles all geometry types (including nested parts). Two geometries
+			    // intersect iff their minimum distance is zero.
+			    double dist = 0.0;
+			    if (sgl::ops::get_euclidean_distance(geom_a, geom_b, dist)) {
+				    return dist <= 0.0;
+			    }
+			    // get_euclidean_distance returned false (one side empty/invalid).
+			    // No intersection possible.
+			    return false;
 		    });
 	}
 
@@ -9970,34 +9976,35 @@ struct ST_ForceCollection {
 				return StringVector::AddStringOrBlob(result, blob);
 			}
 
-			// Wrap in a geometry collection using the existing collect operation
+			// Wrap in a geometry collection. Deep-clone the input so the collection owns
+			// its own geometry tree (parts + vertex arrays, recursively for nested multi
+			// types like MULTIPOLYGON where each polygon itself has ring sub-geometries).
 			auto &alloc = lstate.GetAllocator();
 			sgl::geometry gc(sgl::geometry_type::GEOMETRY_COLLECTION, geom.has_z(), geom.has_m());
 
-			// Create a fresh part geometry on the arena
-			auto *part = static_cast<sgl::geometry *>(alloc.alloc(sizeof(sgl::geometry)));
-			new (part) sgl::geometry(geom.get_type(), geom.has_z(), geom.has_m());
+			// Recursive deep copy helper.
+			std::function<sgl::geometry *(const sgl::geometry &)> clone_recursive =
+			    [&](const sgl::geometry &src) -> sgl::geometry * {
+				auto *dst = static_cast<sgl::geometry *>(alloc.alloc(sizeof(sgl::geometry)));
+				new (dst) sgl::geometry(src.get_type(), src.has_z(), src.has_m());
 
-			if (geom.is_multi_part()) {
-				// For multi types, copy part structure
-				auto *child = geom.get_first_part();
-				for (uint32_t i = 0; i < geom.get_part_count(); i++) {
-					auto *child_copy = static_cast<sgl::geometry *>(alloc.alloc(sizeof(sgl::geometry)));
-					new (child_copy) sgl::geometry(child->get_type(), child->has_z(), child->has_m());
-					if (child->is_multi_part()) {
-						// Skip deep copy for now
-					} else {
-						child_copy->set_vertex_array(child->get_vertex_array(), child->get_vertex_count());
+				if (src.is_multi_part()) {
+					auto *child = src.get_first_part();
+					for (uint32_t i = 0; i < src.get_part_count(); i++) {
+						dst->append_part(clone_recursive(*child));
+						child = child->get_next();
 					}
-					part->append_part(child_copy);
-					child = child->get_next();
+				} else if (src.get_vertex_count() > 0) {
+					const auto vertex_count = src.get_vertex_count();
+					const auto vertex_width = src.get_vertex_width();
+					auto vertex_array = static_cast<char *>(alloc.alloc(vertex_count * vertex_width));
+					memcpy(vertex_array, src.get_vertex_array(), vertex_count * vertex_width);
+					dst->set_vertex_array(vertex_array, vertex_count);
 				}
-			} else {
-				// For simple types, just copy vertex data
-				part->set_vertex_array(geom.get_vertex_array(), geom.get_vertex_count());
-			}
+				return dst;
+			};
 
-			gc.append_part(part);
+			gc.append_part(clone_recursive(geom));
 			return lstate.Serialize(result, gc);
 		});
 	}
@@ -10415,56 +10422,6 @@ struct ST_3DPerimeter {
 //======================================================================================================================
 struct ST_3DDistance {
 
-	static double PointDistance3D(const sgl::geometry &g1, const sgl::geometry &g2) {
-		auto v1 = g1.get_vertex_xyzm(0);
-		auto v2 = g2.get_vertex_xyzm(0);
-		double dx = v1.x - v2.x;
-		double dy = v1.y - v2.y;
-		double dz = v1.z - v2.z;
-		return std::sqrt(dx * dx + dy * dy + dz * dz);
-	}
-
-	// Brute-force minimum 3D distance between all vertex pairs
-	static double MinDistance3DRecursive(const sgl::geometry &g1, const sgl::geometry &g2) {
-		double min_dist = std::numeric_limits<double>::max();
-
-		// Collect all vertices from g1 and g2
-		auto collect = [](const sgl::geometry &g, std::vector<sgl::vertex_xyzm> &pts) {
-			std::function<void(const sgl::geometry &)> visit = [&](const sgl::geometry &geom) {
-				if (geom.is_multi_part()) {
-					auto *part = geom.get_first_part();
-					for (uint32_t i = 0; i < geom.get_part_count(); i++) {
-						visit(*part);
-						part = part->get_next();
-					}
-				} else {
-					for (uint32_t i = 0; i < geom.get_vertex_count(); i++) {
-						pts.push_back(geom.get_vertex_xyzm(i));
-					}
-				}
-			};
-			visit(g);
-		};
-
-		std::vector<sgl::vertex_xyzm> pts1, pts2;
-		collect(g1, pts1);
-		collect(g2, pts2);
-
-		for (const auto &p1 : pts1) {
-			for (const auto &p2 : pts2) {
-				double dx = p1.x - p2.x;
-				double dy = p1.y - p2.y;
-				double dz = p1.z - p2.z;
-				double dist = std::sqrt(dx * dx + dy * dy + dz * dz);
-				if (dist < min_dist) {
-					min_dist = dist;
-				}
-			}
-		}
-
-		return min_dist == std::numeric_limits<double>::max() ? 0.0 : min_dist;
-	}
-
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto count = args.size();
 		BinaryExecutor::Execute<string_t, string_t, double>(
@@ -10473,7 +10430,27 @@ struct ST_3DDistance {
 			    sgl::geometry geom1, geom2;
 			    lstate.Deserialize(blob1, geom1);
 			    lstate.Deserialize(blob2, geom2);
-			    return MinDistance3DRecursive(geom1, geom2);
+
+			    // Both arguments must be POINT. General 3D distance for lines/polygons
+			    // requires segment-segment / point-segment / segment-face 3D primitives
+			    // that SGL does not currently expose. Rejecting other types is more
+			    // honest than silently returning a vertex-only approximation.
+			    if (geom1.get_type() != sgl::geometry_type::POINT ||
+			        geom2.get_type() != sgl::geometry_type::POINT) {
+				    throw InvalidInputException(
+				        "ST_3DDistance: both arguments must be POINT. "
+				        "3D distance for non-point geometries is not yet supported.");
+			    }
+
+			    if (geom1.get_vertex_count() == 0 || geom2.get_vertex_count() == 0) {
+				    return 0.0;
+			    }
+			    auto v1 = geom1.get_vertex_xyzm(0);
+			    auto v2 = geom2.get_vertex_xyzm(0);
+			    double dx = v1.x - v2.x;
+			    double dy = v1.y - v2.y;
+			    double dz = v1.z - v2.z;
+			    return std::sqrt(dx * dx + dy * dy + dz * dz);
 		    });
 	}
 
@@ -10486,7 +10463,9 @@ struct ST_3DDistance {
 				variant.SetFunction(Execute);
 				variant.SetInit(LocalState::Init);
 			});
-			func.SetDescription("Returns the minimum 3D distance between two geometries");
+			func.SetDescription(
+			    "Returns the 3D Euclidean distance between two POINT geometries. "
+			    "Non-point inputs are rejected (not yet implemented for lines/polygons).");
 			func.SetExample("SELECT ST_3DDistance(ST_GeomFromText('POINT Z(0 0 0)'), ST_GeomFromText('POINT Z(1 1 1)'))");
 		});
 	}
@@ -10531,60 +10510,29 @@ struct ST_DFullyWithin {
 			lstate.Deserialize(g1_data[g1i], geom1);
 			lstate.Deserialize(g2_data[g2i], geom2);
 
-			const double max_dist = d_data[di];
+			// ST_DFullyWithin requires Hausdorff distance (one-way from A to B), which
+			// in turn requires point-to-segment primitives that SGL does not expose.
+			// Restricting to POINT inputs avoids returning an incorrect vertex-only
+			// approximation for lines/polygons. For point inputs DFullyWithin reduces
+			// to DWithin.
+			if (geom1.get_type() != sgl::geometry_type::POINT ||
+			    geom2.get_type() != sgl::geometry_type::POINT) {
+				throw InvalidInputException(
+				    "ST_DFullyWithin: both arguments must be POINT. Non-point support "
+				    "requires Hausdorff distance and is not yet implemented.");
+			}
 
-			// Check that the max distance from any vertex in g1 to g2 is within threshold
-			// This means g1 must be FULLY within distance of g2
-			// Implementation: compute max distance between all vertex pairs of the envelopes
-			// A geometry is "fully within" distance d if the farthest point of g1 from g2 is <= d
-			// Simplified: check max distance between all vertices
-			double max_found = 0;
-			bool valid = true;
-
-			auto collect_vertices = [](const sgl::geometry &g, std::vector<sgl::vertex_xy> &pts) {
-				std::function<void(const sgl::geometry &)> visit = [&](const sgl::geometry &geom) {
-					if (geom.is_multi_part()) {
-						auto *part = geom.get_first_part();
-						for (uint32_t j = 0; j < geom.get_part_count(); j++) {
-							visit(*part);
-							part = part->get_next();
-						}
-					} else {
-						for (uint32_t j = 0; j < geom.get_vertex_count(); j++) {
-							pts.push_back(geom.get_vertex_xy(j));
-						}
-					}
-				};
-				visit(g);
-			};
-
-			std::vector<sgl::vertex_xy> pts1, pts2;
-			collect_vertices(geom1, pts1);
-			collect_vertices(geom2, pts2);
-
-			if (pts1.empty() || pts2.empty()) {
+			if (geom1.get_vertex_count() == 0 || geom2.get_vertex_count() == 0) {
 				FlatVector::SetNull(result, i, true);
 				continue;
 			}
 
-			// For each vertex in g1, find its minimum distance to any vertex in g2
-			// Then check if the maximum of these minimums is <= threshold
-			for (const auto &p1 : pts1) {
-				double min_to_g2 = std::numeric_limits<double>::max();
-				for (const auto &p2 : pts2) {
-					double dx = p1.x - p2.x;
-					double dy = p1.y - p2.y;
-					double dist = std::sqrt(dx * dx + dy * dy);
-					if (dist < min_to_g2) {
-						min_to_g2 = dist;
-					}
-				}
-				if (min_to_g2 > max_found) {
-					max_found = min_to_g2;
-				}
-			}
-
-			result_data[i] = max_found <= max_dist;
+			auto v1 = geom1.get_vertex_xy(0);
+			auto v2 = geom2.get_vertex_xy(0);
+			double dx = v1.x - v2.x;
+			double dy = v1.y - v2.y;
+			double dist = std::sqrt(dx * dx + dy * dy);
+			result_data[i] = dist <= d_data[di];
 		}
 	}
 
@@ -10599,7 +10547,8 @@ struct ST_DFullyWithin {
 				variant.SetInit(LocalState::Init);
 			});
 			func.SetDescription(
-			    "Returns true if every point of geom1 is within the given distance of geom2");
+			    "Returns true if every point of geom1 is within the given distance of geom2. "
+			    "Currently restricted to POINT inputs (reduces to ST_DWithin for points).");
 			func.SetExample("SELECT ST_DFullyWithin(ST_Point(0, 0), ST_Point(1, 0), 2.0)");
 		});
 	}

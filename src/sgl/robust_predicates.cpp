@@ -8,6 +8,7 @@
 
 #include "robust_predicates.hpp"
 #include <cmath>
+#include <mutex>
 
 namespace sgl {
 namespace robust {
@@ -17,40 +18,39 @@ static double epsilon;     // = 2^(-p)
 static double resulterrbound;
 static double ccwerrboundA, ccwerrboundB, ccwerrboundC;
 static double iccerrboundA, iccerrboundB, iccerrboundC;
-static bool initialized = false;
 
 void init() {
-	if (initialized) return;
+	// Thread-safe one-shot initialization via std::call_once.
+	static std::once_flag init_flag;
+	std::call_once(init_flag, []() {
+		double half = 0.5;
+		double check = 1.0;
+		double lastcheck;
+		int every_other = 1;
 
-	double half = 0.5;
-	double check = 1.0;
-	double lastcheck;
-	int every_other = 1;
+		epsilon = 1.0;
+		splitter = 1.0;
 
-	epsilon = 1.0;
-	splitter = 1.0;
+		// Compute machine epsilon
+		do {
+			lastcheck = check;
+			epsilon *= half;
+			if (every_other) {
+				splitter *= 2.0;
+			}
+			every_other = !every_other;
+			check = 1.0 + epsilon;
+		} while (check != 1.0 && check != lastcheck);
+		splitter += 1.0;
 
-	// Compute machine epsilon
-	do {
-		lastcheck = check;
-		epsilon *= half;
-		if (every_other) {
-			splitter *= 2.0;
-		}
-		every_other = !every_other;
-		check = 1.0 + epsilon;
-	} while (check != 1.0 && check != lastcheck);
-	splitter += 1.0;
-
-	resulterrbound = (3.0 + 8.0 * epsilon) * epsilon;
-	ccwerrboundA = (3.0 + 16.0 * epsilon) * epsilon;
-	ccwerrboundB = (2.0 + 12.0 * epsilon) * epsilon;
-	ccwerrboundC = (9.0 + 64.0 * epsilon) * epsilon * epsilon;
-	iccerrboundA = (10.0 + 96.0 * epsilon) * epsilon;
-	iccerrboundB = (4.0 + 48.0 * epsilon) * epsilon;
-	iccerrboundC = (44.0 + 576.0 * epsilon) * epsilon * epsilon;
-
-	initialized = true;
+		resulterrbound = (3.0 + 8.0 * epsilon) * epsilon;
+		ccwerrboundA = (3.0 + 16.0 * epsilon) * epsilon;
+		ccwerrboundB = (2.0 + 12.0 * epsilon) * epsilon;
+		ccwerrboundC = (9.0 + 64.0 * epsilon) * epsilon * epsilon;
+		iccerrboundA = (10.0 + 96.0 * epsilon) * epsilon;
+		iccerrboundB = (4.0 + 48.0 * epsilon) * epsilon;
+		iccerrboundC = (44.0 + 576.0 * epsilon) * epsilon * epsilon;
+	});
 }
 
 // Two-product split
