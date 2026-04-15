@@ -173,7 +173,7 @@ POINT (2 2)
 statement error
 SELECT ST_GeometryN(ST_GeomFromText('MULTIPOINT (0 0)'), 5);
 ----
-index 5 out of range
+Invalid Input Error: ST_GeometryN: index 5 out of range [0, 1)
 
 # ===========================================================================
 # ST_IsCollection
@@ -405,4 +405,4 @@ xn774c0
 statement error
 SELECT ST_GeoHash(ST_Point(0, 0), 0);
 ----
-precision must be between 1 and 20
+Invalid Input Error: ST_GeoHash: precision must be between 1 and 20, got 0

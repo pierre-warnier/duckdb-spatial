@@ -5784,6 +5784,10 @@ struct ST_Distance_Sphere {
 		unique_ptr<FunctionData> Copy() const override {
 			auto copy = make_uniq<BindData>();
 			copy->always_xy = always_xy;
+			// std::move is required: duckdb::unique_ptr<BindData> -> unique_ptr<FunctionData>
+			// is a derived-to-base conversion, which is NOT guaranteed-copy-elided under
+			// C++17, and the implicit move-on-return doesn't fire because the DuckDB
+			// unique_ptr wrapper hides the std::unique_ptr converting constructor.
 			return std::move(copy);
 		}
 		bool Equals(const FunctionData &other) const override {
@@ -9481,18 +9485,25 @@ struct ST_GeoHash_Func {
 			    sgl::geometry geom;
 			    Serde::Deserialize(geom, lstate.GetArena(), blob.GetDataUnsafe(), blob.GetSize());
 
-			    auto vc = geom.is_multi_part() ? 0 : geom.get_vertex_count();
-			    if (vc == 0) {
-				    throw InvalidInputException("ST_GeoHash: geometry must be a non-empty point");
+			    // Compute centroid via SGL, which recurses through multi-part/collection
+			    // types and returns the area/line/point centroid depending on dimension.
+			    sgl::vertex_xyzm centroid;
+			    if (geom.get_type() == sgl::geometry_type::INVALID ||
+			        !sgl::ops::get_centroid(geom, centroid)) {
+				    throw InvalidInputException("ST_GeoHash: cannot compute centroid of empty geometry");
 			    }
-			    auto vtx = geom.get_vertex_xy(0);
-			    double lon = vtx.x, lat = vtx.y;
+			    double lon = centroid.x;
+			    double lat = centroid.y;
+			    if (lon < -180.0 || lon > 180.0 || lat < -90.0 || lat > 90.0) {
+				    throw InvalidInputException(
+				        "ST_GeoHash: centroid (%f, %f) is outside the valid geographic range "
+				        "[-180..180, -90..90]", lon, lat);
+			    }
 
 			    // Geohash encoding
 			    double lat_min = -90, lat_max = 90;
 			    double lon_min = -180, lon_max = 180;
 			    char hash[21] = {};
-			    int bit = 0;
 			    int ch = 0;
 			    bool is_lon = true;
 
@@ -9527,6 +9538,7 @@ struct ST_GeoHash_Func {
 				variant.SetReturnType(LogicalType::VARCHAR);
 				variant.SetInit(LocalState::Init);
 				variant.SetFunction(Execute);
+				variant.CanThrowErrors();
 			});
 			func.SetDescription("Returns the GeoHash string of a geometry's centroid at the given precision");
 			func.SetExample("SELECT ST_GeoHash(ST_Point(-74.006, 40.7128), 9);");

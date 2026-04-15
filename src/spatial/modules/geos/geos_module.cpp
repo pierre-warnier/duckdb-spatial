@@ -3192,7 +3192,8 @@ struct ST_SharedPaths {
 		FunctionBuilder::RegisterScalar(loader, "ST_SharedPaths", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
 				v.AddParameter("geom1", LogicalType::GEOMETRY()); v.AddParameter("geom2", LogicalType::GEOMETRY());
-				v.SetReturnType(LogicalType::GEOMETRY()); v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
+				v.SetReturnType(LogicalType::GEOMETRY()); v.SetBind(GeoTypes::PropagateCRS);
+				v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
 			});
 			func.SetDescription("Returns shared paths between two linear geometries"); func.SetTag("ext", "spatial"); func.SetTag("category", "construction");
 		});
@@ -3213,6 +3214,7 @@ struct ST_Snap_GEOS {
 			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
 				v.AddParameter("geom1", LogicalType::GEOMETRY()); v.AddParameter("geom2", LogicalType::GEOMETRY());
 				v.AddParameter("tolerance", LogicalType::DOUBLE); v.SetReturnType(LogicalType::GEOMETRY());
+				v.SetBind(GeoTypes::PropagateCRS);
 				v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
 			});
 			func.SetDescription("Snaps vertices of geom1 to geom2 within tolerance"); func.SetTag("ext", "spatial"); func.SetTag("category", "construction");
@@ -3232,7 +3234,8 @@ struct ST_OffsetCurve {
 		FunctionBuilder::RegisterScalar(loader, "ST_OffsetCurve", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
 				v.AddParameter("geom", LogicalType::GEOMETRY()); v.AddParameter("distance", LogicalType::DOUBLE);
-				v.SetReturnType(LogicalType::GEOMETRY()); v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
+				v.SetReturnType(LogicalType::GEOMETRY()); v.SetBind(GeoTypes::PropagateCRS);
+				v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
 			});
 			func.SetDescription("Returns an offset curve from a linestring"); func.SetTag("ext", "spatial"); func.SetTag("category", "construction");
 		});
@@ -3251,6 +3254,7 @@ struct ST_DelaunayTriangles {
 		FunctionBuilder::RegisterScalar(loader, "ST_DelaunayTriangles", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
 				v.AddParameter("geom", LogicalType::GEOMETRY()); v.SetReturnType(LogicalType::GEOMETRY());
+				v.SetBind(GeoTypes::PropagateCRS);
 				v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
 			});
 			func.SetDescription("Returns Delaunay triangulation of input geometry vertices"); func.SetTag("ext", "spatial"); func.SetTag("category", "construction");
@@ -3270,6 +3274,7 @@ struct ST_TriangulatePolygon {
 		FunctionBuilder::RegisterScalar(loader, "ST_TriangulatePolygon", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
 				v.AddParameter("geom", LogicalType::GEOMETRY()); v.SetReturnType(LogicalType::GEOMETRY());
+				v.SetBind(GeoTypes::PropagateCRS);
 				v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
 			});
 			func.SetDescription("Returns constrained Delaunay triangulation of a polygon"); func.SetTag("ext", "spatial"); func.SetTag("category", "construction");
@@ -3309,7 +3314,8 @@ struct ST_SimplifyPolygonHull {
 		FunctionBuilder::RegisterScalar(loader, "ST_SimplifyPolygonHull", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
 				v.AddParameter("geom", LogicalType::GEOMETRY()); v.AddParameter("vertex_fraction", LogicalType::DOUBLE);
-				v.SetReturnType(LogicalType::GEOMETRY()); v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
+				v.SetReturnType(LogicalType::GEOMETRY()); v.SetBind(GeoTypes::PropagateCRS);
+				v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
 			});
 			func.SetDescription("Simplifies a polygon while preserving topology"); func.SetTag("ext", "spatial"); func.SetTag("category", "construction");
 		});
@@ -3326,6 +3332,7 @@ struct ST_MinimumBoundingCircle {
 		FunctionBuilder::RegisterScalar(loader, "ST_MinimumBoundingCircle", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
 				v.AddParameter("geom", LogicalType::GEOMETRY()); v.SetReturnType(LogicalType::GEOMETRY());
+				v.SetBind(GeoTypes::PropagateCRS);
 				v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
 			});
 			func.SetDescription("Returns the minimum bounding circle of a geometry"); func.SetTag("ext", "spatial"); func.SetTag("category", "construction");
@@ -3345,7 +3352,8 @@ struct ST_LargestEmptyCircle {
 		FunctionBuilder::RegisterScalar(loader, "ST_LargestEmptyCircle", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
 				v.AddParameter("geom", LogicalType::GEOMETRY()); v.AddParameter("tolerance", LogicalType::DOUBLE);
-				v.SetReturnType(LogicalType::GEOMETRY()); v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
+				v.SetReturnType(LogicalType::GEOMETRY()); v.SetBind(GeoTypes::PropagateCRS);
+				v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
 			});
 			func.SetDescription("Returns the largest empty circle within a geometry"); func.SetTag("ext", "spatial"); func.SetTag("category", "construction");
 		});
@@ -3368,7 +3376,8 @@ struct ST_ClipByBox2D {
 		FunctionBuilder::RegisterScalar(loader, "ST_ClipByBox2D", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
 				v.AddParameter("geom", LogicalType::GEOMETRY()); v.AddParameter("box", LogicalType::GEOMETRY());
-				v.SetReturnType(LogicalType::GEOMETRY()); v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
+				v.SetReturnType(LogicalType::GEOMETRY()); v.SetBind(GeoTypes::PropagateCRS);
+				v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
 			});
 			func.SetDescription("Clips a geometry by a bounding box"); func.SetTag("ext", "spatial"); func.SetTag("category", "construction");
 		});
@@ -3442,6 +3451,7 @@ struct ST_MinimumClearanceLine {
 		FunctionBuilder::RegisterScalar(loader, "ST_MinimumClearanceLine", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
 				v.AddParameter("geom", LogicalType::GEOMETRY()); v.SetReturnType(LogicalType::GEOMETRY());
+				v.SetBind(GeoTypes::PropagateCRS);
 				v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
 			});
 			func.SetDescription("Returns the line spanning the minimum clearance"); func.SetTag("ext", "spatial"); func.SetTag("category", "property");
@@ -3756,6 +3766,7 @@ struct ST_BoundingDiagonal_GEOS {
 		FunctionBuilder::RegisterScalar(loader, "ST_BoundingDiagonal", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
 				v.AddParameter("geom", LogicalType::GEOMETRY()); v.SetReturnType(LogicalType::GEOMETRY());
+				v.SetBind(GeoTypes::PropagateCRS);
 				v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
 			});
 			func.SetDescription("Returns the diagonal of the bounding box as a linestring"); func.SetTag("ext", "spatial"); func.SetTag("category", "property");
