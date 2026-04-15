@@ -208,3 +208,64 @@ SELECT count(*) FROM (
 ) WHERE cluster_id IS NULL;
 ----
 0
+
+# =====================================================================
+# > STANDARD_VECTOR_SIZE partition — exercises multi-chunk window output
+# STANDARD_VECTOR_SIZE is 2048, so 3000 rows forces a second chunk and
+# catches window callback indexing bugs across chunk boundaries.
+# =====================================================================
+
+statement ok
+CREATE TABLE multi_chunk AS
+SELECT ST_Point(
+    -- 3 tight clusters, 1000 points each
+    CASE WHEN i < 1000 THEN i * 0.0001
+         WHEN i < 2000 THEN 100 + (i - 1000) * 0.0001
+         ELSE 200 + (i - 2000) * 0.0001
+    END,
+    CASE WHEN i < 1000 THEN i * 0.0001
+         WHEN i < 2000 THEN 100 + (i - 1000) * 0.0001
+         ELSE 200 + (i - 2000) * 0.0001
+    END
+) AS geom, i AS id
+FROM generate_series(0, 2999) t(i);
+
+# DBSCAN across chunk boundary: must still find exactly 3 clusters
+query I
+SELECT count(DISTINCT cluster_id) FROM (
+    SELECT ST_ClusterDBSCAN(geom, 1.0, 5) OVER () AS cluster_id FROM multi_chunk
+) WHERE cluster_id IS NOT NULL;
+----
+3
+
+# Every row must be assigned (no NULLs — all points are in dense clusters)
+query I
+SELECT count(*) FROM (
+    SELECT ST_ClusterDBSCAN(geom, 1.0, 5) OVER () AS cluster_id FROM multi_chunk
+) WHERE cluster_id IS NULL;
+----
+0
+
+# Total row count preserved across chunks
+query I
+SELECT count(*) FROM (
+    SELECT ST_ClusterDBSCAN(geom, 1.0, 5) OVER () AS cluster_id FROM multi_chunk
+);
+----
+3000
+
+# KMeans across chunk boundary: 3 clusters should separate the 3 tight groups
+query I
+SELECT count(DISTINCT cluster_id) FROM (
+    SELECT ST_ClusterKMeans(geom, 3) OVER () AS cluster_id FROM multi_chunk
+);
+----
+3
+
+# KMeans assigns every row
+query I
+SELECT count(*) FROM (
+    SELECT ST_ClusterKMeans(geom, 3) OVER () AS cluster_id FROM multi_chunk
+) WHERE cluster_id IS NULL;
+----
+0

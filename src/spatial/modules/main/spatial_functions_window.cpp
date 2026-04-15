@@ -11,8 +11,9 @@
 
 #include <algorithm>
 #include <cmath>
-#include <unordered_map>
+#include <limits>
 #include <numeric>
+#include <unordered_map>
 
 namespace duckdb {
 
@@ -50,6 +51,14 @@ struct DBSCANGlobalState {
 	// machinery may memcpy the state struct, which breaks vector internals.
 	int32_t *cluster_ids = nullptr;
 	idx_t count = 0;
+
+	// These fields are only used when the struct serves as the per-thread
+	// local state passed to the window callback. DuckDB uses the same
+	// StateSize for g_state and l_state, so l_state is a zero-initialized
+	// DBSCANGlobalState; we repurpose unused space to track the partition
+	// row counter. cluster_ids stays nullptr in l_state so Destroy() is safe.
+	idx_t l_next_row = 0;
+	const void *l_last_gstate = nullptr;
 
 	void Allocate(idx_t n) {
 		count = n;
@@ -165,16 +174,14 @@ static void DBSCANWindowInit(AggregateInputData &aggr_input_data, const WindowPa
 			sgl::geometry geom;
 			Serde::Deserialize(geom, arena, blob.GetDataUnsafe(), blob.GetSize());
 
-			// Get centroid from vertex data
-			auto vc = geom.is_multi_part() ? 0 : geom.get_vertex_count();
-			if (geom.get_type() != sgl::geometry_type::INVALID && vc > 0) {
-				double sx = 0, sy = 0;
-				for (uint32_t v = 0; v < vc; v++) {
-					auto vtx = geom.get_vertex_xy(v);
-					sx += vtx.x;
-					sy += vtx.y;
-				}
-				points[row_offset + i] = {static_cast<float>(sx / vc), static_cast<float>(sy / vc), true};
+			// Compute centroid via SGL, which handles all geometry types including
+			// MULTI_POINT/MULTI_LINESTRING/MULTI_POLYGON/GEOMETRY_COLLECTION by
+			// recursively walking the parts.
+			sgl::vertex_xyzm centroid;
+			if (geom.get_type() != sgl::geometry_type::INVALID &&
+			    sgl::ops::get_centroid(geom, centroid)) {
+				points[row_offset + i] = {static_cast<float>(centroid.x),
+				                          static_cast<float>(centroid.y), true};
 			} else {
 				points[row_offset + i] = {0, 0, false};
 				state.cluster_ids[row_offset + i] = DBSCAN_NOISE;
@@ -302,17 +309,33 @@ static void DBSCANWindowInit(AggregateInputData &aggr_input_data, const WindowPa
 }
 
 // Per-row window callback: return the pre-computed cluster ID.
-// The default frame for aggregate window functions is ROWS BETWEEN UNBOUNDED PRECEDING
-// AND CURRENT ROW, so frames[0].end - 1 gives the partition row index.
+// `rid` is the index into the current output DataChunk — it resets to 0 every
+// batch, so it is NOT the partition row index when a partition spans multiple
+// output chunks. DuckDB does not expose the absolute `row_idx` to the callback,
+// and `frames[0].end - 1` only tracks the current row for ORDER BY frames (for
+// the default `OVER ()` whole-partition frame it is constant).
+//
+// To recover the absolute index we run a monotonic counter in `l_state`,
+// resetting it when `g_state` changes (which marks a new partition, since
+// `window_init` allocates a fresh g_state per partition). Within a partition
+// the window operator calls the callback in row order on a single thread, so
+// the counter is accurate.
 static void DBSCANWindow(AggregateInputData &, const WindowPartitionInput &, const_data_ptr_t g_state,
-                         data_ptr_t l_state, const SubFrames &frames, Vector &result, idx_t rid) {
+                         data_ptr_t l_state, const SubFrames &, Vector &result, idx_t rid) {
 
 	auto &state = *reinterpret_cast<const DBSCANGlobalState *>(g_state);
+	auto &lstate = *reinterpret_cast<DBSCANGlobalState *>(l_state);
 	auto result_data = FlatVector::GetData<int32_t>(result);
 	auto &result_validity = FlatVector::Validity(result);
 
-	if (state.cluster_ids && rid < state.count) {
-		auto cluster_id = state.cluster_ids[rid];
+	if (lstate.l_last_gstate != g_state) {
+		lstate.l_last_gstate = g_state;
+		lstate.l_next_row = 0;
+	}
+	const auto partition_rid = lstate.l_next_row++;
+
+	if (state.cluster_ids && partition_rid < state.count) {
+		auto cluster_id = state.cluster_ids[partition_rid];
 		if (cluster_id == DBSCAN_NOISE || cluster_id == DBSCAN_UNVISITED) {
 			result_validity.SetInvalid(rid);
 		} else {
@@ -345,6 +368,9 @@ struct KMeansBindData final : public FunctionData {
 struct KMeansGlobalState {
 	int32_t *cluster_ids = nullptr;
 	idx_t count = 0;
+	// Used when serving as l_state — see DBSCANGlobalState for the rationale.
+	idx_t l_next_row = 0;
+	const void *l_last_gstate = nullptr;
 	void Allocate(idx_t n) { count = n; cluster_ids = new int32_t[n]; }
 	void Destroy() { delete[] cluster_ids; cluster_ids = nullptr; count = 0; }
 };
@@ -405,14 +431,13 @@ static void KMeansWindowInit(AggregateInputData &aggr_input_data, const WindowPa
 			}
 			sgl::geometry geom;
 			Serde::Deserialize(geom, arena, geom_data[i].GetDataUnsafe(), geom_data[i].GetSize());
-			auto vc = geom.is_multi_part() ? 0 : geom.get_vertex_count();
-			if (vc > 0) {
-				double sx = 0, sy = 0;
-				for (uint32_t v = 0; v < vc; v++) {
-					auto vtx = geom.get_vertex_xy(v);
-					sx += vtx.x; sy += vtx.y;
-				}
-				points[row_offset + i] = {static_cast<float>(sx / vc), static_cast<float>(sy / vc), true};
+			// Use SGL's centroid, which recurses through multi-part/collection types
+			// (previous implementation treated every multi-part geometry as empty).
+			sgl::vertex_xyzm centroid;
+			if (geom.get_type() != sgl::geometry_type::INVALID &&
+			    sgl::ops::get_centroid(geom, centroid)) {
+				points[row_offset + i] = {static_cast<float>(centroid.x),
+				                          static_cast<float>(centroid.y), true};
 			} else {
 				points[row_offset + i] = {0, 0, false};
 				state.cluster_ids[row_offset + i] = -1;
@@ -432,7 +457,10 @@ static void KMeansWindowInit(AggregateInputData &aggr_input_data, const WindowPa
 
 	auto effective_k = MinValue(static_cast<idx_t>(k), valid_indices.size());
 
-	// K-means++ initialization: pick first centroid randomly, then furthest-first
+	// Deterministic farthest-first initialization: start from the first valid point,
+	// then repeatedly pick the valid point whose nearest existing centroid is farthest
+	// away. This is a deterministic variant of k-means++ seeding (no randomization)
+	// chosen to keep results stable across runs and thread counts.
 	vector<double> cx(effective_k), cy(effective_k);
 	cx[0] = points[valid_indices[0]].x;
 	cy[0] = points[valid_indices[0]].y;
@@ -500,14 +528,23 @@ static void KMeansWindowInit(AggregateInputData &aggr_input_data, const WindowPa
 	}
 }
 
+// See DBSCANWindow for the rid vs partition_rid explanation. Same indexing rule:
+// monotonic counter in l_state, reset on g_state pointer change.
 static void KMeansWindow(AggregateInputData &, const WindowPartitionInput &, const_data_ptr_t g_state,
-                         data_ptr_t, const SubFrames &, Vector &result, idx_t rid) {
+                         data_ptr_t l_state, const SubFrames &, Vector &result, idx_t rid) {
 	auto &state = *reinterpret_cast<const KMeansGlobalState *>(g_state);
+	auto &lstate = *reinterpret_cast<KMeansGlobalState *>(l_state);
 	auto result_data = FlatVector::GetData<int32_t>(result);
 	auto &result_validity = FlatVector::Validity(result);
 
-	if (state.cluster_ids && rid < state.count && state.cluster_ids[rid] >= 0) {
-		result_data[rid] = state.cluster_ids[rid];
+	if (lstate.l_last_gstate != g_state) {
+		lstate.l_last_gstate = g_state;
+		lstate.l_next_row = 0;
+	}
+	const auto partition_rid = lstate.l_next_row++;
+
+	if (state.cluster_ids && partition_rid < state.count && state.cluster_ids[partition_rid] >= 0) {
+		result_data[rid] = state.cluster_ids[partition_rid];
 	} else {
 		result_validity.SetInvalid(rid);
 	}
