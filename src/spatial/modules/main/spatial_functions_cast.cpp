@@ -175,57 +175,59 @@ struct GeometryCasts {
 
 		UnaryExecutor::ExecuteWithNulls<string_t, string_t>(
 		    source, result, count, [&](const string_t &blob, ValidityMask &mask, idx_t row_idx) -> string_t {
-			    const auto ptr = blob.GetDataUnsafe();
-			    const auto len = blob.GetSize();
+			    // BinaryReader / sgl::geometry parsing throws on malformed or
+			    // truncated input. Convert any exception into a cast-level error
+			    // so the query surfaces a row-level NULL instead of aborting.
+			    try {
+				    const auto ptr = blob.GetDataUnsafe();
+				    const auto len = blob.GetSize();
 
-			    // Legacy header is 8 bytes: type, flags, u16 unused, u32 padding.
-			    if (len < 8) {
+				    // Legacy header is 8 bytes: type, flags, u16 unused, u32 padding.
+				    if (len < 8) {
+					    throw InvalidInputException("Legacy GEOMETRY blob too short (%llu bytes, need at least 8)",
+					                                static_cast<unsigned long long>(len));
+				    }
+
+				    BinaryReader cursor(ptr, len);
+				    const auto type = static_cast<sgl::geometry_type>(cursor.Read<uint8_t>() + 1);
+				    const auto flags = cursor.Read<uint8_t>();
+				    cursor.Skip(sizeof(uint16_t));
+				    cursor.Skip(sizeof(uint32_t));
+
+				    const auto has_z = (flags & 0x01) != 0;
+				    const auto has_m = (flags & 0x02) != 0;
+				    const auto has_bbox = (flags & 0x04) != 0;
+				    const auto format_v1 = (flags & 0x40) != 0;
+				    const auto format_v0 = (flags & 0x80) != 0;
+
+				    if (format_v1 || format_v0) {
+					    throw InvalidInputException("Unsupported legacy GEOMETRY version flags 0x%x", flags);
+				    }
+
+				    if (has_bbox) {
+					    // 2 * (2 + has_z + has_m) floats
+					    cursor.Skip(sizeof(float) * 2 * (2 + static_cast<int>(has_z) + static_cast<int>(has_m)));
+				    }
+
+				    sgl::geometry geom;
+				    geom.set_type(type);
+				    geom.set_z(has_z);
+				    geom.set_m(has_m);
+
+				    // Skip the first type id (same as outer type).
+				    cursor.Read<uint32_t>();
+
+				    LegacyDeserializeRecursive(cursor, geom, has_z, has_m, arena);
+
+				    return lstate.Serialize(result, geom);
+			    } catch (const std::exception &ex) {
 				    if (success) {
 					    success = false;
-					    HandleCastError::AssignError("Legacy GEOMETRY blob too short", params.error_message);
+					    HandleCastError::AssignError(ex.what(), params.error_message);
 				    }
 				    mask.SetInvalid(row_idx);
 				    return string_t {};
 			    }
-
-			    BinaryReader cursor(ptr, len);
-			    const auto type = static_cast<sgl::geometry_type>(cursor.Read<uint8_t>() + 1);
-			    const auto flags = cursor.Read<uint8_t>();
-			    cursor.Skip(sizeof(uint16_t));
-			    cursor.Skip(sizeof(uint32_t));
-
-			    const auto has_z = (flags & 0x01) != 0;
-			    const auto has_m = (flags & 0x02) != 0;
-			    const auto has_bbox = (flags & 0x04) != 0;
-			    const auto format_v1 = (flags & 0x40) != 0;
-			    const auto format_v0 = (flags & 0x80) != 0;
-
-			    if (format_v1 || format_v0) {
-				    if (success) {
-					    success = false;
-					    HandleCastError::AssignError("Unsupported legacy GEOMETRY version flags",
-					                                 params.error_message);
-				    }
-				    mask.SetInvalid(row_idx);
-				    return string_t {};
-			    }
-
-			    if (has_bbox) {
-				    // 2 * (2 + has_z + has_m) floats
-				    cursor.Skip(sizeof(float) * 2 * (2 + static_cast<int>(has_z) + static_cast<int>(has_m)));
-			    }
-
-			    sgl::geometry geom;
-			    geom.set_type(type);
-			    geom.set_z(has_z);
-			    geom.set_m(has_m);
-
-			    // Skip the first type id (same as outer type).
-			    cursor.Read<uint32_t>();
-
-			    LegacyDeserializeRecursive(cursor, geom, has_z, has_m, arena);
-
-			    return lstate.Serialize(result, geom);
 		    });
 
 		return success;
