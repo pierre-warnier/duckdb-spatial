@@ -102,6 +102,27 @@ public:
 	GeosGeometry get_coverage_simplified(double tolerance, bool preserve_boundary) const;
 	GeosGeometry get_coverage_union() const;
 
+	// New GEOS wrappers
+	GeosGeometry get_sym_difference(const GeosGeometry &other) const;
+	GeosGeometry get_unary_union() const;
+	GeosGeometry get_shared_paths(const GeosGeometry &other) const;
+	GeosGeometry get_snap(const GeosGeometry &other, double tolerance) const;
+	GeosGeometry get_offset_curve(double distance, int quadsegs, int join_style, double mitre_limit) const;
+	GeosGeometry get_delaunay_triangulation(double tolerance, bool only_edges) const;
+	GeosGeometry get_constrained_delaunay() const;
+	GeosGeometry get_densified(double tolerance) const;
+	GeosGeometry get_polygon_hull_simplified(double vertex_fraction, bool is_outer) const;
+	GeosGeometry get_minimum_bounding_circle() const;
+	GeosGeometry get_largest_empty_circle(double tolerance) const;
+	GeosGeometry get_minimum_clearance_line() const;
+	double frechet_distance_to(const GeosGeometry &other) const;
+	double hausdorff_distance_to(const GeosGeometry &other) const;
+	double get_minimum_clearance() const;
+	char *relate(const GeosGeometry &other) const;
+	bool relate_pattern(const GeosGeometry &other, const char *pattern) const;
+	bool equals_exact(const GeosGeometry &other, double tolerance) const;
+	char *is_valid_reason() const;
+
 	PreparedGeosGeometry get_prepared() const;
 
 	void get_extent(double &xmin, double &ymin, double &xmax, double &ymax) const {
@@ -618,6 +639,91 @@ inline double PreparedGeosGeometry::distance_to(const GeosGeometry &other) const
 
 inline bool PreparedGeosGeometry::distance_within(const GeosGeometry &other, double distance) const {
 	return GEOSPreparedDistanceWithin_r(handle, prepared, other.geom, distance);
+}
+
+//-- New GEOS wrapper implementations --//
+
+inline GeosGeometry GeosGeometry::get_sym_difference(const GeosGeometry &other) const {
+	return GeosGeometry(handle, GEOSSymDifference_r(handle, geom, other.geom));
+}
+
+inline GeosGeometry GeosGeometry::get_unary_union() const {
+	return GeosGeometry(handle, GEOSUnaryUnion_r(handle, geom));
+}
+
+inline GeosGeometry GeosGeometry::get_shared_paths(const GeosGeometry &other) const {
+	return GeosGeometry(handle, GEOSSharedPaths_r(handle, geom, other.geom));
+}
+
+inline GeosGeometry GeosGeometry::get_snap(const GeosGeometry &other, double tolerance) const {
+	return GeosGeometry(handle, GEOSSnap_r(handle, geom, other.geom, tolerance));
+}
+
+inline GeosGeometry GeosGeometry::get_offset_curve(double distance, int quadsegs, int join_style,
+                                                    double mitre_limit) const {
+	return GeosGeometry(handle, GEOSOffsetCurve_r(handle, geom, distance, quadsegs, join_style, mitre_limit));
+}
+
+inline GeosGeometry GeosGeometry::get_delaunay_triangulation(double tolerance, bool only_edges) const {
+	return GeosGeometry(handle, GEOSDelaunayTriangulation_r(handle, geom, tolerance, only_edges ? 1 : 0));
+}
+
+inline GeosGeometry GeosGeometry::get_constrained_delaunay() const {
+	return GeosGeometry(handle, GEOSConstrainedDelaunayTriangulation_r(handle, geom));
+}
+
+inline GeosGeometry GeosGeometry::get_densified(double tolerance) const {
+	return GeosGeometry(handle, GEOSDensify_r(handle, geom, tolerance));
+}
+
+inline GeosGeometry GeosGeometry::get_polygon_hull_simplified(double vertex_fraction, bool is_outer) const {
+	return GeosGeometry(handle, GEOSPolygonHullSimplify_r(handle, geom, is_outer ? 1 : 0, vertex_fraction));
+}
+
+inline GeosGeometry GeosGeometry::get_minimum_bounding_circle() const {
+	return GeosGeometry(handle, GEOSMinimumBoundingCircle_r(handle, geom, nullptr, nullptr));
+}
+
+inline GeosGeometry GeosGeometry::get_largest_empty_circle(double tolerance) const {
+	return GeosGeometry(handle, GEOSLargestEmptyCircle_r(handle, geom, nullptr, tolerance));
+}
+
+inline GeosGeometry GeosGeometry::get_minimum_clearance_line() const {
+	return GeosGeometry(handle, GEOSMinimumClearanceLine_r(handle, geom));
+}
+
+inline double GeosGeometry::frechet_distance_to(const GeosGeometry &other) const {
+	double dist = 0;
+	GEOSFrechetDistance_r(handle, geom, other.geom, &dist);
+	return dist;
+}
+
+inline double GeosGeometry::hausdorff_distance_to(const GeosGeometry &other) const {
+	double dist = 0;
+	GEOSHausdorffDistance_r(handle, geom, other.geom, &dist);
+	return dist;
+}
+
+inline double GeosGeometry::get_minimum_clearance() const {
+	double clearance = 0;
+	GEOSMinimumClearance_r(handle, geom, &clearance);
+	return clearance;
+}
+
+inline char *GeosGeometry::relate(const GeosGeometry &other) const {
+	return GEOSRelate_r(handle, geom, other.geom);
+}
+
+inline bool GeosGeometry::relate_pattern(const GeosGeometry &other, const char *pattern) const {
+	return GEOSRelatePattern_r(handle, geom, other.geom, pattern) == 1;
+}
+
+inline bool GeosGeometry::equals_exact(const GeosGeometry &other, double tolerance) const {
+	return GEOSEqualsExact_r(handle, geom, other.geom, tolerance) == 1;
+}
+
+inline char *GeosGeometry::is_valid_reason() const {
+	return GEOSisValidReason_r(handle, geom);
 }
 
 } // namespace duckdb

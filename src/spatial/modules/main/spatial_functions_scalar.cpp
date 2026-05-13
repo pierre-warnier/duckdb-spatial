@@ -11953,6 +11953,87 @@ struct ST_GeomFromTWKB_Func {
 	}
 };
 
+//======================================================================================================================
+// ST_GeoHash
+//======================================================================================================================
+
+struct ST_GeoHash_Func {
+	static constexpr const char BASE32[] = "0123456789bcdefghjkmnpqrstuvwxyz";
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+
+		BinaryExecutor::Execute<string_t, int32_t, string_t>(args.data[0], args.data[1], result, args.size(),
+		    [&](const string_t &blob, int32_t precision) {
+			    if (precision < 1 || precision > 20) {
+				    throw InvalidInputException("ST_GeoHash: precision must be between 1 and 20, got %d", precision);
+			    }
+
+			    sgl::geometry geom;
+			    Serde::Deserialize(geom, lstate.GetArena(), blob.GetDataUnsafe(), blob.GetSize());
+
+			    sgl::vertex_xyzm centroid;
+			    if (geom.get_type() == sgl::geometry_type::INVALID ||
+			        !sgl::ops::get_centroid(geom, centroid)) {
+				    throw InvalidInputException("ST_GeoHash: cannot compute centroid of empty geometry");
+			    }
+			    double lon = centroid.x;
+			    double lat = centroid.y;
+			    if (lon < -180.0 || lon > 180.0 || lat < -90.0 || lat > 90.0) {
+				    throw InvalidInputException(
+				        "ST_GeoHash: centroid (%f, %f) is outside the valid geographic range "
+				        "[-180..180, -90..90]", lon, lat);
+			    }
+
+			    double lat_min = -90, lat_max = 90;
+			    double lon_min = -180, lon_max = 180;
+			    char hash[21] = {};
+			    int ch = 0;
+			    bool is_lon = true;
+
+			    for (int i = 0; i < precision; i++) {
+				    for (int b = 4; b >= 0; b--) {
+					    if (is_lon) {
+						    double mid = (lon_min + lon_max) / 2.0;
+						    if (lon >= mid) { ch |= (1 << b); lon_min = mid; }
+						    else { lon_max = mid; }
+					    } else {
+						    double mid = (lat_min + lat_max) / 2.0;
+						    if (lat >= mid) { ch |= (1 << b); lat_min = mid; }
+						    else { lat_max = mid; }
+					    }
+					    is_lon = !is_lon;
+				    }
+				    hash[i] = BASE32[ch];
+				    ch = 0;
+			    }
+			    hash[precision] = '\0';
+
+			    lstate.GetArena().Reset();
+			    return StringVector::AddString(result, hash, precision);
+		    });
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_GeoHash", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", LogicalType::GEOMETRY());
+				variant.AddParameter("precision", LogicalType::INTEGER);
+				variant.SetReturnType(LogicalType::VARCHAR);
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute);
+				variant.CanThrowErrors();
+			});
+			func.SetDescription("Returns the GeoHash string of a geometry's centroid at the given precision");
+			func.SetExample("SELECT ST_GeoHash(ST_Point(-74.006, 40.7128), 9);");
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "property");
+		});
+	}
+};
+
+constexpr const char ST_GeoHash_Func::BASE32[];
+
 } // namespace
 
 // Helper to access the constant distance from the bind data
@@ -12086,6 +12167,7 @@ void RegisterSpatialScalarFunctions(ExtensionLoader &loader) {
 	ST_SetSRID_Func::Register(loader);
 	ST_AsTWKB_Func::Register(loader);
 	ST_GeomFromTWKB_Func::Register(loader);
+	ST_GeoHash_Func::Register(loader);
 }
 
 } // namespace duckdb
