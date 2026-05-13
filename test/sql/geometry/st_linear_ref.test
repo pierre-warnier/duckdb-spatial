@@ -1,0 +1,71 @@
+# name: test/sql/geometry/st_linear_ref.test
+# description: Test ST_AddMeasure and ST_3DLineInterpolatePoint
+# group: [spatial]
+
+require spatial
+
+# ST_AddMeasure - adds M dimension
+query I
+SELECT ST_HasM(ST_AddMeasure(ST_GeomFromText('LINESTRING(0 0, 5 0, 10 0)'), 0, 100));
+----
+true
+
+# ST_AddMeasure - M values are interpolated by distance
+query I
+SELECT ST_M(ST_PointN(ST_AddMeasure(ST_GeomFromText('LINESTRING(0 0, 5 0, 10 0)'), 0, 100), 1));
+----
+0.0
+
+# ST_AddMeasure - endpoint gets end measure
+query I
+SELECT ST_M(ST_PointN(ST_AddMeasure(ST_GeomFromText('LINESTRING(0 0, 5 0, 10 0)'), 0, 100), 3));
+----
+100.0
+
+# ST_AddMeasure - midpoint gets interpolated measure
+query I
+SELECT ST_M(ST_PointN(ST_AddMeasure(ST_GeomFromText('LINESTRING(0 0, 5 0, 10 0)'), 0, 100), 2));
+----
+50.0
+
+# ST_AddMeasure - error on non-linestring
+statement error
+SELECT ST_AddMeasure(ST_Point(0, 0), 0, 100);
+----
+ST_AddMeasure: argument must be a LINESTRING
+
+# ST_3DLineInterpolatePoint - midpoint of 3D line
+query I
+SELECT ST_AsText(ST_3DLineInterpolatePoint(ST_GeomFromText('LINESTRING Z(0 0 0, 10 0 10)'), 0.5));
+----
+POINT Z (5 0 5)
+
+# ST_3DLineInterpolatePoint - start
+query I
+SELECT ST_AsText(ST_3DLineInterpolatePoint(ST_GeomFromText('LINESTRING(0 0, 10 0)'), 0.0));
+----
+POINT (0 0)
+
+# ST_3DLineInterpolatePoint - end
+query I
+SELECT ST_AsText(ST_3DLineInterpolatePoint(ST_GeomFromText('LINESTRING(0 0, 10 0)'), 1.0));
+----
+POINT (10 0)
+
+# ST_3DLineInterpolatePoint - quarter
+query I
+SELECT ST_AsText(ST_3DLineInterpolatePoint(ST_GeomFromText('LINESTRING(0 0, 10 0)'), 0.25));
+----
+POINT (2.5 0)
+
+# ST_3DLineInterpolatePoint - error on non-linestring
+statement error
+SELECT ST_3DLineInterpolatePoint(ST_Point(0, 0), 0.5);
+----
+ST_3DLineInterpolatePoint: argument must be a LINESTRING
+
+# ST_3DLineInterpolatePoint - error on out of range
+statement error
+SELECT ST_3DLineInterpolatePoint(ST_GeomFromText('LINESTRING(0 0, 10 0)'), 1.5);
+----
+ST_3DLineInterpolatePoint: fraction must be between 0 and 1

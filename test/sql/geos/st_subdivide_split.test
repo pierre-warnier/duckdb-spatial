@@ -1,0 +1,65 @@
+# name: test/sql/geos/st_subdivide_split.test
+# description: Test ST_Subdivide and ST_Split
+# group: [spatial]
+
+require spatial
+
+# ST_Subdivide - simple polygon below threshold stays as-is
+query I
+SELECT ST_NGeometries(ST_Subdivide(
+    ST_GeomFromText('POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))'), 10));
+----
+1
+
+# ST_Subdivide - polygon above threshold gets split
+query I
+SELECT ST_NGeometries(ST_Subdivide(
+    ST_GeomFromText('POLYGON((0 0, 5 0, 10 0, 10 5, 10 10, 5 10, 0 10, 0 5, 0 0))'), 5));
+----
+2
+
+# ST_Subdivide - each part has valid geometry
+query I
+SELECT ST_IsValid(ST_Subdivide(
+    ST_GeomFromText('POLYGON((0 0, 5 0, 10 0, 10 5, 10 10, 5 10, 0 10, 0 5, 0 0))'), 5));
+----
+true
+
+# ST_Subdivide - min vertices clamped to 5
+query I
+SELECT ST_NGeometries(ST_Subdivide(
+    ST_GeomFromText('POLYGON((0 0, 5 0, 10 0, 10 5, 10 10, 5 10, 0 10, 0 5, 0 0))'), 2)) >= 1;
+----
+true
+
+# ST_Split - polygon by vertical line produces 2 parts
+query I
+SELECT ST_NGeometries(ST_Split(
+    ST_GeomFromText('POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))'),
+    ST_GeomFromText('LINESTRING(5 -1, 5 11)')));
+----
+2
+
+# ST_Split - polygon by horizontal line
+query I
+SELECT ST_NGeometries(ST_Split(
+    ST_GeomFromText('POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))'),
+    ST_GeomFromText('LINESTRING(-1 5, 11 5)')));
+----
+2
+
+# ST_Split - result parts are valid
+query I
+SELECT ST_IsValid(ST_Split(
+    ST_GeomFromText('POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))'),
+    ST_GeomFromText('LINESTRING(5 -1, 5 11)')));
+----
+true
+
+# ST_Split - total area preserved
+query I
+SELECT round(ST_Area(ST_Split(
+    ST_GeomFromText('POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))'),
+    ST_GeomFromText('LINESTRING(5 -1, 5 11)'))), 0);
+----
+100.0

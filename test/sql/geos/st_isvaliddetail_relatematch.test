@@ -1,0 +1,62 @@
+# name: test/sql/geos/st_isvaliddetail_relatematch.test
+# description: Test ST_IsValidDetail and ST_RelateMatch
+# group: [spatial]
+
+require spatial
+
+# ST_IsValidDetail - valid polygon
+query III
+SELECT d.valid, d.reason, ST_AsText(d.location)
+FROM (SELECT ST_IsValidDetail(ST_GeomFromText('POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))')) AS d) t;
+----
+true	Valid Geometry	NULL
+
+# ST_IsValidDetail - self-intersecting polygon (bowtie)
+query II
+SELECT d.valid, d.reason
+FROM (SELECT ST_IsValidDetail(ST_GeomFromText('POLYGON((0 0, 1 1, 1 0, 0 1, 0 0))')) AS d) t;
+----
+false	Self-intersection
+
+# ST_IsValidDetail - location of invalidity
+query I
+SELECT ST_AsText(d.location)
+FROM (SELECT ST_IsValidDetail(ST_GeomFromText('POLYGON((0 0, 1 1, 1 0, 0 1, 0 0))')) AS d) t;
+----
+POINT (0.5 0.5)
+
+# ST_RelateMatch - basic DE-9IM pattern matching
+query I
+SELECT ST_RelateMatch('212FF1FF2', 'T*T*****T');
+----
+true
+
+# ST_RelateMatch - non-match
+query I
+SELECT ST_RelateMatch('FF2FF1FF2', 'T*F**FFF*');
+----
+false
+
+# ST_RelateMatch - wildcard matches anything
+query I
+SELECT ST_RelateMatch('012345678', '*********');
+----
+true
+
+# ST_RelateMatch - F matches F
+query I
+SELECT ST_RelateMatch('FFFFFFFFF', 'FFFFFFFFF');
+----
+true
+
+# ST_RelateMatch - T matches 0, 1, 2
+query I
+SELECT ST_RelateMatch('012012012', 'TTTTTTTTT');
+----
+true
+
+# ST_RelateMatch - T does not match F
+query I
+SELECT ST_RelateMatch('F12012012', 'TTTTTTTTT');
+----
+false

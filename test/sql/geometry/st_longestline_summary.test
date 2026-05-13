@@ -1,0 +1,62 @@
+# name: test/sql/geometry/st_longestline_summary.test
+# description: Test ST_LongestLine and ST_Summary
+# group: [spatial]
+
+require spatial
+
+# ST_LongestLine - two points
+query I
+SELECT ST_AsText(ST_LongestLine(ST_Point(0, 0), ST_Point(3, 4)));
+----
+LINESTRING (0 0, 3 4)
+
+# ST_LongestLine - point to linestring
+query I
+SELECT round(ST_Length(ST_LongestLine(ST_Point(0, 0), ST_GeomFromText('LINESTRING(1 0, 3 4)'))), 4);
+----
+5.0
+
+# ST_LongestLine - two linestrings
+query I
+SELECT round(ST_Length(ST_LongestLine(
+    ST_GeomFromText('LINESTRING(0 0, 1 0)'),
+    ST_GeomFromText('LINESTRING(3 4, 5 6)')
+)), 4);
+----
+7.8102
+
+# ST_Summary - point
+query I
+SELECT ST_Summary(ST_Point(1, 2));
+----
+Point[1]
+
+# ST_Summary - linestring
+query I
+SELECT ST_Summary(ST_GeomFromText('LINESTRING(0 0, 1 1, 2 2)'));
+----
+LineString[3]
+
+# ST_Summary - polygon
+query I
+SELECT ST_Summary(ST_GeomFromText('POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))'));
+----
+Polygon[1]
+
+# ST_Summary - multipoint
+query I
+SELECT ST_Summary(ST_GeomFromText('MULTIPOINT(0 0, 1 1, 2 2)'));
+----
+MultiPoint[3]
+
+# ST_Summary - geometry collection
+query I
+SELECT ST_Summary(ST_GeomFromText('GEOMETRYCOLLECTION(POINT(0 0), LINESTRING(1 1, 2 2))'));
+----
+GeometryCollection[2]
+
+# ST_Summary - 3D point
+query I
+SELECT ST_Summary(ST_GeomFromText('POINT Z(1 2 3)'));
+----
+PointZ[1]

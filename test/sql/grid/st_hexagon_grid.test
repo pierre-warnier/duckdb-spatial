@@ -1,0 +1,123 @@
+require spatial
+
+# Basic test: small grid, check cell count
+query I
+SELECT count(*) FROM ST_HexagonGrid(1.0, ST_MakeEnvelope(0, 0, 3, 3));
+----
+24
+
+# Check output columns exist and have correct types
+query III
+SELECT typeof(geom), typeof(i), typeof(j) FROM ST_HexagonGrid(1.0, ST_MakeEnvelope(0, 0, 1, 1)) LIMIT 1;
+----
+GEOMETRY	BIGINT	BIGINT
+
+# Each hexagon should be a valid polygon with 7 vertices (6 unique + closing)
+query I
+SELECT ST_NPoints(geom) FROM ST_HexagonGrid(1.0, ST_MakeEnvelope(0, 0, 1, 1)) LIMIT 1;
+----
+7
+
+# Verify geometry type is POLYGON
+query I
+SELECT ST_GeometryType(geom) FROM ST_HexagonGrid(1.0, ST_MakeEnvelope(0, 0, 1, 1)) LIMIT 1;
+----
+POLYGON
+
+# Grid alignment: cell (0,0) should be centered at the origin
+# For i=0, j=0 with size=1, center is (0,0)
+# Flat-top hexagon vertices: (1,0), (0.5, sqrt(3)/2), (-0.5, sqrt(3)/2), (-1,0), (-0.5, -sqrt(3)/2), (0.5, -sqrt(3)/2)
+query I
+SELECT ST_AsText(geom) FROM ST_HexagonGrid(1.0, ST_Point(0, 0)) WHERE i = 0 AND j = 0;
+----
+POLYGON ((1 0, 0.5 0.8660254037844386, -0.5 0.8660254037844386, -1 0, -0.5 -0.8660254037844386, 0.5 -0.8660254037844386, 1 0))
+
+# All hexagons should have the same area
+# Area of regular hexagon with edge length s = (3*sqrt(3)/2) * s^2
+# For s=1: area = 3*sqrt(3)/2 ≈ 2.598076
+query I
+SELECT count(DISTINCT round(ST_Area(geom), 4)) FROM ST_HexagonGrid(1.0, ST_MakeEnvelope(0, 0, 5, 5));
+----
+1
+
+# Check area value for size=1
+query I
+SELECT round(ST_Area(geom), 6) FROM ST_HexagonGrid(1.0, ST_MakeEnvelope(0, 0, 1, 1)) LIMIT 1;
+----
+2.598076
+
+# Area scales with size squared
+query I
+SELECT round(ST_Area(geom), 6) FROM ST_HexagonGrid(2.0, ST_MakeEnvelope(0, 0, 1, 1)) LIMIT 1;
+----
+10.392305
+
+# i and j indices are present in the output
+query II
+SELECT i, j FROM ST_HexagonGrid(1.0, ST_Point(0, 0)) ORDER BY i, j LIMIT 3;
+----
+-1	-2
+-1	-1
+-1	0
+
+# Odd columns should be offset by half row spacing
+# For i=1 (odd), j=0, center should be at (1.5, sqrt(3)/2) ≈ (1.5, 0.866)
+# For i=0 (even), j=0, center should be at (0, 0)
+query I
+SELECT round(ST_Y(ST_Centroid(geom)), 6) FROM ST_HexagonGrid(1.0, ST_Point(1.5, 0.866)) WHERE i = 1 AND j = 0;
+----
+0.866025
+
+query I
+SELECT round(ST_Y(ST_Centroid(geom)), 6) FROM ST_HexagonGrid(1.0, ST_Point(0, 0)) WHERE i = 0 AND j = 0;
+----
+0.0
+
+# Empty geometry should return zero rows
+query I
+SELECT count(*) FROM ST_HexagonGrid(1.0, 'GEOMETRYCOLLECTION EMPTY'::GEOMETRY);
+----
+0
+
+# Different geometry types work: point
+query I
+SELECT count(*) > 0 FROM ST_HexagonGrid(1.0, ST_Point(5, 5));
+----
+true
+
+# Different geometry types work: linestring
+query I
+SELECT count(*) > 0 FROM ST_HexagonGrid(1.0, ST_GeomFromText('LINESTRING(0 0, 10 10)'));
+----
+true
+
+# Error: negative size
+statement error
+SELECT * FROM ST_HexagonGrid(-1.0, ST_Point(0, 0));
+----
+ST_HexagonGrid: size must be a positive finite number
+
+# Error: zero size
+statement error
+SELECT * FROM ST_HexagonGrid(0.0, ST_Point(0, 0));
+----
+ST_HexagonGrid: size must be a positive finite number
+
+# Error: NaN size
+statement error
+SELECT * FROM ST_HexagonGrid('NaN'::DOUBLE, ST_Point(0, 0));
+----
+ST_HexagonGrid: size must be a positive finite number
+
+# Error: infinite size
+statement error
+SELECT * FROM ST_HexagonGrid('Infinity'::DOUBLE, ST_Point(0, 0));
+----
+ST_HexagonGrid: size must be a positive finite number
+
+# Scaling test: larger size produces fewer cells
+query I
+SELECT (SELECT count(*) FROM ST_HexagonGrid(10.0, ST_MakeEnvelope(0, 0, 30, 30)))
+     < (SELECT count(*) FROM ST_HexagonGrid(1.0, ST_MakeEnvelope(0, 0, 30, 30)));
+----
+true

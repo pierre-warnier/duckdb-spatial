@@ -1,0 +1,87 @@
+require spatial
+
+# Basic 2x2 grid: envelope from (0,0) to (2,2), cell size 1.0
+# Should produce 4 cells: (0,0), (1,0), (0,1), (1,1)
+query III rowsort
+SELECT ST_AsText(geom), i, j FROM ST_SquareGrid(1.0, ST_MakeEnvelope(0, 0, 2, 2));
+----
+POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))	0	0
+POLYGON ((0 1, 1 1, 1 2, 0 2, 0 1))	0	1
+POLYGON ((1 0, 2 0, 2 1, 1 1, 1 0))	1	0
+POLYGON ((1 1, 2 1, 2 2, 1 2, 1 1))	1	1
+
+# Single cell: point inside a cell, cell size 1.0
+query III
+SELECT ST_AsText(geom), i, j FROM ST_SquareGrid(1.0, ST_Point(0.5, 0.5));
+----
+POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))	0	0
+
+# Grid alignment: geometry not at origin, grid still aligns to multiples of size
+# Bbox of envelope (2.5, 3.5, 4.5, 5.5) with size 2.0
+# i_min = floor(2.5/2) = 1, ncols = ceil(4.5/2) - floor(2.5/2) = 3-1 = 2
+# j_min = floor(3.5/2) = 1, nrows = ceil(5.5/2) - floor(3.5/2) = 3-1 = 2
+# => 4 cells
+query III rowsort
+SELECT ST_AsText(geom), i, j FROM ST_SquareGrid(2.0, ST_MakeEnvelope(2.5, 3.5, 4.5, 5.5));
+----
+POLYGON ((2 2, 4 2, 4 4, 2 4, 2 2))	1	1
+POLYGON ((2 4, 4 4, 4 6, 2 6, 2 4))	1	2
+POLYGON ((4 2, 6 2, 6 4, 4 4, 4 2))	2	1
+POLYGON ((4 4, 6 4, 6 6, 4 6, 4 4))	2	2
+
+# Count cells for a 3x3 grid
+query I
+SELECT count(*) FROM ST_SquareGrid(1.0, ST_MakeEnvelope(0, 0, 3, 3));
+----
+9
+
+# Negative coordinates: bbox from (-2,-2) to (1,1), size 1.0
+# i_min = floor(-2/1) = -2, ncols = ceil(1/1) - floor(-2/1) = 1-(-2) = 3
+# j_min = floor(-2/1) = -2, nrows = 3
+# => 9 cells
+query I
+SELECT count(*) FROM ST_SquareGrid(1.0, ST_MakeEnvelope(-2, -2, 1, 1));
+----
+9
+
+# Verify negative indices exist
+query III rowsort
+SELECT ST_AsText(geom), i, j FROM ST_SquareGrid(1.0, ST_MakeEnvelope(-1, -1, 0, 0));
+----
+POLYGON ((-1 -1, 0 -1, 0 0, -1 0, -1 -1))	-1	-1
+
+# Empty geometry produces no rows
+query I
+SELECT count(*) FROM ST_SquareGrid(1.0, ST_GeomFromText('GEOMETRYCOLLECTION EMPTY'));
+----
+0
+
+# Error: zero cell size
+statement error
+SELECT * FROM ST_SquareGrid(0.0, ST_MakeEnvelope(0, 0, 1, 1));
+----
+ST_SquareGrid: cell size must be a positive finite number
+
+# Error: negative cell size
+statement error
+SELECT * FROM ST_SquareGrid(-1.0, ST_MakeEnvelope(0, 0, 1, 1));
+----
+ST_SquareGrid: cell size must be a positive finite number
+
+# Fractional cell size
+query I
+SELECT count(*) FROM ST_SquareGrid(0.5, ST_MakeEnvelope(0, 0, 1, 1));
+----
+4
+
+# Non-trivial geometry (linestring)
+query I
+SELECT count(*) FROM ST_SquareGrid(1.0, ST_GeomFromText('LINESTRING(0.5 0.5, 2.5 2.5)'));
+----
+9
+
+# Exact cell boundary: envelope (0,0)-(1,1) with size 1 should produce 1 cell
+query I
+SELECT count(*) FROM ST_SquareGrid(1.0, ST_MakeEnvelope(0, 0, 1, 1));
+----
+1

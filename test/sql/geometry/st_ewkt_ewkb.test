@@ -1,0 +1,59 @@
+# name: test/sql/geometry/st_ewkt_ewkb.test
+# description: Test ST_AsEWKT, ST_GeomFromEWKT, ST_AsEWKB, ST_GeomFromEWKB
+# group: [spatial]
+
+require spatial
+
+# ST_AsEWKT - point
+query I
+SELECT ST_AsEWKT(ST_Point(1, 2));
+----
+POINT (1 2)
+
+# ST_GeomFromEWKT - with SRID prefix (SRID is stripped)
+query I
+SELECT ST_AsText(ST_GeomFromEWKT('SRID=4326;POINT(1 2)'));
+----
+POINT (1 2)
+
+# ST_GeomFromEWKT - without SRID prefix
+query I
+SELECT ST_AsText(ST_GeomFromEWKT('LINESTRING(0 0, 1 1, 2 2)'));
+----
+LINESTRING (0 0, 1 1, 2 2)
+
+# ST_GeomFromEWKT - polygon with SRID
+query I
+SELECT ST_GeometryType(ST_GeomFromEWKT('SRID=4326;POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))'));
+----
+POLYGON
+
+# ST_GeomFromEWKT - case insensitive SRID
+query I
+SELECT ST_AsText(ST_GeomFromEWKT('srid=4326;POINT(5 6)'));
+----
+POINT (5 6)
+
+# ST_GeomFromEWKT - error on invalid WKT
+statement error
+SELECT ST_GeomFromEWKT('SRID=4326;INVALID');
+----
+ST_GeomFromEWKT: invalid WKT
+
+# ST_AsEWKB / ST_GeomFromEWKB round-trip
+query I
+SELECT ST_AsText(ST_GeomFromEWKB(ST_AsEWKB(ST_Point(3, 4))));
+----
+POINT (3 4)
+
+# ST_AsEWKB / ST_GeomFromEWKB - linestring round-trip
+query I
+SELECT ST_AsText(ST_GeomFromEWKB(ST_AsEWKB(ST_GeomFromText('LINESTRING(0 0, 1 1)'))));
+----
+LINESTRING (0 0, 1 1)
+
+# ST_AsEWKB / ST_GeomFromEWKB - polygon round-trip
+query I
+SELECT ST_AsText(ST_GeomFromEWKB(ST_AsEWKB(ST_GeomFromText('POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))'))));
+----
+POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))

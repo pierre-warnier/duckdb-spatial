@@ -1,0 +1,74 @@
+# name: test/sql/geometry/st_native_intersects.test
+# description: Test native ST_Intersects for GEOMETRY type (without GEOS)
+# group: [spatial]
+
+require spatial
+
+# Point inside polygon
+query I
+SELECT ST_Intersects(ST_Point(0.5, 0.5), ST_GeomFromText('POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))'));
+----
+true
+
+# Point outside polygon
+query I
+SELECT ST_Intersects(ST_Point(5, 5), ST_GeomFromText('POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))'));
+----
+false
+
+# Reversed argument order
+query I
+SELECT ST_Intersects(ST_GeomFromText('POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))'), ST_Point(0.5, 0.5));
+----
+true
+
+# Point on polygon boundary
+query I
+SELECT ST_Intersects(ST_Point(0, 0), ST_GeomFromText('POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))'));
+----
+true
+
+# Point-point equality
+query I
+SELECT ST_Intersects(ST_Point(1, 1), ST_Point(1, 1));
+----
+true
+
+# Point-point inequality
+query I
+SELECT ST_Intersects(ST_Point(1, 1), ST_Point(2, 2));
+----
+false
+
+# Point on linestring
+query I
+SELECT ST_Intersects(ST_Point(0.5, 0), ST_GeomFromText('LINESTRING(0 0, 1 0)'));
+----
+true
+
+# Point NOT on linestring
+query I
+SELECT ST_Intersects(ST_Point(0, 1), ST_GeomFromText('LINESTRING(0 0, 1 0)'));
+----
+false
+
+# Point in polygon with hole — inside outer ring but inside hole = false
+query I
+SELECT ST_Intersects(ST_Point(5, 5), ST_GeomFromText('POLYGON((0 0, 10 0, 10 10, 0 10, 0 0), (3 3, 7 3, 7 7, 3 7, 3 3))'));
+----
+false
+
+# Point in polygon with hole — inside outer ring, outside hole = true
+query I
+SELECT ST_Intersects(ST_Point(1, 1), ST_GeomFromText('POLYGON((0 0, 10 0, 10 10, 0 10, 0 0), (3 3, 7 3, 7 7, 3 7, 3 3))'));
+----
+true
+
+# BOX_2D variant still works
+query I
+SELECT ST_Intersects(
+    ST_MakeBox2D(ST_Point(0, 0), ST_Point(1, 1)),
+    ST_MakeBox2D(ST_Point(0.5, 0.5), ST_Point(1.5, 1.5))
+);
+----
+true

@@ -1,0 +1,93 @@
+# name: test/sql/geometry/st_3d_functions.test
+# description: Test ST_3DLength, ST_3DPerimeter, ST_3DDistance, ST_DFullyWithin
+# group: [spatial]
+
+require spatial
+
+# ST_3DLength - simple horizontal line
+query I
+SELECT round(ST_3DLength(ST_GeomFromText('LINESTRING Z(0 0 0, 1 0 0)')), 6);
+----
+1.0
+
+# ST_3DLength - diagonal line with Z
+query I
+SELECT round(ST_3DLength(ST_GeomFromText('LINESTRING Z(0 0 0, 1 1 1)')), 6);
+----
+1.732051
+
+# ST_3DLength - multi-segment with Z
+query I
+SELECT round(ST_3DLength(ST_GeomFromText('LINESTRING Z(0 0 0, 1 0 0, 1 1 1)')), 6);
+----
+2.414214
+
+# ST_3DLength - 2D line (z=0)
+query I
+SELECT round(ST_3DLength(ST_GeomFromText('LINESTRING(0 0, 3 4)')), 6);
+----
+5.0
+
+# ST_3DLength - point returns 0
+query I
+SELECT ST_3DLength(ST_GeomFromText('POINT Z(1 2 3)'));
+----
+0.0
+
+# ST_3DPerimeter - flat polygon
+query I
+SELECT ST_3DPerimeter(ST_GeomFromText('POLYGON Z((0 0 0, 3 0 0, 3 4 0, 0 4 0, 0 0 0))'));
+----
+14.0
+
+# ST_3DPerimeter - non-polygon returns 0
+query I
+SELECT ST_3DPerimeter(ST_GeomFromText('LINESTRING Z(0 0 0, 1 1 1)'));
+----
+0.0
+
+# ST_3DDistance - same point
+query I
+SELECT ST_3DDistance(ST_GeomFromText('POINT Z(0 0 0)'), ST_GeomFromText('POINT Z(0 0 0)'));
+----
+0.0
+
+# ST_3DDistance - unit cube diagonal
+query I
+SELECT round(ST_3DDistance(ST_GeomFromText('POINT Z(0 0 0)'), ST_GeomFromText('POINT Z(1 1 1)')), 6);
+----
+1.732051
+
+# ST_3DDistance - only Z separation
+query I
+SELECT ST_3DDistance(ST_GeomFromText('POINT Z(0 0 0)'), ST_GeomFromText('POINT Z(0 0 5)'));
+----
+5.0
+
+# ST_DFullyWithin - point within distance
+query I
+SELECT ST_DFullyWithin(ST_Point(0, 0), ST_Point(1, 0), 2.0);
+----
+true
+
+# ST_DFullyWithin - point outside distance
+query I
+SELECT ST_DFullyWithin(ST_Point(0, 0), ST_Point(3, 0), 2.0);
+----
+false
+
+# ST_DFullyWithin - exact boundary
+query I
+SELECT ST_DFullyWithin(ST_Point(0, 0), ST_Point(2, 0), 2.0);
+----
+true
+
+# ST_DFullyWithin - non-point input is rejected (point-only in this implementation)
+statement error
+SELECT ST_DFullyWithin(
+    ST_GeomFromText('LINESTRING(0 0, 0.5 0)'),
+    ST_Point(0.25, 0),
+    1.0
+);
+----
+ST_DFullyWithin: both arguments must be POINT

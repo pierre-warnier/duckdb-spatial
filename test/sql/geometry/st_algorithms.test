@@ -1,0 +1,77 @@
+# name: test/sql/geometry/st_algorithms.test
+# description: Test ST_ChaikinSmoothing, ST_GeometricMedian, ST_SimplifyVW, ST_AsLatLonText
+# group: [spatial]
+
+require spatial
+
+# ST_ChaikinSmoothing - 1 iteration doubles segments
+query I
+SELECT ST_NPoints(ST_ChaikinSmoothing(ST_GeomFromText('LINESTRING(0 0, 5 10, 10 0)'), 1));
+----
+4
+
+# ST_ChaikinSmoothing - 2 iterations
+query I
+SELECT ST_NPoints(ST_ChaikinSmoothing(ST_GeomFromText('LINESTRING(0 0, 5 10, 10 0)'), 2));
+----
+6
+
+# ST_ChaikinSmoothing - preserves direction
+query I
+SELECT ST_X(ST_StartPoint(ST_ChaikinSmoothing(ST_GeomFromText('LINESTRING(0 0, 5 10, 10 0)'), 1))) > -1;
+----
+true
+
+# ST_GeometricMedian - equilateral triangle median near centroid
+query I
+SELECT round(ST_X(ST_GeometricMedian(ST_GeomFromText('MULTIPOINT(0 0, 10 0, 5 8.66)'))), 1);
+----
+5.0
+
+# ST_GeometricMedian - collinear points
+query I
+SELECT round(ST_X(ST_GeometricMedian(ST_GeomFromText('MULTIPOINT(0 0, 5 0, 10 0)'))), 1);
+----
+5.0
+
+# ST_SimplifyVW - removes small-area triangles
+query I
+SELECT ST_NPoints(ST_SimplifyVW(ST_GeomFromText('LINESTRING(0 0, 1 0.1, 2 0, 3 5, 4 0)'), 1.0));
+----
+4
+
+# ST_SimplifyVW - threshold 0 keeps all points
+query I
+SELECT ST_NPoints(ST_SimplifyVW(ST_GeomFromText('LINESTRING(0 0, 1 1, 2 0, 3 1, 4 0)'), 0.0));
+----
+5
+
+# ST_SimplifyVW - large threshold removes most points
+query I
+SELECT ST_NPoints(ST_SimplifyVW(ST_GeomFromText('LINESTRING(0 0, 1 1, 2 0, 3 1, 4 0)'), 100.0));
+----
+2
+
+# ST_AsLatLonText - NYC coordinates
+query I
+SELECT ST_AsLatLonText(ST_Point(-73.9857, 40.7484));
+----
+40°44'54.240"N 73°59'8.520"W
+
+# ST_AsLatLonText - equator/prime meridian
+query I
+SELECT ST_AsLatLonText(ST_Point(0, 0));
+----
+0°0'0.000"N 0°0'0.000"E
+
+# ST_AsLatLonText - southern hemisphere
+query I
+SELECT ST_AsLatLonText(ST_Point(151.2093, -33.8688));
+----
+33°52'7.680"S 151°12'33.480"E
+
+# ST_AsLatLonText - error on non-point
+statement error
+SELECT ST_AsLatLonText(ST_GeomFromText('LINESTRING(0 0, 1 1)'));
+----
+ST_AsLatLonText: argument must be a POINT

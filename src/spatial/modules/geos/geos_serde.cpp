@@ -232,6 +232,8 @@ static GEOSGeom_t *DeserializeTemplated(BinaryReader &reader, ArenaAllocator &ar
 		if (vert_count == 0) {
 			return GEOSGeom_createEmptyLineString_r(ctx);
 		}
+		// Copy into arena-allocated aligned buffer before handing to GEOS — the blob pointer
+		// from BinaryReader::Reserve is not guaranteed to be double-aligned.
 		auto vert_array = AllocateArray<double>(arena, vert_count * VERTEX_SIZE);
 		auto ptr = reader.Reserve(vert_count * VERTEX_SIZE * sizeof(double));
 		memcpy(vert_array, ptr, vert_count * VERTEX_SIZE * sizeof(double));
@@ -243,7 +245,7 @@ static GEOSGeom_t *DeserializeTemplated(BinaryReader &reader, ArenaAllocator &ar
 		if (ring_count == 0) {
 			return GEOSGeom_createEmptyPolygon_r(ctx);
 		}
-		auto ring_array = AllocateArray<GEOSGeometry *>(ring_count);
+		auto ring_array = AllocateArray<GEOSGeometry *>(arena, ring_count);
 		for (uint32_t i = 0; i < ring_count; i++) {
 			const auto vert_count = reader.Read<uint32_t>();
 			auto vert_array = AllocateArray<double>(arena, vert_count * VERTEX_SIZE);

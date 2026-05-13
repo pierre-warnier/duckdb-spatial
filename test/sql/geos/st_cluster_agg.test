@@ -1,0 +1,58 @@
+# name: test/sql/geos/st_cluster_agg.test
+# description: Test ST_ClusterIntersecting and ST_ClusterWithin aggregate functions
+# group: [spatial]
+
+require spatial
+
+# ST_ClusterIntersecting - two overlapping + one distant = 2 clusters
+query I
+SELECT ST_NGeometries(ST_ClusterIntersecting(geom)) FROM (
+    VALUES
+    (ST_GeomFromText('POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))')),
+    (ST_GeomFromText('POLYGON((0.5 0.5, 1.5 0.5, 1.5 1.5, 0.5 1.5, 0.5 0.5))')),
+    (ST_GeomFromText('POLYGON((10 10, 11 10, 11 11, 10 11, 10 10))'))
+) AS t(geom);
+----
+2
+
+# ST_ClusterIntersecting - all disjoint = N clusters
+query I
+SELECT ST_NGeometries(ST_ClusterIntersecting(geom)) FROM (
+    VALUES (ST_Point(0, 0)), (ST_Point(10, 10)), (ST_Point(20, 20))
+) AS t(geom);
+----
+3
+
+# ST_ClusterIntersecting - all intersecting = 1 cluster
+query I
+SELECT ST_NGeometries(ST_ClusterIntersecting(geom)) FROM (
+    VALUES
+    (ST_GeomFromText('POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))')),
+    (ST_GeomFromText('POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))'))
+) AS t(geom);
+----
+1
+
+# ST_ClusterWithin - two close + one far = 2 clusters
+query I
+SELECT ST_NGeometries(ST_ClusterWithin(geom, 2.0)) FROM (
+    VALUES (ST_Point(0, 0)), (ST_Point(1, 0)), (ST_Point(10, 10))
+) AS t(geom);
+----
+2
+
+# ST_ClusterWithin - all close = 1 cluster
+query I
+SELECT ST_NGeometries(ST_ClusterWithin(geom, 100.0)) FROM (
+    VALUES (ST_Point(0, 0)), (ST_Point(1, 0)), (ST_Point(2, 0))
+) AS t(geom);
+----
+1
+
+# ST_ClusterWithin - none close = N clusters
+query I
+SELECT ST_NGeometries(ST_ClusterWithin(geom, 0.1)) FROM (
+    VALUES (ST_Point(0, 0)), (ST_Point(10, 10)), (ST_Point(20, 20))
+) AS t(geom);
+----
+3

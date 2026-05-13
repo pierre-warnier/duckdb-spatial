@@ -2,6 +2,7 @@
 #include "spatial/operators/spatial_join_logical.hpp"
 #include "spatial/geometry/sgl.hpp"
 #include "spatial/geometry/bbox.hpp"
+#include "spatial/geometry/geometry_serialization.hpp"
 #include "spatial/spatial_types.hpp"
 
 #include "duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp"
@@ -15,6 +16,9 @@
 #include "duckdb/storage/buffer_manager.hpp"
 
 #include "spatial/util/math.hpp"
+
+#include <algorithm>
+#include <numeric>
 
 namespace duckdb {
 
@@ -69,7 +73,7 @@ public:
 	idx_t matches_idx = 0;
 
 private:
-	queue<size_t> search_queue;
+	vector<size_t> search_stack;
 	Box search_box;
 	size_t entry_beg = 0;
 	size_t entry_pos = 0;
@@ -135,38 +139,47 @@ public:
 		return current_position++;
 	}
 
-	static void Sort(vector<uint32_t> &curve, typed_view<Box> &box_array, typed_view<uint32_t> &idx_array) {
-		Sort(curve, box_array, idx_array, 0, curve.size() - 1);
-	}
+	void SortWithRowPermutation(vector<uint32_t> &curve) {
+		// Sort only the leaf entries (0..item_count-1) by Hilbert value.
+		// Also permutes row_array for sequential cache access during scan.
+		const auto n = item_count;
+		vector<uint32_t> perm(n);
+		std::iota(perm.begin(), perm.end(), 0);
+		std::sort(perm.begin(), perm.end(), [&](uint32_t a, uint32_t b) { return curve[a] < curve[b]; });
 
-	static void Sort(vector<uint32_t> &curve, typed_view<Box> &box_array, typed_view<uint32_t> &idx_array, size_t l_idx,
-	                 size_t r_idx) {
-		if (l_idx < r_idx) {
-			const auto pivot = curve[(l_idx + r_idx) >> 1];
-			auto pivot_l = l_idx - 1;
-			auto pivot_r = r_idx + 1;
-
-			while (true) {
-				do {
-					++pivot_l;
-				} while (curve[pivot_l] < pivot);
-				do {
-					--pivot_r;
-				} while (curve[pivot_r] > pivot);
-
-				if (pivot_l >= pivot_r) {
-					break;
-				}
-
-				// Reorder the curve, boxes and indices
-				// TODO: Pass callback here and make static
-				std::swap(curve[pivot_l], curve[pivot_r]);
-				std::swap(box_array[pivot_l], box_array[pivot_r]);
-				std::swap(idx_array[pivot_l], idx_array[pivot_r]);
+		// Apply permutation: box_array, idx_array, row_array, curve
+		vector<bool> visited(n, false);
+		for (uint32_t i = 0; i < n; i++) {
+			if (visited[i] || perm[i] == i) {
+				continue;
 			}
+			auto c = curve[i];
+			auto b = box_array[i];
+			auto x = idx_array[i];
+			auto r = row_array[i];
+			uint32_t j = i;
+			while (!visited[j]) {
+				visited[j] = true;
+				auto target = perm[j];
+				if (target == i) {
+					curve[j] = c;
+					box_array[j] = b;
+					idx_array[j] = x;
+					row_array[j] = r;
+				} else {
+					curve[j] = curve[target];
+					box_array[j] = box_array[target];
+					idx_array[j] = idx_array[target];
+					row_array[j] = row_array[target];
+				}
+				j = target;
+			}
+		}
 
-			Sort(curve, box_array, idx_array, l_idx, pivot_r);
-			Sort(curve, box_array, idx_array, pivot_r + 1, r_idx);
+		// idx_array for leaves now maps to permuted positions.
+		// Reset to identity so row_array[idx_array[i]] = row_array[i] (sequential).
+		for (uint32_t i = 0; i < n; i++) {
+			idx_array[i] = i;
 		}
 	}
 
@@ -229,8 +242,10 @@ public:
 		// TODO: Parallelize this with tasks when the number of items is large?
 
 		constexpr auto max_hilbert = std::numeric_limits<uint16_t>::max();
-		const auto hw = max_hilbert / (tree_box.max.x - tree_box.min.x);
-		const auto hh = max_hilbert / (tree_box.max.y - tree_box.min.y);
+		const auto dx = tree_box.max.x - tree_box.min.x;
+		const auto dy = tree_box.max.y - tree_box.min.y;
+		const auto hw = (dx > 0) ? max_hilbert / dx : 0.0f;
+		const auto hh = (dy > 0) ? max_hilbert / dy : 0.0f;
 
 		vector<uint32_t> curve(item_count);
 		for (idx_t i = 0; i < item_count; i++) {
@@ -243,7 +258,7 @@ public:
 		}
 
 		// Now, sort the indices based on their curve value
-		Sort(curve, box_array, idx_array);
+		SortWithRowPermutation(curve);
 		//STRSort(box_array, idx_array);
 
 		size_t layer_idx = 0;
@@ -285,9 +300,7 @@ public:
 	}
 
 	void InitScan(FlatRTreeScanState &state, const Box &box) const {
-		while (!state.search_queue.empty()) {
-			state.search_queue.pop();
-		}
+		state.search_stack.clear();
 		state.search_box = box;
 		state.entry_beg = box_array.size() - 1;
 		state.entry_pos = state.entry_beg;
@@ -332,7 +345,7 @@ public:
 
 				if (state.entry_beg >= item_count) {
 					// Internal node
-					state.search_queue.push(idx_array[state.entry_pos]);
+					state.search_stack.push_back(idx_array[state.entry_pos]);
 				} else {
 					// Leaf node
 					yield = callback(row_array[idx_array[state.entry_pos]]);
@@ -346,15 +359,15 @@ public:
 				}
 			}
 
-			if (state.search_queue.empty()) {
+			if (state.search_stack.empty()) {
 				// There is no more nodes to search, return false!
 				state.exhausted = true;
 				return;
 			}
 
-			state.entry_beg = state.search_queue.front();
+			state.entry_beg = state.search_stack.back();
 			state.entry_pos = state.entry_beg;
-			state.search_queue.pop();
+			state.search_stack.pop_back();
 		}
 	}
 
@@ -780,23 +793,19 @@ public:
 
 	DataChunk probe_side_row_chunk; // holds the projected lhs columns
 	DataChunk probe_side_key_chunk; // holds the lhs probe key
-	DataChunk probe_side_box_chunk; // holds the lhs probe key as a box
 	DataChunk build_side_key_chunk; // holds the rhs build key
 	DataChunk match_pred_arg_chunk; // references the lhs probe key and the rhs build key, used to compute the predicate
 
 	ExpressionExecutor join_probe_executor; // used to compute the probe key
 	ExpressionExecutor join_match_executor; // used to compute the predicate
-	ExpressionExecutor bbox_probe_executor; // used to compute the bounding box for the probe key
 
 	UnifiedVectorFormat probe_side_key_vformat; // used to access the probe side key, after its been computed
-	UnifiedVectorFormat probe_side_box_vformat; // used to access the probe side bounding box, after its been computed
-	UnifiedVectorFormat probe_side_box_xmin_vformat;
-	UnifiedVectorFormat probe_side_box_ymin_vformat;
-	UnifiedVectorFormat probe_side_box_xmax_vformat;
-	UnifiedVectorFormat probe_side_box_ymax_vformat;
+
+	// Batch-extracted probe bounding boxes (avoids ExpressionExecutor + UnifiedVectorFormat overhead)
+	Box2D<float> probe_bboxes[STANDARD_VECTOR_SIZE];
+	bool probe_bbox_valid[STANDARD_VECTOR_SIZE] = {};
 
 	unique_ptr<Expression> match_expr; // to evaluate the predicate
-	unique_ptr<Expression> bound_expr; // to compute the bounding box of the probe key
 
 	SelectionVector probe_side_source_sel; // maps what output rows correspond to which input lhs rows
 	SelectionVector build_side_source_sel; // used when gathering the build side
@@ -811,7 +820,7 @@ public:
 	unsafe_unique_array<data_ptr_t> build_side_pointers = nullptr;
 
 	explicit SpatialJoinLocalOperatorState(ClientContext &context)
-	    : join_probe_executor(context), join_match_executor(context), bbox_probe_executor(context),
+	    : join_probe_executor(context), join_match_executor(context),
 	      probe_side_source_sel(STANDARD_VECTOR_SIZE), build_side_source_sel(STANDARD_VECTOR_SIZE),
 	      build_side_target_sel(STANDARD_VECTOR_SIZE), match_sel(STANDARD_VECTOR_SIZE),
 	      lhs_match_sel(STANDARD_VECTOR_SIZE) {
@@ -858,14 +867,9 @@ unique_ptr<OperatorState> PhysicalSpatialJoin::GetOperatorState(ExecutionContext
 	// Add the probe side join key expression
 	lstate->join_probe_executor.AddExpression(*probe_side_key);
 
-	// Make bbox expression for probe side
-	lstate->bound_expr = GetBBOXExpression(context.client, probe_side_key->return_type);
-	lstate->bbox_probe_executor.AddExpression(*lstate->bound_expr);
-
 	// The chunks we need for the join
 	lstate->probe_side_row_chunk.Initialize(context.client, probe_side_output_types);
 	lstate->probe_side_key_chunk.Initialize(context.client, {probe_side_key->return_type});
-	lstate->probe_side_box_chunk.Initialize(context.client, {lstate->bound_expr->return_type});
 	lstate->build_side_key_chunk.Initialize(context.client, {build_side_key->return_type});
 	lstate->match_pred_arg_chunk.Initialize(context.client, {probe_side_key->return_type, build_side_key->return_type});
 
@@ -927,15 +931,20 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 			lstate.join_probe_executor.Execute(input, lstate.probe_side_key_chunk);
 			lstate.probe_side_key_chunk.data[0].ToUnifiedFormat(input.size(), lstate.probe_side_key_vformat);
 
-			// Setup bounding box
-			lstate.bbox_probe_executor.Execute(lstate.probe_side_key_chunk, lstate.probe_side_box_chunk);
-			lstate.probe_side_box_chunk.data[0].ToUnifiedFormat(input.size(), lstate.probe_side_box_vformat);
-
-			const auto &entries = StructVector::GetEntries(lstate.probe_side_box_chunk.data[0]);
-			entries[0]->ToUnifiedFormat(input.size(), lstate.probe_side_box_xmin_vformat);
-			entries[1]->ToUnifiedFormat(input.size(), lstate.probe_side_box_ymin_vformat);
-			entries[2]->ToUnifiedFormat(input.size(), lstate.probe_side_box_xmax_vformat);
-			entries[3]->ToUnifiedFormat(input.size(), lstate.probe_side_box_ymax_vformat);
+			// Batch-extract bounding boxes directly from geometry blobs
+			// Bypasses ExpressionExecutor + UnifiedVectorFormat overhead
+			{
+				const auto geom_data = UnifiedVectorFormat::GetData<string_t>(lstate.probe_side_key_vformat);
+				for (idx_t i = 0; i < input.size(); i++) {
+					const auto geom_idx = lstate.probe_side_key_vformat.sel->get_index(i);
+					if (lstate.probe_side_key_vformat.validity.RowIsValid(geom_idx)) {
+						lstate.probe_bbox_valid[i] =
+						    Serde::TryGetBounds(geom_data[geom_idx], lstate.probe_bboxes[i]) > 0;
+					} else {
+						lstate.probe_bbox_valid[i] = false;
+					}
+				}
+			}
 
 			// Reference the columns that we actually care about
 			lstate.probe_side_row_chunk.ReferenceColumns(input, probe_side_output_columns);
@@ -957,29 +966,14 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 				continue;
 			}
 
-			// Loop over the bounding boxes
-			const auto geom_idx = lstate.probe_side_box_vformat.sel->get_index(lstate.input_index);
-			if (!lstate.probe_side_box_vformat.validity.RowIsValid(geom_idx)) {
+			// Skip rows with invalid/null bounding boxes
+			if (!lstate.probe_bbox_valid[lstate.input_index]) {
 				lstate.input_index++;
 				continue;
 			}
 
-			// Extract the bounding box
-			const auto xmin_data = UnifiedVectorFormat::GetData<float>(lstate.probe_side_box_xmin_vformat);
-			const auto ymin_data = UnifiedVectorFormat::GetData<float>(lstate.probe_side_box_ymin_vformat);
-			const auto xmax_data = UnifiedVectorFormat::GetData<float>(lstate.probe_side_box_xmax_vformat);
-			const auto ymax_data = UnifiedVectorFormat::GetData<float>(lstate.probe_side_box_ymax_vformat);
-
-			const auto xmin_idx = lstate.probe_side_box_xmin_vformat.sel->get_index(geom_idx);
-			const auto ymin_idx = lstate.probe_side_box_ymin_vformat.sel->get_index(geom_idx);
-			const auto xmax_idx = lstate.probe_side_box_xmax_vformat.sel->get_index(geom_idx);
-			const auto ymax_idx = lstate.probe_side_box_ymax_vformat.sel->get_index(geom_idx);
-
-			Box2D<float> bbox;
-			bbox.min.x = xmin_data[xmin_idx];
-			bbox.min.y = ymin_data[ymin_idx];
-			bbox.max.x = xmax_data[xmax_idx];
-			bbox.max.y = ymax_data[ymax_idx];
+			// Use the pre-extracted bounding box directly
+			const auto &bbox = lstate.probe_bboxes[lstate.input_index];
 
 			gstate.rtree->InitScan(lstate.scan, bbox);
 

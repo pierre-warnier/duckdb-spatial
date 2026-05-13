@@ -1,0 +1,41 @@
+# name: test/sql/geometry/st_encoded_polyline.test
+# description: Test ST_AsEncodedPolyline and ST_LineFromEncodedPolyline
+# group: [spatial]
+
+require spatial
+
+# ST_AsEncodedPolyline - Google's reference example
+query I
+SELECT ST_AsEncodedPolyline(ST_GeomFromText('LINESTRING(-120.2 38.5, -120.95 40.7, -126.453 43.252)'));
+----
+_p~iF~ps|U_ulLnnqC_mqNvxq`@
+
+# ST_LineFromEncodedPolyline - decode Google's reference
+query I
+SELECT ST_NPoints(ST_LineFromEncodedPolyline('_p~iF~ps|U_ulLnnqC_mqNvxq`@'));
+----
+3
+
+# Round-trip preserves geometry
+query I
+SELECT ST_AsText(ST_LineFromEncodedPolyline(ST_AsEncodedPolyline(ST_GeomFromText('LINESTRING(0 0, 1 1, 2 2)'))));
+----
+LINESTRING (0 0, 1 1, 2 2)
+
+# Round-trip with negative coordinates
+query I
+SELECT ST_AsText(ST_LineFromEncodedPolyline(ST_AsEncodedPolyline(ST_GeomFromText('LINESTRING(-73.98 40.74, -74.01 40.71)'))));
+----
+LINESTRING (-73.98 40.74, -74.01 40.71)
+
+# ST_AsEncodedPolyline - error on non-linestring
+statement error
+SELECT ST_AsEncodedPolyline(ST_Point(0, 0));
+----
+ST_AsEncodedPolyline: argument must be a LINESTRING
+
+# ST_LineFromEncodedPolyline - error on empty/too-short input
+statement error
+SELECT ST_LineFromEncodedPolyline('??');
+----
+ST_LineFromEncodedPolyline: decoded fewer than 2 points
