@@ -1,9 +1,4 @@
 # Query a database with geometry types created in duckdb v1.0.0
-# Note: DuckDB v1.5 changed the GEOMETRY type system to support CRS metadata.
-# The old GEOMETRY type from v1.0.0 databases is no longer directly bindable to
-# spatial functions. This test verifies the database can still be attached and
-# the column type is recognized, even though function calls require explicit
-# re-creation of geometries.
 require spatial
 
 statement ok
@@ -12,23 +7,21 @@ attach 'test/data/duckdb_v1_0_0.db' as db;
 statement ok
 use db
 
-# Verify the old database can be attached and columns are accessible
-query I
-SELECT count(*) FROM types;
+query IIII rowsort
+SELECT st_geometrytype(geom), st_astext(geom), st_isvalid(geom), st_area(geom) FROM types;
 ----
-14
-
-# Verify the column type is still recognized as GEOMETRY
-query I
-SELECT typeof(geom) FROM types LIMIT 1;
-----
-GEOMETRY
-
-# Spatial functions cannot bind to the old GEOMETRY type due to CRS metadata changes.
-# This is a known backward compatibility limitation in DuckDB v1.5+.
-# Workaround: re-create geometries via ST_GeomFromWKB(ST_AsWKB(geom)) when migrating old databases.
-statement error
-SELECT st_astext(geom) FROM types LIMIT 1;
-----
-No function matches
+GEOMETRYCOLLECTION	GEOMETRYCOLLECTION (POINT (0 0), LINESTRING (0 0, 1 1))	true	0.0
+GEOMETRYCOLLECTION	GEOMETRYCOLLECTION EMPTY	true	0.0
+LINESTRING	LINESTRING (0 0, 1 1)	true	0.0
+LINESTRING	LINESTRING EMPTY	true	0.0
+MULTILINESTRING	MULTILINESTRING ((0 0, 1 1), (2 2, 3 3))	true	0.0
+MULTILINESTRING	MULTILINESTRING EMPTY	true	0.0
+MULTIPOINT	MULTIPOINT (0 0, 1 1)	true	0.0
+MULTIPOINT	MULTIPOINT EMPTY	true	0.0
+MULTIPOLYGON	MULTIPOLYGON (((0 0, 1 0, 1 1, 0 1, 0 0)), ((2 2, 3 2, 3 3, 2 3, 2 2)))	true	2.0
+MULTIPOLYGON	MULTIPOLYGON EMPTY	true	0.0
+POINT	POINT (0 0)	true	0.0
+POINT	POINT EMPTY	true	0.0
+POLYGON	POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))	true	1.0
+POLYGON	POLYGON EMPTY	true	0.0
 

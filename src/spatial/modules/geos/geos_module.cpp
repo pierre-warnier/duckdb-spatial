@@ -3872,26 +3872,7 @@ struct ST_ClusterWithin {
 //======================================================================================================================
 
 // --- Overlay / Processing ---
-
-struct ST_SymDifference {
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
-		auto &lstate = LocalState::ResetAndGet(state);
-		BinaryExecutor::Execute<string_t, string_t, string_t>(args.data[0], args.data[1], result, args.size(),
-		    [&](const string_t &l, const string_t &r) {
-			    return lstate.Serialize(result, lstate.Deserialize(l).get_sym_difference(lstate.Deserialize(r)));
-		    });
-	}
-	static void Register(ExtensionLoader &loader) {
-		FunctionBuilder::RegisterScalar(loader, "ST_SymDifference", [](ScalarFunctionBuilder &func) {
-			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
-				v.AddParameter("geom1", LogicalType::GEOMETRY()); v.AddParameter("geom2", LogicalType::GEOMETRY());
-				v.SetReturnType(LogicalType::GEOMETRY()); v.SetBind(GeoTypes::PropagateCRS);
-				v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
-			});
-			func.SetDescription("Returns the symmetric difference of two geometries"); func.SetTag("ext", "spatial"); func.SetTag("category", "construction");
-		});
-	}
-};
+// ST_SymDifference already exists in upstream (merged via #787)
 
 struct ST_UnaryUnion {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
@@ -4638,8 +4619,7 @@ void RegisterGEOSModule(ExtensionLoader &loader) {
 	ST_ClusterIntersecting::Register(loader);
 	ST_ClusterWithin::Register(loader);
 
-	// New GEOS wrappers
-	ST_SymDifference::Register(loader);
+	// New GEOS wrappers (ST_SymDifference already registered upstream)
 	ST_UnaryUnion::Register(loader);
 	ST_SharedPaths::Register(loader);
 	ST_Snap_GEOS::Register(loader);

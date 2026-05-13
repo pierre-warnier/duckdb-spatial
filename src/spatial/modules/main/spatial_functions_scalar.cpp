@@ -7,6 +7,7 @@
 #include "spatial/util/binary_reader.hpp"
 #include "spatial/util/function_builder.hpp"
 #include "spatial/util/math.hpp"
+#include "spatial/util/knn_extract.hpp"
 
 // DuckDB
 #include "duckdb/common/constants.hpp"
