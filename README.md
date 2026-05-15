@@ -1,84 +1,119 @@
-# DuckDB Spatial Extension
+# DuckDB Spatial Extension (Enhanced Fork)
 
-🚧 WORK IN PROGRESS 🚧
+This fork of [duckdb/duckdb-spatial](https://github.com/duckdb/duckdb-spatial) extends the DuckDB spatial extension with **87 additional functions**, a **native KNN spatial join operator**, **DBSCAN/K-means clustering**, and significant **performance optimizations** to the spatial join pipeline. The goal is PostGIS parity and SedonaDB-competitive performance within DuckDB's analytical engine.
+
+**241 spatial functions** (vs. 158 upstream) | **156 tests / 2133 assertions** | Synced with upstream v1.5-variegata
 
 **Table of contents**
-- [DuckDB Spatial Extension](#duckdb-spatial-extension)
+- [What's new in this fork](#whats-new-in-this-fork)
 - [What is this?](#what-is-this)
 - [How do I get it?](#how-do-i-get-it)
-  - [Through the DuckDB CLI](#through-the-duckdb-cli)
-  - [Development builds](#development-builds)
-  - [Building from source](#building-from-source)
 - [Example Usage](#example-usage)
 - [Supported Functions](#supported-functions-and-documentation)
 - [Internals and Technical Details](#internals-and-technical-details)
-- [Limitations and Roadmap](#limitations-and-roadmap)
+
+# What's new in this fork
+
+## KNN Spatial Join
+
+Native k-nearest-neighbor spatial join via `ST_KNN`, using Hjaltason-Samet priority-queue traversal over a FlatRTree. Includes over-fetch with exact distance refinement, haversine spheroidal distance, LEFT JOIN support, and spill-to-disk for larger-than-memory build sides.
+
+```sql
+-- Find 5 nearest hydrants for each building
+SELECT b.id, h.id, ST_Distance(b.geom, h.geom) AS dist
+FROM buildings b
+JOIN hydrants h ON ST_KNN(b.geom, h.geom, 5);
+```
+
+## Spatial Clustering
+
+PostGIS-compatible window functions for density-based and partition-based clustering.
+
+```sql
+-- DBSCAN: find clusters with eps=100m, minpoints=5
+SELECT *, ST_ClusterDBSCAN(geom, 100.0, 5) OVER (ORDER BY id) AS cluster_id
+FROM retail_points;
+
+-- K-means: partition into 10 clusters
+SELECT *, ST_ClusterKMeans(geom, 10) OVER (ORDER BY id) AS cluster_id
+FROM sensor_locations;
+```
+
+Also includes `ST_ClusterIntersecting` and `ST_ClusterWithin` aggregate functions.
+
+## Performance
+
+- **Spatial join pipeline**: envelope pre-check before R-tree descent, BFS-to-DFS traversal (better cache locality), Hilbert sort permutation for sequential row access (~1.7x measured), batch bbox extraction
+- **R-tree STR bulk loading**: full Sort-Tile-Recursive packing for the persistent R-tree index, improving query-time fan-out
+- **Hot-path cleanups**: `pow(x,2)` replaced with `x*x` across all distance kernels, `std::sort` replaces hand-rolled quicksort in FlatRTree
+- **Robust predicates**: Shewchuk adaptive-precision `orient2d` replaces the fast-but-wrong `orient2d_fast`, eliminating false positives in point-in-polygon and intersection tests near collinear edges
+- **Native ST_Intersects**: GEOMETRY-to-GEOMETRY intersection without GEOS fallback for the common bbox-miss and point-in-polygon cases
+
+## 87 New Functions (PostGIS parity)
+
+| Category | Functions |
+|---|---|
+| **Serialization** (12) | `ST_AsEWKB`, `ST_AsEWKT`, `ST_AsTWKB`, `ST_GeomFromEWKB`, `ST_GeomFromEWKT`, `ST_GeomFromTWKB`, `ST_AsEncodedPolyline`, `ST_LineFromEncodedPolyline`, `ST_GeoHash`, `ST_GeomFromGeoHash`, `ST_Box2dFromGeoHash`, `ST_AsLatLonText` |
+| **GEOS Construction** (16) | `ST_ClipByBox2D`, `ST_DelaunayTriangles`, `ST_GeometricMedian`, `ST_LargestEmptyCircle`, `ST_MinimumBoundingCircle`, `ST_MinimumClearance`, `ST_MinimumClearanceLine`, `ST_OffsetCurve`, `ST_SharedPaths`, `ST_SimplifyPolygonHull`, `ST_Snap`, `ST_Split`, `ST_Subdivide`, `ST_TriangulatePolygon`, `ST_UnaryUnion`, `ST_CoverageClean` |
+| **Geometry Editing** (15) | `ST_AddPoint`, `ST_SetPoint`, `ST_RemovePoint`, `ST_ChaikinSmoothing`, `ST_ForceCollection`, `ST_QuantizeCoordinates`, `ST_Scroll`, `ST_Segmentize`, `ST_SetSRID`, `ST_ShiftLongitude`, `ST_SimplifyVW`, `ST_SwapOrdinates`, `ST_ForcePolygonCCW`, `ST_ForcePolygonCW`, `ST_SnapToGrid` |
+| **Accessors** (12) | `ST_BoundingDiagonal`, `ST_GeometryN`, `ST_InteriorRingN`, `ST_IsCollection`, `ST_IsPolygonCCW`, `ST_IsPolygonCW`, `ST_IsValidDetail`, `ST_IsValidReason`, `ST_MemSize`, `ST_NRings`, `ST_SRID`, `ST_Summary` |
+| **3D / Measure** (8) | `ST_3DDistance`, `ST_3DLength`, `ST_3DLineInterpolatePoint`, `ST_3DPerimeter`, `ST_AddMeasure`, `ST_CoordDim`, `ST_NDims`, `ST_SwapOrdinates` |
+| **Distance / Proximity** (6) | `ST_Angle`, `ST_ClosestPoint`, `ST_FrechetDistance`, `ST_HausdorffDistance`, `ST_LongestLine`, `ST_MaxDistance` |
+| **Clustering** (4) | `ST_ClusterDBSCAN`, `ST_ClusterIntersecting`, `ST_ClusterKMeans`, `ST_ClusterWithin` |
+| **Predicates** (4) | `ST_DFullyWithin`, `ST_OrderingEquals`, `ST_Relate`, `ST_RelateMatch` |
+| **Decomposition** (3) | `ST_DumpPoints`, `ST_DumpRings`, `ST_DumpSegments` |
+| **Constructors** (2) | `ST_LineFromMultiPoint`, `ST_Polygon` |
+| **Grids** (2) | `ST_HexagonGrid`, `ST_SquareGrid` |
+| **Geodesic** (2) | `ST_Project`, `ST_Expand` |
+| **Join** (1) | `ST_KNN` |
+
+## Backward Compatibility
+
+Databases written by duckdb-spatial before DuckDB v1.5 (when GEOMETRY was a BLOB alias) are automatically readable. The extension registers an implicit cast that walks the legacy binary format and reserializes to the native GEOMETRY layout.
+
+## Correctness Fixes
+
+- GEOS deserialization alignment fix (double-aligned buffers for `GEOSCoordSeq_copyFromBuffer_r`)
+- `ST_ForceCollection` deep copy for nested multi-part geometries
+- `ST_3DDistance` / `ST_DFullyWithin` restricted to POINT inputs (vertex-only computation is incorrect for lines/polygons)
+- `ST_Intersects` fallback uses exact distance instead of bbox-only heuristic
+- `robust::init()` thread safety via `std::call_once`
+- Spatial join dirty validity mask fix (cherry-picked from upstream #812)
+
+---
 
 # What is this?
-This is a prototype of a geospatial extension for DuckDB that adds support for working with spatial data and functions in the form of a `GEOMETRY` type based on the "Simple Features" geometry model, as well as non-standard specialized columnar DuckDB native geometry types that provide better compression and faster execution in exchange for flexibility.
 
-Please note that this extension is still in a very early stage of development, and the internal storage format for the geometry types may change indiscriminately between commits. We are actively working on it, and we welcome both contributions and feedback. Please see the [function table](docs/functions.md) or the [roadmap entries](https://github.com/duckdblabs/duckdb_spatial/labels/roadmap) for the current implementation status.
+This is a geospatial extension for DuckDB that adds support for working with spatial data and functions in the form of a `GEOMETRY` type based on the "Simple Features" geometry model, as well as non-standard specialized columnar DuckDB native geometry types that provide better compression and faster execution in exchange for flexibility.
 
-If you or your organization have any interest in sponsoring development of this extension, or have any particular use cases you'd like to see prioritized or supported, please consider [sponsoring the DuckDB foundation](https://duckdb.org/foundation/) or [contacting DuckDB Labs](https://duckdblabs.com) for commercial support.
+See the [function table](docs/functions.md) for the current implementation status.
 
 # How do I get it?
 
-## Through the DuckDB CLI
-You can install the extension for DuckDB through the DuckDB CLI like you would do for other first party extensions. Simply execute: ```INSTALL spatial; LOAD spatial```!
-
-## Development builds
-You can also grab the lastest builds directly from the CI runs or the release page here on GitHub and install manually.
-
-Once you have downloaded the extension for your platform, you need to:
-- Unzip the archive
-- Start duckdb with the `-unsigned` flag to allow loading unsigned extensions. (This won't be neccessary in the future)
-- Run `INSTALL 'absolute/or/relative/path/to/the/unzipped/extension';`
-- The extension is now installed, you can now load it with `LOAD spatial;` whenever you want to use it.
-
-You can also build the extension yourself following the instructions below.
-
 ## Building from source
-This extension is based on the [DuckDB extension template](https://github.com/duckdb/extension-template).
-
-**Dependencies**
-
-You need a recent version of CMake (3.20) and a C++11 compatible compiler.
-You also need OpenSSL on your system. On ubuntu you can install it with `sudo apt install libssl-dev`, on macOS you can install it with `brew install openssl`. Note that brew installs openssl in a non-standard location, so you may need to set a `OPENSSL_ROOT_DIR=$(brew --prefix openssl)` environment variable when building.
-
-We bundle all the other required dependencies in the `third_party` directory, which should be automatically built and statically linked into the extension. This may take some time the first time you build, but subsequent builds should be much faster.
-
-We also highly recommend that you install [Ninja](https://ninja-build.org) which you can select when building by setting the `GEN=ninja` environment variable.
 
 ```bash
-git clone --recurse-submodules https://github.com/duckdb/duckdb-spatial
+git clone --recurse-submodules https://github.com/pierre-warnier/duckdb-spatial
 cd duckdb-spatial
-make debug
+GEN=ninja make release
 ```
 
 You can then invoke the built DuckDB (with the extension statically linked):
 
 ```bash
-./build/debug/duckdb
+./build/release/duckdb
 ```
 
-Please see the Makefile for more options, or the extension template documentation for more details.
+**Dependencies**: CMake 3.20+, a C++17 compiler, OpenSSL (`sudo apt install libssl-dev` on Ubuntu), and [Ninja](https://ninja-build.org) (recommended). All other dependencies are bundled.
 
 # Example Usage
 
-Please see the [example](docs/example.md) for an example on how to use the extension.
+See the [example](docs/example.md) for basic usage.
 
 # Supported Functions and Documentation
 
-The full list of functions and their documentation is available in the [function reference](docs/functions.md)
-
-# Limitations and Roadmap
-
-The main limitations of this extension currently are:
-- No support for spherical geometry (e.g. lat/lon coordinates)
-- No support for spatial indexing
-
-These are all things that we want to address eventually, have a look at the open issues and [roadmap entries](https://github.com/duckdblabs/duckdb_spatial/labels/roadmap) for more details. Please feel free to also open an issue if you have a specific use case that you would like to see supported.
+The full list of functions and their documentation is available in the [function reference](docs/functions.md).
 
 # Internals and Technical Details
 
-Please see the [internals documentation](docs/internals.md) for more details on the internal workings of the extension.
+See the [internals documentation](docs/internals.md) for details on the internal workings of the extension.
