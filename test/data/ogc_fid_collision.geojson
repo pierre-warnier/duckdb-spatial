@@ -1,0 +1,20 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "ogc_fid": 100, "name": "Brussels" },
+      "geometry": { "type": "Point", "coordinates": [4.3517, 50.8503] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "ogc_fid": 200, "name": "Antwerp" },
+      "geometry": { "type": "Point", "coordinates": [4.4025, 51.2194] }
+    },
+    {
+      "type": "Feature",
+      "properties": { "ogc_fid": 300, "name": "Ghent" },
+      "geometry": { "type": "Point", "coordinates": [3.7174, 51.0543] }
+    }
+  ]
+}

@@ -646,13 +646,17 @@ auto Bind(ClientContext &ctx, TableFunctionBindInput &input, vector<LogicalType>
 		// Get the layer geometry type if available
 		result->layer_type = OGR_L_GetGeomType(layer);
 
-		// Only suppress the FID if the layer already exposes it as a regular attribute field
+		// Suppress the auto-FID column when it would collide with a regular attribute.
+		// Some drivers (e.g. GeoJSON) return "" from GetFIDColumn but still synthesize
+		// an "ogc_fid" column — check for that name explicitly as a fallback.
 		const auto fid_col = OGR_L_GetFIDColumn(layer);
+		const auto layer_defn = OGR_L_GetLayerDefn(layer);
 		if (fid_col && strcmp(fid_col, "") != 0) {
-			const auto layer_defn = OGR_L_GetLayerDefn(layer);
 			if (OGR_FD_GetFieldIndex(layer_defn, fid_col) >= 0) {
 				result->layer_options.AddString("INCLUDE_FID=NO");
 			}
+		} else if (OGR_FD_GetFieldIndex(layer_defn, "ogc_fid") >= 0) {
+			result->layer_options.AddString("INCLUDE_FID=NO");
 		}
 
 		const auto geom_col_name = OGR_L_GetGeometryColumn(layer);

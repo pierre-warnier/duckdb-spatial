@@ -1,0 +1,18 @@
+require spatial
+
+# GeoJSON files with an "ogc_fid" property collide with GDAL's auto-generated
+# FID column, causing "duplicate column name" at bind time.
+# The fix suppresses the auto-FID when the layer already has a field named ogc_fid.
+
+query III
+SELECT ogc_fid, name, ST_AsText(geom) FROM ST_Read('__WORKING_DIRECTORY__/test/data/ogc_fid_collision.geojson') ORDER BY ogc_fid;
+----
+100	Brussels	POINT (4.3517 50.8503)
+200	Antwerp	POINT (4.4025 51.2194)
+300	Ghent	POINT (3.7174 51.0543)
+
+# Verify ogc_fid values come from the property, not the synthetic FID (which would be 0,1,2)
+query I
+SELECT MIN(ogc_fid) FROM ST_Read('__WORKING_DIRECTORY__/test/data/ogc_fid_collision.geojson');
+----
+100
