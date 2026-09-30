@@ -1203,6 +1203,7 @@ st_aswkb(ST_GeomFromWKB(X'01010000000000000000000000000000000000000000000000000'
 ```sql
 DOUBLE ST_Azimuth (origin GEOMETRY, target GEOMETRY)
 DOUBLE ST_Azimuth (origin POINT_2D, target POINT_2D)
+DOUBLE ST_Azimuth (origin GEOGRAPHY, target GEOGRAPHY)
 ```
 
 #### Description

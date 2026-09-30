@@ -150,6 +150,12 @@ bool GeographyToBlobCast(Vector &source, Vector &result, idx_t count, CastParame
 	return true;
 }
 
+bool NullToGeographyCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
+	result.SetVectorType(VectorType::CONSTANT_VECTOR);
+	ConstantVector::SetNull(result, true);
+	return true;
+}
+
 bool GeographyToVarcharCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
 	UnaryExecutor::Execute<string_t, string_t>(source, result, count,
 	                                           [&](const string_t &blob) { return Geometry::ToString(result, blob); });
@@ -463,6 +469,46 @@ struct ST_Intersects {
 // Constructions
 //======================================================================================================================
 
+struct ST_Azimuth {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		BinaryExecutor::ExecuteWithNulls<string_t, string_t, double>(
+		    args.data[0], args.data[1], result, args.size(),
+		    [&](const string_t &lhs_blob, const string_t &rhs_blob, ValidityMask &mask, idx_t row_idx) {
+			    GeographyOps::Point lhs;
+			    GeographyOps::Point rhs;
+			    if (!lstate.TryGetPoint(lhs_blob, lhs) || !lstate.TryGetPoint(rhs_blob, rhs)) {
+				    throw InvalidInputException("ST_Azimuth only accepts non-empty POINT geographies");
+			    }
+			    if (lhs.lon == rhs.lon && lhs.lat == rhs.lat) {
+				    mask.SetInvalid(row_idx);
+				    return 0.0;
+			    }
+			    return lstate.ops.Azimuth(lhs, rhs) * DEG;
+		    });
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_Azimuth", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("origin", GeographyType::Get());
+				variant.AddParameter("target", GeographyType::Get());
+				variant.SetReturnType(LogicalType::DOUBLE);
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute);
+				variant.CanThrowErrors();
+				variant.SetDescription("Returns the azimuth in radians, clockwise from north, of the geodesic from "
+				                       "the origin point to the target point at the origin, on the WGS84 ellipsoid. "
+				                       "Returns NULL if the two points are identical.");
+				variant.SetExample(
+				    "SELECT degrees(ST_Azimuth(ST_GeogPoint(4.3517, 50.8503), ST_GeogPoint(4.4025, 51.2194)));");
+			});
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "property");
+		});
+	}
+};
+
 struct ST_Project {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
@@ -657,6 +703,12 @@ void RegisterGeographyModule(ExtensionLoader &loader) {
 	                            BoundCastInfo(BlobToGeographyCast, nullptr, LocalState::InitCast));
 	loader.RegisterCastFunction(geography_type, LogicalType::BLOB, GeographyToBlobCast);
 
+	// Untyped NULLs and string literals cast to every type at the same cost. The geography functions share their
+	// names with geometry functions, so make GEOGRAPHY the more expensive target to keep those calls unambiguous
+	loader.RegisterCastFunction(LogicalType::SQLNULL, geography_type, BoundCastInfo(NullToGeographyCast), 190);
+	loader.RegisterCastFunction(LogicalType(LogicalTypeId::STRING_LITERAL), geography_type,
+	                            BoundCastInfo(VarcharToGeographyCast, nullptr, LocalState::InitCast), 90);
+
 	ST_GeogFromText::Register(loader);
 	ST_GeogFromWKB::Register(loader);
 	ST_GeogPoint::Register(loader);
@@ -666,6 +718,7 @@ void RegisterGeographyModule(ExtensionLoader &loader) {
 	ST_Distance::Register(loader);
 	ST_DWithin::Register(loader);
 	ST_Intersects::Register(loader);
+	ST_Azimuth::Register(loader);
 	ST_Project::Register(loader);
 	ST_Segmentize::Register(loader);
 #if SPATIAL_USE_GEOS

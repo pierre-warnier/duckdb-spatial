@@ -2,7 +2,7 @@
 
 This fork of [duckdb/duckdb-spatial](https://github.com/duckdb/duckdb-spatial) extends the DuckDB spatial extension with **197 additional functions**, a **native KNN spatial join operator**, a **GEOGRAPHY type**, a **RASTER type**, **PostGIS-style topologies**, **DBSCAN/K-means clustering**, and significant **performance optimizations** to the spatial join pipeline. The goal is PostGIS parity and SedonaDB-competitive performance within DuckDB's analytical engine.
 
-**362 documented functions** (vs. 165 upstream) | **212 tests / 8309 assertions** | Synced with upstream v1.5-variegata
+**362 documented functions** (vs. 165 upstream) | **212 tests / 8323 assertions** | Synced with upstream v1.5-variegata
 
 **Table of contents**
 - [What's new in this fork](#whats-new-in-this-fork)
@@ -43,9 +43,9 @@ SELECT ST_Buffer(geog, 500), ST_DWithin(geog, ST_GeogPoint(4.3517, 50.8503), 100
 ```
 
 - Constructors: `ST_GeogPoint(lon, lat)`, `ST_GeogFromText` / `ST_GeogFromWKT`, `ST_GeogFromWKB`, and explicit casts from `VARCHAR` and `GEOMETRY`. Coordinates are always longitude then latitude, whatever `geometry_always_xy` says, and out-of-range values are rejected. A geometry that carries a CRS has to drop it first (`geom::GEOMETRY::GEOGRAPHY`): nothing is reprojected.
-- Geodesic overloads: `ST_Area`, `ST_Length`, `ST_Perimeter`, `ST_Distance`, `ST_DWithin`, `ST_Intersects`, `ST_Buffer`, `ST_Project`, `ST_Segmentize`, `ST_AsText`, `ST_AsWKB`. Distances between edges are computed on the ellipsoid itself (checked against an independent implementation to a few nanometers), handle polygons around a pole or across the date line, and cost the product of the vertex counts in the worst case. `ST_Buffer` works in an azimuthal equidistant projection centered on the geography, so its accuracy decreases for geographies spanning hundreds of kilometers.
+- Geodesic overloads: `ST_Area`, `ST_Length`, `ST_Perimeter`, `ST_Distance`, `ST_DWithin`, `ST_Intersects`, `ST_Buffer`, `ST_Azimuth`, `ST_Project`, `ST_Segmentize`, `ST_AsText`, `ST_AsWKB`. Distances between edges are computed on the ellipsoid itself (checked against an independent implementation to a few nanometers), handle polygons around a pole or across the date line, and cost the product of the vertex counts in the worst case. `ST_Buffer` works in an azimuthal equidistant projection centered on the geography, so its accuracy decreases for geographies spanning hundreds of kilometers.
 - There is deliberately no implicit cast to `GEOMETRY`: the planar functions do not silently apply to geographies. Cast explicitly (`geog::GEOMETRY`) to use them.
-- Since `ST_Buffer`, `ST_DWithin`, `ST_Project` and `ST_Segmentize` now have two overloads, a bare string literal or `NULL` argument has to be cast (`'POINT(0 0)'::GEOMETRY`), as was already the case for most other functions.
+- An untyped string literal or `NULL` still resolves to the `GEOMETRY` overload of these functions, so existing calls bind as before; next to a geography argument, a string literal is read as a geography.
 - Joins on geography predicates run as regular joins, and R-tree indexes cannot be created on geography columns.
 - A geography is stored as WKB under its own type name, so the column keeps its type in databases of any storage version. Other formats see a plain `BLOB`: cast to `GEOMETRY` before exporting to GeoParquet or through GDAL, and cast the WKB back with `::GEOGRAPHY` when reading.
 

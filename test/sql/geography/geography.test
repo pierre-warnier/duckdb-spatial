@@ -356,3 +356,43 @@ query T
 SELECT ST_Transform(ST_Point(650000, 667000)::GEOMETRY('EPSG:3812'), 'OGC:CRS84')::GEOMETRY::GEOGRAPHY IS NOT NULL;
 ----
 true
+
+# Untyped string literals and NULLs still resolve to the GEOMETRY overloads
+query III
+SELECT typeof(ST_Buffer('POINT(0 0)', 1)), ST_DWithin('POINT(0 0)', 'POINT(1 1)', 2), typeof(ST_Segmentize('LINESTRING(0 0, 1 1)', 0.5));
+----
+GEOMETRY	true	GEOMETRY
+
+query III
+SELECT ST_Buffer(NULL, 1), ST_DWithin(NULL, NULL, 2), ST_Azimuth(NULL, NULL);
+----
+NULL	NULL	NULL
+
+# A literal next to a geography is read as a geography
+query II
+SELECT ST_Distance(ST_GeogPoint(0, 0), 'POINT(0 0)'), ST_DWithin(ST_GeogPoint(0, 0), 'POINT(0 1)', 120000);
+----
+0.0	true
+
+statement error
+SELECT ST_Distance(ST_GeogPoint(0, 0), 'POINT(500 0)');
+----
+GEOGRAPHY coordinates must be (longitude, latitude) in degrees
+
+# Azimuth of a geodesic, clockwise from north
+query III
+SELECT abs(degrees(ST_Azimuth(ST_GeogPoint(0, 0), ST_GeogPoint(1, 0))) - 90) < 1e-9,
+       abs(degrees(ST_Azimuth(ST_GeogPoint(0, 0), ST_GeogPoint(0, -1))) - 180) < 1e-9,
+       ST_Azimuth(ST_GeogPoint(3, 4), ST_GeogPoint(3, 4));
+----
+true	true	NULL
+
+query I
+SELECT abs(ST_Distance(ST_Project(ST_GeogPoint(4.3517, 50.8503), 41216.30710988012, ST_Azimuth(ST_GeogPoint(4.3517, 50.8503), ST_GeogPoint(4.4025, 51.2194))), ST_GeogPoint(4.4025, 51.2194))) < 1e-6;
+----
+true
+
+statement error
+SELECT ST_Azimuth('LINESTRING(0 0, 1 1)'::GEOGRAPHY, ST_GeogPoint(0, 0));
+----
+ST_Azimuth only accepts non-empty POINT geographies

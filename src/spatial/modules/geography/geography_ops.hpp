@@ -30,6 +30,8 @@ public:
 	bool IsWithinDistance(const sgl::geometry &lhs, const sgl::geometry &rhs, double limit);
 
 	double Distance(const Point &lhs, const Point &rhs) const;
+	//! Azimuth in degrees, clockwise from north, of the geodesic from lhs to rhs at lhs
+	double Azimuth(const Point &lhs, const Point &rhs) const;
 	Point Project(const Point &origin, double distance, double azimuth) const;
 
 	//! Returns false if the geometry has no vertices

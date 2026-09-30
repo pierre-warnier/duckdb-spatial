@@ -85,6 +85,12 @@ double GeographyOps::Distance(const Point &lhs, const Point &rhs) const {
 	return distance;
 }
 
+double GeographyOps::Azimuth(const Point &lhs, const Point &rhs) const {
+	double azimuth = 0;
+	geod_inverse(&geod, lhs.lat, lhs.lon, rhs.lat, rhs.lon, nullptr, &azimuth, nullptr);
+	return azimuth < 0 ? azimuth + 360.0 : azimuth;
+}
+
 GeographyOps::Point GeographyOps::Project(const Point &origin, double distance, double azimuth) const {
 	Point result;
 	geod_direct(&geod, origin.lat, origin.lon, azimuth, distance, &result.lat, &result.lon, nullptr);
