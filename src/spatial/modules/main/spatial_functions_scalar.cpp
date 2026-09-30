@@ -17,6 +17,8 @@
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/common/vector_operations/septenary_executor.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
+#include "duckdb/common/serializer/serializer.hpp"
+#include "duckdb/common/serializer/deserializer.hpp"
 
 #include "spatial/util/distance_extract.hpp"
 #include "spatial/spatial_settings.hpp"
@@ -2083,7 +2085,7 @@ struct ST_Contains {
 						// return Contains::ON_EDGE;
 						contains = false;
 						break;
-					} else if (side == Side::LEFT && (y1 < y && y <= y2)) {
+					} else if (side == Side::LEFT && (y1 <= y && y < y2)) {
 						winding_number++;
 					} else if (side == Side::RIGHT && (y2 <= y && y < y1)) {
 						winding_number--;
@@ -2644,19 +2646,33 @@ struct ST_DistanceWithin {
 	//------------------------------------------------------------------------------------------------------------------
 	class BindData final : public FunctionData {
 	public:
-		double distance;
+		double distance = 0.0;
 		bool is_constant = false;
 
-		explicit BindData(double distance) : distance(distance), is_constant(true) {
+		explicit BindData(double distance, bool is_constant) : distance(distance), is_constant(is_constant) {
 		}
 
 		unique_ptr<FunctionData> Copy() const override {
-			return make_uniq<BindData>(distance);
+			return make_uniq<BindData>(distance, is_constant);
 		}
 
 		bool Equals(const FunctionData &other) const override {
 			auto &other_data = other.Cast<BindData>();
 			return is_constant == other_data.is_constant && distance == other_data.distance;
+		}
+
+		static void Serialize(Serializer &serializer, const optional_ptr<FunctionData> bind_data_p,
+		                      const ScalarFunction &function) {
+
+			const auto &bind_data = bind_data_p->Cast<BindData>();
+			serializer.WritePropertyWithDefault<bool>(100, "is_constant", bind_data.is_constant);
+			serializer.WritePropertyWithDefault(101, "distance", bind_data.distance);
+		}
+
+		static unique_ptr<FunctionData> Deserialize(Deserializer &deserializer, ScalarFunction &function) {
+			auto is_constant = deserializer.ReadPropertyWithDefault<bool>(100, "is_constant");
+			auto distance = deserializer.ReadPropertyWithDefault<double>(101, "distance");
+			return make_uniq<BindData>(distance, is_constant);
 		}
 	};
 
@@ -2670,10 +2686,10 @@ struct ST_DistanceWithin {
 
 			// Erase argument
 			Function::EraseArgument(bound_function, arguments, 2);
-			return make_uniq<BindData>(dist_value);
+			return make_uniq<BindData>(dist_value, true);
 		}
 
-		return nullptr;
+		return make_uniq<BindData>(0.0, false);
 	}
 
 	//------------------------------------------------------------------------------------------------------------------
@@ -2788,6 +2804,8 @@ struct ST_DistanceWithin {
 				variant.SetInit(LocalState::Init);
 				variant.SetFunction(Execute);
 				variant.SetBind(GeoTypes::PropagateCRS<Bind>);
+				variant.SetSerialize(BindData::Serialize);
+				variant.SetDeserialize(BindData::Deserialize);
 			});
 
 			func.SetDescription(R"(

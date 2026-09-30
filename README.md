@@ -2,7 +2,7 @@
 
 This fork of [duckdb/duckdb-spatial](https://github.com/duckdb/duckdb-spatial) extends the DuckDB spatial extension with **87 additional functions**, a **native KNN spatial join operator**, **DBSCAN/K-means clustering**, and significant **performance optimizations** to the spatial join pipeline. The goal is PostGIS parity and SedonaDB-competitive performance within DuckDB's analytical engine.
 
-**241 spatial functions** (vs. 158 upstream) | **156 tests / 2133 assertions** | Synced with upstream v1.5-variegata
+**241 spatial functions** (vs. 158 upstream) | **180 tests / 2490 assertions** | Synced with upstream v1.5-variegata
 
 **Table of contents**
 - [What's new in this fork](#whats-new-in-this-fork)

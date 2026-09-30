@@ -114,22 +114,13 @@ public:
 	FlatRTree(Allocator &alloc, uint32_t item_count_p, uint32_t node_size_p)
 	    : item_count(item_count_p), node_size(node_size_p) {
 
-		uint32_t count = item_count;
-		uint32_t nodes = item_count;
-
-		layer_bounds.push_back(nodes);
+		ComputeLayerBounds();
 
 		if (item_count_p == 0) {
 			return;
 		}
 
-		do {
-			count = (count + node_size - 1) / node_size;
-			nodes += count;
-			layer_bounds.push_back(nodes);
-		} while (count > 1);
-
-		total_nodes = nodes;
+		const auto nodes = layer_bounds.back();
 
 		box_array_mem = alloc.Allocate(sizeof(Box) * nodes);
 		idx_array_mem = alloc.Allocate(sizeof(uint32_t) * nodes);
@@ -148,8 +139,9 @@ public:
 		}
 	}
 
-	// Returns the bounding box of the entire R-tree.
-	const Box &GetBounds() const {
+	// The bounding box covering all items in the tree (for DWithin joins this is already expanded by
+	// the constant distance, since the per-item boxes are expanded before being pushed)
+	const Box &Bounds() const {
 		return tree_box;
 	}
 
@@ -200,7 +192,18 @@ public:
 	}
 
 	void Build() {
-		D_ASSERT(item_count == current_position);
+		D_ASSERT(current_position <= item_count);
+
+		if (current_position < item_count) {
+			// Fewer items were pushed than the tree was sized for, shrink to what was actually pushed.
+			item_count = current_position;
+			ComputeLayerBounds();
+		}
+
+		if (item_count == 0) {
+			// Nothing was pushed, there is nothing to build, and scans are guarded by Count() == 0.
+			return;
+		}
 
 		if (item_count <= node_size) {
 			box_array[current_position++] = tree_box;
@@ -266,7 +269,9 @@ public:
 			state.search_queue.pop();
 		}
 		state.search_box = box;
-		state.entry_beg = box_array.size() - 1;
+		// The root node is the last entry of the top layer.
+		// Note that this may be less than box_array.size() - 1 when Build() shrank the tree below its allocated size.
+		state.entry_beg = layer_bounds.back() - 1;
 		state.entry_pos = state.entry_beg;
 
 		state.exhausted = false;
@@ -356,7 +361,7 @@ private:
 			return;
 		}
 
-		auto root_idx = static_cast<uint32_t>(boxes.size() - 1);
+		auto root_idx = layer_bounds.back() - 1;
 		float root_dist = query.MinDistanceSquared(boxes[root_idx]);
 		state.pq.push({root_dist, root_idx, false, nullptr});
 
@@ -386,6 +391,22 @@ private:
 	}
 
 private:
+	//! (Re)compute the cumulative per-layer node counts for the current item_count
+	void ComputeLayerBounds() {
+		layer_bounds.clear();
+		uint32_t count = item_count;
+		uint32_t nodes = item_count;
+		layer_bounds.push_back(nodes);
+		if (item_count == 0) {
+			return;
+		}
+		do {
+			count = (count + node_size - 1) / node_size;
+			nodes += count;
+			layer_bounds.push_back(nodes);
+		} while (count > 1);
+	}
+
 	vector<uint32_t> layer_bounds;
 
 	AllocatedData box_array_mem;
@@ -404,7 +425,6 @@ private:
 	Box tree_box;
 
 	uint32_t item_count = 0;
-	uint32_t total_nodes = 0;
 	uint32_t node_size = 0;
 	uint32_t current_position = 0;
 };

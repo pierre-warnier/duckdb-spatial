@@ -16,7 +16,7 @@ query I
 SELECT ST_NGeometries(ST_Subdivide(
     ST_GeomFromText('POLYGON((0 0, 5 0, 10 0, 10 5, 10 10, 5 10, 0 10, 0 5, 0 0))'), 5));
 ----
-2
+4
 
 # ST_Subdivide - each part has valid geometry
 query I
@@ -25,12 +25,12 @@ SELECT ST_IsValid(ST_Subdivide(
 ----
 true
 
-# ST_Subdivide - min vertices clamped to 5
-query I
+# ST_Subdivide - max_vertices below 5 is rejected
+statement error
 SELECT ST_NGeometries(ST_Subdivide(
     ST_GeomFromText('POLYGON((0 0, 5 0, 10 0, 10 5, 10 10, 5 10, 0 10, 0 5, 0 0))'), 2)) >= 1;
 ----
-true
+max_vertices needs to be larger or equal to 5
 
 # ST_Split - polygon by vertical line produces 2 parts
 query I

@@ -14,6 +14,11 @@
 #include "duckdb/planner/expression/bound_operator_expression.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/planner/expression/bound_conjunction_expression.hpp"
+#include "duckdb/planner/expression/bound_constant_expression.hpp"
+#include "duckdb/planner/table_filter.hpp"
+#include "duckdb/planner/filter/expression_filter.hpp"
+#include "duckdb/planner/filter/optional_filter.hpp"
+#include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
 
 namespace duckdb {
@@ -38,6 +43,50 @@ static unique_ptr<Expression> GetBBOXExpression(ClientContext &context, const Lo
 	return std::move(bbox_expr);
 }
 
+// Build a constant GEOMETRY value (a rectangular polygon) covering the given box by constant-folding ST_MakeEnvelope.
+// Used to construct the bounding-box filter pushed into the probe side.
+static Value MakeEnvelopeValue(ClientContext &context, const Box2D<float> &box) {
+	auto &catalog = Catalog::GetSystemCatalog(context);
+	auto &entry = catalog.GetEntry<ScalarFunctionCatalogEntry>(context, DEFAULT_SCHEMA, "ST_MakeEnvelope");
+	auto func = entry.functions.GetFunctionByArguments(
+	    context, {LogicalType::DOUBLE, LogicalType::DOUBLE, LogicalType::DOUBLE, LogicalType::DOUBLE});
+
+	vector<unique_ptr<Expression>> children;
+	children.push_back(make_uniq<BoundConstantExpression>(Value::DOUBLE(box.min.x)));
+	children.push_back(make_uniq<BoundConstantExpression>(Value::DOUBLE(box.min.y)));
+	children.push_back(make_uniq<BoundConstantExpression>(Value::DOUBLE(box.max.x)));
+	children.push_back(make_uniq<BoundConstantExpression>(Value::DOUBLE(box.max.y)));
+
+	auto envelope_expr =
+	    make_uniq<BoundFunctionExpression>(LogicalType::GEOMETRY(), func, std::move(children), nullptr);
+
+	return ExpressionExecutor::EvaluateScalar(context, *envelope_expr);
+}
+
+// Build an `ST_Intersects_Extent(<column>, <const envelope>)` expression filter for the build-side bounding box.
+// The column is referenced as BoundReference index 0
+// - (the convention for expression filters, which are evaluated against the single filtered column).
+static unique_ptr<TableFilter> MakeBoundingBoxFilter(ClientContext &context, const Value &envelope,
+                                                     const LogicalType &column_type) {
+	auto &catalog = Catalog::GetSystemCatalog(context);
+	auto &entry = catalog.GetEntry<ScalarFunctionCatalogEntry>(context, DEFAULT_SCHEMA, "ST_Intersects_Extent");
+	auto func = entry.functions.GetFunctionByArguments(context, {LogicalType::GEOMETRY(), LogicalType::GEOMETRY()});
+
+	// The column reference must carry the column's exact type (e.g. GEOMETRY with a CRS)
+	vector<unique_ptr<Expression>> children;
+	children.push_back(make_uniq<BoundReferenceExpression>(column_type, 0));
+	children.push_back(make_uniq<BoundConstantExpression>(envelope));
+
+	auto predicate = make_uniq<BoundFunctionExpression>(LogicalType::BOOLEAN, func, std::move(children), nullptr);
+
+	// The filter is redundant with the join itself (every probe row is checked exactly against the R-tree),
+	// so wrap it as optional, mirroring what the hash join does with its pushed min/max filters.
+	// This makes the filter still participate in stats pruning and can feed a deferred R-tree scan its bounds,
+	// but it skips the per-row evaluation, which would deserialize geometries per probe row just to pre-check a bbox.
+	// (which the r-tree in the spatial join already does)
+	return make_uniq<OptionalFilter>(make_uniq<ExpressionFilter>(std::move(predicate)));
+}
+
 //======================================================================================================================
 // Physical Spatial Join Operator
 //======================================================================================================================
@@ -45,12 +94,19 @@ static unique_ptr<Expression> GetBBOXExpression(ClientContext &context, const Lo
 PhysicalSpatialJoin::PhysicalSpatialJoin(PhysicalPlan &physical_plan, LogicalOperator &op, PhysicalOperator &left,
                                          PhysicalOperator &right, unique_ptr<Expression> condition_p,
                                          JoinType join_type, idx_t estimated_cardinality, bool has_const_distance,
-                                         double const_distance)
+                                         double const_distance,
+                                         vector<SpatialJoinPushdownTarget> filter_pushdown_targets)
     : PhysicalJoin(physical_plan, op, PhysicalOperatorType::EXTENSION, join_type, estimated_cardinality),
-      condition(std::move(condition_p)), has_const_distance(has_const_distance), const_distance(const_distance) {
+      condition(std::move(condition_p)), has_const_distance(has_const_distance), const_distance(const_distance),
+      filter_pushdown_targets(std::move(filter_pushdown_targets)) {
 
 	children.emplace_back(left);
 	children.emplace_back(right);
+
+	// Disable operator caching: our output usually references large geometry blobs (zero-copy string_t's into the
+	// build-side collection), and the caching wrapper would deep-copy them into its cache chunk. With low match rates
+	// (= small output chunks) every chunk gets cached, accumulating gigabytes of copied blobs per thread.
+	caching_supported = false;
 
 	auto &func = condition->Cast<BoundFunctionExpression>();
 
@@ -64,7 +120,7 @@ PhysicalSpatialJoin::PhysicalSpatialJoin(PhysicalPlan &physical_plan, LogicalOpe
 
 	// Always make sure we have a consistent order of the output columns, regardless if we have projection maps or not
 
-	const auto &lop = op.Cast<LogicalJoin>();
+	const auto &lop = op.Cast<LogicalSpatialJoin>();
 
 	// Probe-side
 	const auto &probe_side_input_types = children[0].get().types;
@@ -171,6 +227,12 @@ public:
 };
 
 unique_ptr<GlobalSinkState> PhysicalSpatialJoin::GetGlobalSinkState(ClientContext &context) const {
+
+	// Clear any filters previously pushed by this operator. The same physical operator can be executed multiple times
+	// (e.g. in a recursive CTE), and the build-side bounding box differs each time. Stale filters must be cleared.
+	for (auto &target : filter_pushdown_targets) {
+		target.dynamic_filters->ClearFilters(*this);
+	}
 
 	auto gstate = make_uniq<SpatialJoinGlobalState>();
 	gstate->collection =
@@ -382,6 +444,12 @@ SinkFinalizeType PhysicalSpatialJoin::Finalize(Pipeline &pipeline, Event &event,
 			bbox.max.x = xmax_data[row_idx];
 			bbox.max.y = ymax_data[row_idx];
 
+			if (std::isnan(bbox.min.x) || std::isnan(bbox.min.y) || std::isnan(bbox.max.x) || std::isnan(bbox.max.y)) {
+				// Skip geometries with NaN bounds: they can never satisfy a spatial predicate.
+				// A NaN box would corrupt every union it participates in, silently dropping matches of other rows.
+				continue;
+			}
+
 			if (has_const_distance) {
 				// If this is a ST_DWithin join, we need to expand the bounding box by the constant distance
 				const auto f_dist = MathUtil::DoubleToFloatUp(const_distance);
@@ -398,6 +466,18 @@ SinkFinalizeType PhysicalSpatialJoin::Finalize(Pipeline &pipeline, Event &event,
 
 	// Build the R-Tree once we've gathered everything
 	gstate.rtree->Build();
+
+	// If we have probe-side targets, push down a bounding-box filter derived from the build-side R-tree.
+	// Every match requires the probe geometry's bbox to intersect some build box, which is contained in the R-tree's
+	// root box, so probe rows outside it can be pruned. For ST_DWithin the distance is already baked into the root box.
+	// (the per-item boxes were expanded before insertion).
+	if (!filter_pushdown_targets.empty() && gstate.rtree->Count() > 0) {
+		const auto envelope = MakeEnvelopeValue(context, gstate.rtree->Bounds());
+		for (auto &target : filter_pushdown_targets) {
+			target.dynamic_filters->PushFilter(*this, target.probe_column_index,
+			                                   MakeBoundingBoxFilter(context, envelope, target.column_type));
+		}
+	}
 
 	return SinkFinalizeType::READY;
 }
@@ -697,10 +777,14 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 			}
 
 			// Also collect the build side row pointers (if we have a match column)
+			// Note: we must offset by matches_idx here, just like build_side_source_sel above. A single probe's
+			// candidate batch can be split across multiple output chunks, and in that case we resume in the middle of
+			// the batch. Reading from the start of the batch would mark the wrong build rows as matched, dropping them
+			// from the right-outer output while emitting the actual matches twice.
 			if (IsRightOuterJoin(join_type)) {
 				const auto ptrs = FlatVector::GetData<data_ptr_t>(row_pointers);
 				for (idx_t i = 0; i < scan_count; i++) {
-					lstate.build_side_pointers[output_index + i] = ptrs[i];
+					lstate.build_side_pointers[output_index + i] = ptrs[lstate.scan.matches_idx + i];
 				}
 			}
 

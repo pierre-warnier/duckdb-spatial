@@ -132,6 +132,7 @@ public:
 
 			UnaryExecutor::Execute<string_t, RETURN_TYPE>(
 			    probe_vec, result, args.size(), [&](const string_t &probe_blob) {
+			    	lstate.GetArena().Reset();
 				    const auto probe_geom = lstate.Deserialize(probe_blob);
 				    return IMPL::ExecutePredicatePrepared(const_prep, probe_geom);
 			    });
@@ -139,6 +140,7 @@ public:
 			// Both are non-const, just execute normally
 			BinaryExecutor::Execute<string_t, string_t, RETURN_TYPE>(
 			    lhs_vec, rhs_vec, result, args.size(), [&](const string_t &lhs_blob, const string_t &rhs_blob) {
+			    	lstate.GetArena().Reset();
 				    const auto lhs = lstate.Deserialize(lhs_blob);
 				    const auto rhs = lstate.Deserialize(rhs_blob);
 				    return IMPL::ExecutePredicateNormal(lhs, rhs);
@@ -178,6 +180,7 @@ public:
 			const auto lhs_prep = lhs_geom.get_prepared();
 
 			UnaryExecutor::Execute<string_t, RETURN_TYPE>(rhs_vec, result, args.size(), [&](const string_t &rhs_blob) {
+				lstate.GetArena().Reset();
 				const auto rhs_geom = lstate.Deserialize(rhs_blob);
 				return IMPL::ExecutePredicatePrepared(lhs_prep, rhs_geom);
 			});
@@ -185,6 +188,7 @@ public:
 			// Both are non-const, just execute normally
 			BinaryExecutor::Execute<string_t, string_t, RETURN_TYPE>(
 			    lhs_vec, rhs_vec, result, args.size(), [&](const string_t &lhs_blob, const string_t &rhs_blob) {
+				    lstate.GetArena().Reset();
 				    const auto lhs = lstate.Deserialize(lhs_blob);
 				    const auto rhs = lstate.Deserialize(rhs_blob);
 				    return IMPL::ExecutePredicateNormal(lhs, rhs);
@@ -845,106 +849,105 @@ struct ST_ConvexHull {
 
 struct ST_CoverageClean {
 
-       static unique_ptr<FunctionData> Bind(ClientContext &context, ScalarFunction &bound_function,
-                                                                                vector<unique_ptr<Expression>> &arguments) {
-               // set default values for coverage_clean parameters
-               const size_t num_args = arguments.size();
-               if (num_args == 2) { // gap max width
-                    arguments.push_back(make_uniq_base<Expression, BoundConstantExpression>(Value::DOUBLE(-1)));
-               }
+	static unique_ptr<FunctionData> Bind(ClientContext &context, ScalarFunction &bound_function,
+	                                     vector<unique_ptr<Expression>> &arguments) {
+		// set default values for coverage_clean parameters
+		const size_t num_args = arguments.size();
+		if (num_args == 2) { // gap max width
+			arguments.push_back(make_uniq_base<Expression, BoundConstantExpression>(Value::DOUBLE(-1)));
+		}
 
-               if (num_args == 1) { // snapping distance, gap max width
-               		arguments.push_back(make_uniq_base<Expression, BoundConstantExpression>(Value::DOUBLE(-1)));
-                    arguments.push_back(make_uniq_base<Expression, BoundConstantExpression>(Value::DOUBLE(-1)));
-               }
+		if (num_args == 1) { // snapping distance, gap max width
+			arguments.push_back(make_uniq_base<Expression, BoundConstantExpression>(Value::DOUBLE(-1)));
+			arguments.push_back(make_uniq_base<Expression, BoundConstantExpression>(Value::DOUBLE(-1)));
+		}
 
-               return nullptr;
-       }
+		return nullptr;
+	}
 
-       static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
-               auto &lstate = LocalState::ResetAndGet(state);
-               UnifiedVectorFormat format;
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		UnifiedVectorFormat format;
 
-               auto &list_vec = args.data[0];
-               auto &item_vec = ListVector::GetEntry(list_vec);
-               item_vec.ToUnifiedFormat(ListVector::GetListSize(list_vec), format);
+		auto &list_vec = args.data[0];
+		auto &item_vec = ListVector::GetEntry(list_vec);
+		item_vec.ToUnifiedFormat(ListVector::GetListSize(list_vec), format);
 
-               // Collection to hold the working set of geometries
-               GeosCollection collection(lstate.GetContext());
+		// Collection to hold the working set of geometries
+		GeosCollection collection(lstate.GetContext());
 
-               TernaryExecutor::Execute<list_entry_t, double, double, string_t>(
-                   list_vec, args.data[1], args.data[2],
-                   result, args.size(), [&](const list_entry_t &list,
-                       double snapping_distance, double gap_maximum_width) {
-                           // Reset the collection
-                           collection.clear();
-                           collection.reserve(list.length);
+		TernaryExecutor::Execute<list_entry_t, double, double, string_t>(
+		    list_vec, args.data[1], args.data[2], result, args.size(),
+		    [&](const list_entry_t &list, double snapping_distance, double gap_maximum_width) {
+			    // Reset the collection
+			    collection.clear();
+			    collection.reserve(list.length);
 
-                           const auto offset = list.offset;
-                           const auto length = list.length;
+			    const auto offset = list.offset;
+			    const auto length = list.length;
 
-                           // Collect all geometries in the list into the collection
-                           for (idx_t i = offset; i < offset + length; i++) {
-                                   const auto mapped_idx = format.sel->get_index(i);
+			    // Collect all geometries in the list into the collection
+			    for (idx_t i = offset; i < offset + length; i++) {
+				    const auto mapped_idx = format.sel->get_index(i);
 
-                                   if (!format.validity.RowIsValid(mapped_idx)) {
-                                           continue;
-                                   }
+				    if (!format.validity.RowIsValid(mapped_idx)) {
+					    continue;
+				    }
 
-                                   const auto &geom_blob = UnifiedVectorFormat::GetData<string_t>(format)[mapped_idx];
+				    const auto &geom_blob = UnifiedVectorFormat::GetData<string_t>(format)[mapped_idx];
 
-                                   auto geom = lstate.Deserialize(geom_blob);
-                                   collection.add(std::move(geom));
-                           }
+				    auto geom = lstate.Deserialize(geom_blob);
+				    collection.add(std::move(geom));
+			    }
 
-                           // Now make a geometrycollection and simplify
-                           const auto geometry_col = collection.get_collection();
-                           const auto cleaned = geometry_col.get_coverage_clean(snapping_distance, gap_maximum_width);
-                           return lstate.Serialize(result, cleaned);
-                   });
-       }
+			    // Now make a geometrycollection and simplify
+			    const auto geometry_col = collection.get_collection();
+			    const auto cleaned = geometry_col.get_coverage_clean(snapping_distance, gap_maximum_width);
+			    return lstate.Serialize(result, cleaned);
+		    });
+	}
 
-       static void Register(ExtensionLoader &loader) {
-               FunctionBuilder::RegisterScalar(loader, "ST_CoverageClean", [](ScalarFunctionBuilder &func) {
-                       func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
-                               variant.AddParameter("geoms", LogicalType::LIST(LogicalType::GEOMETRY()));
-                               variant.AddParameter("snapping_distance", LogicalType::DOUBLE);
-                               variant.AddParameter("gap_maximum_width", LogicalType::DOUBLE);
-                               variant.SetReturnType(LogicalType::GEOMETRY());
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_CoverageClean", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geoms", LogicalType::LIST(LogicalType::GEOMETRY()));
+				variant.AddParameter("snapping_distance", LogicalType::DOUBLE);
+				variant.AddParameter("gap_maximum_width", LogicalType::DOUBLE);
+				variant.SetReturnType(LogicalType::GEOMETRY());
 
-                               variant.SetInit(LocalState::Init);
-                       	       variant.SetBind(Bind);
-                               variant.SetFunction(Execute);
-                       });
+				variant.SetInit(LocalState::Init);
+				variant.SetBind(Bind);
+				variant.SetFunction(Execute);
+			});
 
-                       func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
-                               variant.AddParameter("geoms", LogicalType::LIST(LogicalType::GEOMETRY()));
-                               variant.AddParameter("snapping_distance", LogicalType::DOUBLE);
-                               variant.SetReturnType(LogicalType::GEOMETRY());
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geoms", LogicalType::LIST(LogicalType::GEOMETRY()));
+				variant.AddParameter("snapping_distance", LogicalType::DOUBLE);
+				variant.SetReturnType(LogicalType::GEOMETRY());
 
-                               variant.SetInit(LocalState::Init);
-                               variant.SetBind(Bind);
-                               variant.SetFunction(Execute);
-                       });
+				variant.SetInit(LocalState::Init);
+				variant.SetBind(Bind);
+				variant.SetFunction(Execute);
+			});
 
-                       func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
-                               variant.AddParameter("geoms", LogicalType::LIST(LogicalType::GEOMETRY()));
-                               variant.SetReturnType(LogicalType::GEOMETRY());
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geoms", LogicalType::LIST(LogicalType::GEOMETRY()));
+				variant.SetReturnType(LogicalType::GEOMETRY());
 
-                               variant.SetInit(LocalState::Init);
-                               variant.SetBind(Bind);
-                               variant.SetFunction(Execute);
-                       });
+				variant.SetInit(LocalState::Init);
+				variant.SetBind(Bind);
+				variant.SetFunction(Execute);
+			});
 
-                       func.SetDescription(R"(
+			func.SetDescription(R"(
                                Aligns the edges of a list of polygons whose edges are meant to align but are in fact exact matches.
 
                                Returns a collection of fixed polygons with the same size and order as the input polygons. EMPTY will be used in place of collapsed polygons.
                        )");
-                       func.SetTag("ext", "spatial");
-                       func.SetTag("category", "construction");
-               });
-       }
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "construction");
+		});
+	}
 };
 
 struct ST_CoverageInvalidEdges {
@@ -1728,9 +1731,53 @@ struct ST_MakeValid {
 
 		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &geom_blob) {
 			const auto geom = lstate.Deserialize(geom_blob);
-			const auto valid = geom.get_made_valid();
+			const auto valid = geom.get_made_valid(GEOS_MAKE_VALID_LINEWORK, true);
 			return lstate.Serialize(result, valid);
 		});
+	}
+
+	static GEOSMakeValidMethods TryParseMethod(const string_t &method_str) {
+		auto method_std = StringUtil::Lower(method_str.GetString());
+
+		if (method_std == "linework") {
+			return GEOS_MAKE_VALID_LINEWORK;
+		} else if (method_std == "structure") {
+			return GEOS_MAKE_VALID_STRUCTURE;
+		}
+
+		throw InvalidInputException("Unknown method: '%s', accepted inputs: linework, structure",
+		                           method_str.GetString().c_str());
+	}
+
+	static void ExecuteWithMethod(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+
+		BinaryExecutor::Execute<string_t, string_t, string_t>(
+		    args.data[0], args.data[1], result, args.size(),
+		    [&](const string_t &blob, string_t &method_str) {
+			    const auto geom = lstate.Deserialize(blob);
+			    const auto method = TryParseMethod(method_str);
+			    const auto valid = geom.get_made_valid(method, true);
+			    return lstate.Serialize(result, valid);
+		    });
+	}
+
+	static void ExecuteWithKeepCollapsed(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+
+		TernaryExecutor::Execute<string_t, string_t, bool, string_t>(
+		    args.data[0], args.data[1], args.data[2], result, args.size(),
+		    [&](const string_t &blob, string_t &method_str, bool keepCollapsed) {
+			    const auto geom = lstate.Deserialize(blob);
+			    const auto method = TryParseMethod(method_str);
+
+			    if (method == GEOS_MAKE_VALID_LINEWORK) {
+			      throw InvalidInputException("The 'LINEWORK' method doesn't accept keepCollapsed parameter");
+			    }
+
+			    const auto valid = geom.get_made_valid(method, keepCollapsed);
+			    return lstate.Serialize(result, valid);
+		    });
 	}
 
 	static void Register(ExtensionLoader &loader) {
@@ -1742,6 +1789,29 @@ struct ST_MakeValid {
 				variant.SetBind(GeoTypes::PropagateCRS);
 				variant.SetInit(LocalState::Init);
 				variant.SetFunction(Execute);
+				variant.CanThrowErrors();
+			});
+
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", LogicalType::GEOMETRY());
+				variant.AddParameter("method", LogicalType::VARCHAR);
+				variant.SetReturnType(LogicalType::GEOMETRY());
+
+				variant.SetBind(GeoTypes::PropagateCRS);
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(ExecuteWithMethod);
+				variant.CanThrowErrors();
+			});
+
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", LogicalType::GEOMETRY());
+				variant.AddParameter("method", LogicalType::VARCHAR);
+				variant.AddParameter("keepCollapsed", LogicalType::BOOLEAN);
+				variant.SetReturnType(LogicalType::GEOMETRY());
+
+				variant.SetBind(GeoTypes::PropagateCRS);
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(ExecuteWithKeepCollapsed);
 				variant.CanThrowErrors();
 			});
 
@@ -2238,6 +2308,39 @@ struct ST_ShortestLine {
 	}
 };
 
+struct ST_Snap {
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+		TernaryExecutor::Execute<string_t, string_t, double, string_t>(
+		    args.data[0], args.data[1], args.data[2], result, args.size(),
+		    [&](const string_t &geom_blob, const string_t &snap_to_blob, double tolerance) {
+			    const auto geom = lstate.Deserialize(geom_blob);
+			    const auto snap_to = lstate.Deserialize(snap_to_blob);
+			    const auto snapped = geom.get_snap(snap_to, tolerance);
+			    return lstate.Serialize(result, snapped);
+		    });
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_Snap", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", LogicalType::GEOMETRY());
+				variant.AddParameter("snap_to", LogicalType::GEOMETRY());
+				variant.AddParameter("tolerance", LogicalType::DOUBLE);
+				variant.SetReturnType(LogicalType::GEOMETRY());
+				variant.SetBind(GeoTypes::PropagateCRS);
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute);
+				variant.CanThrowErrors();
+			});
+			func.SetDescription("Snaps the vertices and segments of a geometry to another geometry's vertices within "
+			                    "the given tolerance");
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "construction");
+		});
+	}
+};
+
 struct ST_ClosestPoint {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
@@ -2368,6 +2471,156 @@ struct ST_SymDifference {
 			func.SetDescription("Returns the symmetric difference of two geometries");
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "construction");
+		});
+	}
+};
+
+struct ST_Subdivide {
+	static void SubdivideRecursive(GEOSContextHandle_t handle_p, GeosCollection &collection, const GeosGeometry &geom,
+	                               const size_t max_vertices, const size_t dimension, const size_t depth) {
+		constexpr size_t max_depth = 50;
+
+		// If we get a lower-dimensional object from an intersection, we abort
+		if (geom.get_dimension() < dimension) {
+			return;
+		}
+
+		// A MultiPoint is ignored here on purpose as MultiPoints get treated as one
+		// object compared to multiple distinct objects
+		if (geom.type() == GEOS_MULTILINESTRING || geom.type() == GEOS_MULTIPOLYGON || geom.type() == GEOS_GEOMETRYCOLLECTION) {
+			for (size_t i = 0; i < geom.get_num_geometries(); i++) {
+				const auto subgeom = geom.get_geometry_n(i);
+
+				// Do not increment depth as we are still on the same level, just processing individual
+				// parts of the geometry
+				SubdivideRecursive(handle_p, collection, subgeom, max_vertices, dimension, depth);
+			}
+			return;
+		}
+
+		if (geom.get_num_vertices() <= max_vertices) {
+			collection.add(std::move(geom.get_clone()));
+			return;
+		}
+
+		// Went so far that we will just add the rest all at once.
+		if (depth > max_depth) {
+			collection.add(std::move(geom.get_clone()));
+			return;
+		}
+
+		double xmin, ymin, xmax, ymax;
+		geom.get_extent(xmin, ymin, xmax, ymax);
+
+		const double width = xmax - xmin;
+		const double height = ymax - ymin;
+
+		if (width == 0.0 && height == 0.0) {
+			if (geom.type() == GEOS_POINT) {
+				collection.add(std::move(geom.get_clone()));
+			}
+
+			throw InvalidInputException("cannot subdivide non-point geometries with zero width and height");
+		}
+
+		// no need to recompute proper width and height values after this step, as they are just used
+		// to decide on whether the next division is horizontal or vertical
+		if (width == 0.0) {
+			xmin -= 1e-12;
+			xmax += 1e-12;
+		}
+
+		if (height == 0.0) {
+			ymin -= 1e-12;
+			ymax += 1e-12;
+		}
+
+		double xmin_a, xmax_a, ymin_a, ymax_a;
+		double xmin_b, xmax_b, ymin_b, ymax_b;
+		if (width > height) {
+			xmin_a = xmin;
+			xmax_a = (xmax + xmin) / 2.0;
+			ymin_a = ymin;
+			ymax_a = ymax;
+
+			xmin_b = (xmax + xmin) / 2.0;
+			xmax_b = xmax;
+			ymin_b = ymin;
+			ymax_b = ymax;
+		} else {
+			xmin_a = xmin;
+			xmax_a = xmax;
+			ymin_a = ymin;
+			ymax_a = (ymax + ymin) / 2.0;
+
+			xmin_b = xmin;
+			xmax_b = xmax;
+			ymin_b = (ymax + ymin) / 2.0;
+			ymax_b = ymax;
+		}
+
+		{
+			const GeosGeometry clipping_rect_a = GeosGeometry(handle_p, xmin_a, ymin_a, xmax_a, ymax_a);
+			const GeosGeometry clipped_a = geom.get_intersection(clipping_rect_a);
+			if (!clipped_a.is_empty()) {
+				SubdivideRecursive(handle_p, collection, clipped_a, max_vertices, dimension, depth + 1);
+			}
+		}
+		{
+			const GeosGeometry clipping_rect_b = GeosGeometry(handle_p, xmin_b, ymin_b, xmax_b, ymax_b);
+			const GeosGeometry clipped_b = geom.get_intersection(clipping_rect_b);
+			if (!clipped_b.is_empty()) {
+				SubdivideRecursive(handle_p, collection, clipped_b, max_vertices, dimension, depth + 1);
+			}
+		}
+
+		return;
+	}
+
+	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		auto &lstate = LocalState::ResetAndGet(state);
+
+		BinaryExecutor::Execute<string_t, uint32_t, string_t>(
+		    args.data[0], args.data[1], result, args.size(),
+		    [&](const string_t &geom_blob, const uint32_t max_vertices) {
+			    if (max_vertices < 5) {
+				    throw InvalidInputException("max_vertices needs to be larger or equal to 5");
+			    }
+
+			    const auto geom = lstate.Deserialize(geom_blob);
+
+			    if (geom.type() == GEOS_GEOMETRYCOLLECTION) {
+				    throw InvalidInputException("Cannot subdivide GeometryCollection");
+			    }
+
+			    if (geom.is_empty()) {
+				    return lstate.Serialize(result, geom);
+			    }
+
+			    GeosCollection collection {lstate.GetContext()};
+			    SubdivideRecursive(lstate.GetContext(), collection, geom, max_vertices, geom.get_dimension(), 0);
+
+			    return lstate.Serialize(result, collection.get_collection());
+		    });
+	}
+
+	static void Register(ExtensionLoader &loader) {
+		FunctionBuilder::RegisterScalar(loader, "ST_Subdivide", [](ScalarFunctionBuilder &func) {
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom", LogicalType::GEOMETRY());
+				variant.AddParameter("max_vertices", LogicalType::UINTEGER);
+				variant.SetReturnType(LogicalType::GEOMETRY());
+
+				variant.SetInit(LocalState::Init);
+				variant.SetFunction(Execute);
+			});
+
+			func.SetDescription(
+			    "Recursively splits a geometry into sub-geometries until the number of vertices of each are below the "
+			    "threshold given by max_vertices. Accepts any type of input except for a GeometryCollection."
+			    "Degenerate inputs can lead to results having more than max_vertices vertices due to a recursion depth limit.");
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "relation");
 		});
 	}
 };
@@ -2654,6 +2907,16 @@ struct ST_Union_Agg {
 	struct State {
 		GEOSContextHandle_t context = nullptr;
 		vector<GEOSGeometry *> geoms;
+
+		~State() {
+			if (context) {
+				for (auto geom : geoms) {
+					GEOSGeom_destroy_r(context, geom);
+				}
+				GEOS_finish_r(context);
+				context = nullptr;
+			}
+		}
 	};
 
 	static idx_t StateSize(const AggregateFunction &) {
@@ -2814,14 +3077,8 @@ struct ST_Union_Agg {
 		for (idx_t raw_idx = 0; raw_idx < count; raw_idx++) {
 			const auto row_idx = state_format.sel->get_index(raw_idx);
 			if (state_format.validity.RowIsValid(row_idx)) {
-				auto &state = *state_ptr[row_idx];
-
-				state.geoms.clear();
-
-				if (state.context) {
-					GEOS_finish_r(state.context);
-					state.context = nullptr;
-				}
+				// Destroy the state object
+				state_ptr[row_idx]->~State();
 			}
 		}
 	}
@@ -2858,6 +3115,16 @@ struct GEOSCoverageAggFunction {
 		double tolerance = 0;
 		bool parameters_set = false;
 		bool simplify_boundary = false;
+
+		~State() {
+			if (context) {
+				for (auto geom : geoms) {
+					GEOSGeom_destroy_r(context, geom);
+				}
+				GEOS_finish_r(context);
+				context = nullptr;
+			}
+		}
 	};
 
 	// Serialize a GEOS geometry
@@ -3001,14 +3268,7 @@ struct GEOSCoverageAggFunction {
 		for (idx_t raw_idx = 0; raw_idx < count; raw_idx++) {
 			const auto row_idx = state_format.sel->get_index(raw_idx);
 			if (state_format.validity.RowIsValid(row_idx)) {
-				auto &state = *state_ptr[row_idx];
-
-				state.geoms.clear();
-
-				if (state.context) {
-					GEOS_finish_r(state.context);
-					state.context = nullptr;
-				}
+				state_ptr[row_idx]->~State();
 			}
 		}
 	}
@@ -3410,132 +3670,6 @@ struct ST_RelateMatch {
 };
 
 //----------------------------------------------------------------------
-// ST_Subdivide
-//----------------------------------------------------------------------
-struct ST_Subdivide {
-
-	static void SubdivideRecursive(GEOSContextHandle_t ctx, const GEOSGeometry *geom, int max_vertices,
-	                               vector<GEOSGeometry *> &results, int depth = 0) {
-		if (depth > 50) {
-			// Prevent infinite recursion
-			results.push_back(GEOSGeom_clone_r(ctx, geom));
-			return;
-		}
-
-		int npoints = GEOSGetNumCoordinates_r(ctx, geom);
-		if (npoints <= max_vertices) {
-			results.push_back(GEOSGeom_clone_r(ctx, geom));
-			return;
-		}
-
-		// Get the envelope to split
-		double minx, miny, maxx, maxy;
-		const GEOSGeometry *env = GEOSGetExteriorRing_r(ctx, GEOSEnvelope_r(ctx, geom));
-		if (!env) {
-			results.push_back(GEOSGeom_clone_r(ctx, geom));
-			return;
-		}
-
-		// Get envelope bounds manually
-		const GEOSCoordSequence *seq = GEOSGeom_getCoordSeq_r(ctx, env);
-		GEOSCoordSeq_getX_r(ctx, seq, 0, &minx);
-		GEOSCoordSeq_getY_r(ctx, seq, 0, &miny);
-		GEOSCoordSeq_getX_r(ctx, seq, 2, &maxx);
-		GEOSCoordSeq_getY_r(ctx, seq, 2, &maxy);
-
-		double width = maxx - minx;
-		double height = maxy - miny;
-
-		// Split along the longer dimension
-		if (width >= height) {
-			double mid = minx + width / 2.0;
-			auto left = GEOSClipByRect_r(ctx, geom, minx, miny, mid, maxy);
-			auto right = GEOSClipByRect_r(ctx, geom, mid, miny, maxx, maxy);
-
-			if (left && !GEOSisEmpty_r(ctx, left)) {
-				SubdivideRecursive(ctx, left, max_vertices, results, depth + 1);
-			}
-			if (right && !GEOSisEmpty_r(ctx, right)) {
-				SubdivideRecursive(ctx, right, max_vertices, results, depth + 1);
-			}
-
-			if (left) GEOSGeom_destroy_r(ctx, left);
-			if (right) GEOSGeom_destroy_r(ctx, right);
-		} else {
-			double mid = miny + height / 2.0;
-			auto bottom = GEOSClipByRect_r(ctx, geom, minx, miny, maxx, mid);
-			auto top = GEOSClipByRect_r(ctx, geom, minx, mid, maxx, maxy);
-
-			if (bottom && !GEOSisEmpty_r(ctx, bottom)) {
-				SubdivideRecursive(ctx, bottom, max_vertices, results, depth + 1);
-			}
-			if (top && !GEOSisEmpty_r(ctx, top)) {
-				SubdivideRecursive(ctx, top, max_vertices, results, depth + 1);
-			}
-
-			if (bottom) GEOSGeom_destroy_r(ctx, bottom);
-			if (top) GEOSGeom_destroy_r(ctx, top);
-		}
-	}
-
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
-		auto count = args.size();
-		auto &geom_vec = args.data[0];
-		auto &max_vec = args.data[1];
-
-		UnifiedVectorFormat geom_fmt, max_fmt;
-		geom_vec.ToUnifiedFormat(count, geom_fmt);
-		max_vec.ToUnifiedFormat(count, max_fmt);
-		const auto geom_data = UnifiedVectorFormat::GetData<string_t>(geom_fmt);
-		const auto max_data = UnifiedVectorFormat::GetData<int32_t>(max_fmt);
-
-		for (idx_t i = 0; i < count; i++) {
-			const auto gi = geom_fmt.sel->get_index(i);
-			const auto mi = max_fmt.sel->get_index(i);
-
-			if (!geom_fmt.validity.RowIsValid(gi) || !max_fmt.validity.RowIsValid(mi)) {
-				FlatVector::SetNull(result, i, true);
-				continue;
-			}
-
-			auto &lstate = LocalState::ResetAndGet(state);
-			auto ctx = lstate.GetContext();
-			auto geom = lstate.Deserialize(geom_data[gi]);
-
-			int32_t max_vertices = max_data[mi];
-			if (max_vertices < 5) max_vertices = 5;
-
-			vector<GEOSGeometry *> parts;
-			SubdivideRecursive(ctx, geom.get_raw(), max_vertices, parts);
-
-			// Create a geometry collection from the parts
-			auto collection = GEOSGeom_createCollection_r(ctx, GEOS_GEOMETRYCOLLECTION,
-			                                              parts.data(), parts.size());
-			parts.clear(); // collection takes ownership
-
-			auto wrapper = GeosGeometry(ctx, collection);
-			FlatVector::GetData<string_t>(result)[i] = lstate.Serialize(result, wrapper);
-		}
-	}
-
-	static void Register(ExtensionLoader &loader) {
-		FunctionBuilder::RegisterScalar(loader, "ST_Subdivide", [](ScalarFunctionBuilder &func) {
-			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
-				variant.AddParameter("geom", LogicalType::GEOMETRY());
-				variant.AddParameter("max_vertices", LogicalType::INTEGER);
-				variant.SetReturnType(LogicalType::GEOMETRY());
-				variant.SetFunction(Execute);
-				variant.SetInit(LocalState::Init);
-			});
-			func.SetDescription("Subdivides a geometry into parts with no more than max_vertices each");
-			func.SetExample("SELECT ST_NGeometries(ST_Subdivide(ST_GeomFromText('POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))'), 5))");
-			func.SetTag("ext", "spatial");
-			func.SetTag("category", "construction");
-		});
-	}
-};
-
-//----------------------------------------------------------------------
 // ST_Split
 //----------------------------------------------------------------------
 struct ST_Split {
@@ -3907,28 +4041,6 @@ struct ST_SharedPaths {
 				v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
 			});
 			func.SetDescription("Returns shared paths between two linear geometries"); func.SetTag("ext", "spatial"); func.SetTag("category", "construction");
-		});
-	}
-};
-
-struct ST_Snap_GEOS {
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
-		auto &lstate = LocalState::ResetAndGet(state);
-		TernaryExecutor::Execute<string_t, string_t, double, string_t>(
-		    args.data[0], args.data[1], args.data[2], result, args.size(),
-		    [&](const string_t &l, const string_t &r, double tol) {
-			    return lstate.Serialize(result, lstate.Deserialize(l).get_snap(lstate.Deserialize(r), tol));
-		    });
-	}
-	static void Register(ExtensionLoader &loader) {
-		FunctionBuilder::RegisterScalar(loader, "ST_Snap", [](ScalarFunctionBuilder &func) {
-			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
-				v.AddParameter("geom1", LogicalType::GEOMETRY()); v.AddParameter("geom2", LogicalType::GEOMETRY());
-				v.AddParameter("tolerance", LogicalType::DOUBLE); v.SetReturnType(LogicalType::GEOMETRY());
-				v.SetBind(GeoTypes::PropagateCRS);
-				v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
-			});
-			func.SetDescription("Snaps vertices of geom1 to geom2 within tolerance"); func.SetTag("ext", "spatial"); func.SetTag("category", "construction");
 		});
 	}
 };
@@ -4607,14 +4719,15 @@ void RegisterGEOSModule(ExtensionLoader &loader) {
 	ST_ShortestLine::Register(loader);
 	ST_Simplify::Register(loader);
 	ST_SimplifyPreserveTopology::Register(loader);
+	ST_Snap::Register(loader);
 	ST_SymDifference::Register(loader);
+	ST_Subdivide::Register(loader);
 	ST_Touches::Register(loader);
 	ST_Union::Register(loader);
 	ST_VoronoiDiagram::Register(loader);
 	ST_Within::Register(loader);
 	ST_IsValidDetail::Register(loader);
 	ST_RelateMatch::Register(loader);
-	ST_Subdivide::Register(loader);
 	ST_Split::Register(loader);
 	ST_ClusterIntersecting::Register(loader);
 	ST_ClusterWithin::Register(loader);
@@ -4622,7 +4735,6 @@ void RegisterGEOSModule(ExtensionLoader &loader) {
 	// New GEOS wrappers (ST_SymDifference already registered upstream)
 	ST_UnaryUnion::Register(loader);
 	ST_SharedPaths::Register(loader);
-	ST_Snap_GEOS::Register(loader);
 	ST_OffsetCurve::Register(loader);
 	ST_DelaunayTriangles::Register(loader);
 	ST_TriangulatePolygon::Register(loader);

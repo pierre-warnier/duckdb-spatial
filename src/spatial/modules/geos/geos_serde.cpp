@@ -209,7 +209,7 @@ void GeosSerde::Serialize(GEOSContextHandle_t ctx, const GEOSGeom_t *geom, char 
 static GEOSGeom_t *DeserializeInternal(BinaryReader &reader, ArenaAllocator &arena, GEOSContextHandle_t ctx);
 
 template <class T>
-static T *AllocateArray(ArenaAllocator &arena, size_t count) {
+static T *MakeArray(ArenaAllocator &arena, size_t count) {
 	return reinterpret_cast<T *>(arena.AllocateAligned(count * sizeof(T)));
 }
 
@@ -234,7 +234,7 @@ static GEOSGeom_t *DeserializeTemplated(BinaryReader &reader, ArenaAllocator &ar
 		}
 		// Copy into arena-allocated aligned buffer before handing to GEOS — the blob pointer
 		// from BinaryReader::Reserve is not guaranteed to be double-aligned.
-		auto vert_array = AllocateArray<double>(arena, vert_count * VERTEX_SIZE);
+		auto vert_array = MakeArray<double>(arena, vert_count * VERTEX_SIZE);
 		auto ptr = reader.Reserve(vert_count * VERTEX_SIZE * sizeof(double));
 		memcpy(vert_array, ptr, vert_count * VERTEX_SIZE * sizeof(double));
 		auto seq = GEOSCoordSeq_copyFromBuffer_r(ctx, vert_array, vert_count, V::HAS_Z, V::HAS_M);
@@ -245,10 +245,10 @@ static GEOSGeom_t *DeserializeTemplated(BinaryReader &reader, ArenaAllocator &ar
 		if (ring_count == 0) {
 			return GEOSGeom_createEmptyPolygon_r(ctx);
 		}
-		auto ring_array = AllocateArray<GEOSGeometry *>(arena, ring_count);
+		auto ring_array = MakeArray<GEOSGeometry *>(arena, ring_count);
 		for (uint32_t i = 0; i < ring_count; i++) {
 			const auto vert_count = reader.Read<uint32_t>();
-			auto vert_array = AllocateArray<double>(arena, vert_count * VERTEX_SIZE);
+			auto vert_array = MakeArray<double>(arena, vert_count * VERTEX_SIZE);
 			auto ptr = reader.Reserve(vert_count * VERTEX_SIZE * sizeof(double));
 			memcpy(vert_array, ptr, vert_count * VERTEX_SIZE * sizeof(double));
 			auto seq = GEOSCoordSeq_copyFromBuffer_r(ctx, vert_array, vert_count, V::HAS_Z, V::HAS_M);
@@ -261,7 +261,7 @@ static GEOSGeom_t *DeserializeTemplated(BinaryReader &reader, ArenaAllocator &ar
 		if (part_count == 0) {
 			return GEOSGeom_createEmptyCollection_r(ctx, GEOS_MULTIPOINT);
 		}
-		const auto part_array = AllocateArray<GEOSGeometry *>(arena, part_count);
+		const auto part_array = MakeArray<GEOSGeometry *>(arena, part_count);
 		for (uint32_t i = 0; i < part_count; i++) {
 			part_array[i] = DeserializeInternal(reader, arena, ctx);
 		}
@@ -272,7 +272,7 @@ static GEOSGeom_t *DeserializeTemplated(BinaryReader &reader, ArenaAllocator &ar
 		if (part_count == 0) {
 			return GEOSGeom_createEmptyCollection_r(ctx, GEOS_MULTILINESTRING);
 		}
-		const auto part_array = AllocateArray<GEOSGeometry *>(arena, part_count);
+		const auto part_array = MakeArray<GEOSGeometry *>(arena, part_count);
 		for (uint32_t i = 0; i < part_count; i++) {
 			part_array[i] = DeserializeInternal(reader, arena, ctx);
 		}
@@ -283,7 +283,7 @@ static GEOSGeom_t *DeserializeTemplated(BinaryReader &reader, ArenaAllocator &ar
 		if (part_count == 0) {
 			return GEOSGeom_createEmptyCollection_r(ctx, GEOS_MULTIPOLYGON);
 		}
-		const auto part_array = AllocateArray<GEOSGeometry *>(arena, part_count);
+		const auto part_array = MakeArray<GEOSGeometry *>(arena, part_count);
 		for (uint32_t i = 0; i < part_count; i++) {
 			part_array[i] = DeserializeInternal(reader, arena, ctx);
 		}
@@ -294,7 +294,7 @@ static GEOSGeom_t *DeserializeTemplated(BinaryReader &reader, ArenaAllocator &ar
 		if (part_count == 0) {
 			return GEOSGeom_createEmptyCollection_r(ctx, GEOS_GEOMETRYCOLLECTION);
 		}
-		const auto part_array = AllocateArray<GEOSGeometry *>(arena, part_count);
+		const auto part_array = MakeArray<GEOSGeometry *>(arena, part_count);
 		for (uint32_t i = 0; i < part_count; i++) {
 			part_array[i] = DeserializeInternal(reader, arena, ctx);
 		}
