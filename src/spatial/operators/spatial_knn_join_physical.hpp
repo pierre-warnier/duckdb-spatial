@@ -16,6 +16,8 @@ public:
 
 	unique_ptr<Expression> condition;
 	optional_ptr<Expression> build_side_key;
+	//! Optional: build-side expression splitting the build side into independently searched partitions
+	optional_ptr<Expression> build_side_partition_key;
 	optional_ptr<Expression> probe_side_key;
 
 	vector<column_t> build_side_output_columns;

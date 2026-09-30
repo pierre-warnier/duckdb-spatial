@@ -10,6 +10,7 @@
 #include "duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp"
 #include "duckdb/common/types/row/tuple_data_collection.hpp"
 #include "duckdb/common/types/row/tuple_data_iterator.hpp"
+#include "duckdb/common/types/value_map.hpp"
 #include "duckdb/execution/operator/join/physical_comparison_join.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/planner/expression/bound_operator_expression.hpp"
@@ -60,6 +61,9 @@ PhysicalSpatialKNNJoin::PhysicalSpatialKNNJoin(PhysicalPlan &physical_plan, Logi
 	// and arg1 always references children[1] (build/sink).
 	probe_side_key = func.children[0].get();
 	build_side_key = func.children[1].get();
+	if (func.children.size() == 3) {
+		build_side_partition_key = func.children[2].get();
+	}
 
 	const auto &lop = op.Cast<LogicalSpatialKNNJoin>();
 
@@ -82,6 +86,12 @@ PhysicalSpatialKNNJoin::PhysicalSpatialKNNJoin(PhysicalPlan &physical_plan, Logi
 		conditions_in_layout.emplace(build_side_key->Cast<BoundReferenceExpression>().index, 0);
 	}
 	build_side_key_types.push_back(build_side_key->return_type);
+	if (build_side_partition_key) {
+		if (build_side_partition_key->GetExpressionClass() == ExpressionClass::BOUND_REF) {
+			conditions_in_layout.emplace(build_side_partition_key->Cast<BoundReferenceExpression>().index, 1);
+		}
+		build_side_key_types.push_back(build_side_partition_key->return_type);
+	}
 
 	const auto &build_side_input_types = children[1].get().types;
 	auto right_projection_map_copy = lop.right_projection_map;
@@ -118,6 +128,9 @@ InsertionOrderPreservingMap<string> PhysicalSpatialKNNJoin::ParamsToString() con
 	result["Join Type"] = EnumUtil::ToString(join_type);
 	result["Conditions"] = condition->GetName();
 	result["K"] = to_string(k);
+	if (build_side_partition_key) {
+		result["Partition"] = build_side_partition_key->GetName();
+	}
 	SetEstimatedCardinality(result, estimated_cardinality);
 	return result;
 }
@@ -127,20 +140,16 @@ string PhysicalSpatialKNNJoin::GetName() const {
 }
 
 //======================================================================================================================
-// Sink Interface (identical to PhysicalSpatialJoin — builds the FlatRTree)
+// Sink Interface
 //======================================================================================================================
 
-// When the build side exceeds this threshold, partition into multiple R-trees
-// so individual trees stay cache-friendly and can be evicted independently.
 class KNNJoinGlobalSinkState final : public GlobalSinkState {
 public:
 	unique_ptr<TupleDataCollection> collection;
 	idx_t total_rtree_size = 0;
 
-	// Single R-tree for small datasets
-	unique_ptr<FlatRTree> rtree = nullptr;
-
-	// Partitioned R-trees for large datasets
+	// One R-tree per partition value, or a single one if the join is not partitioned
+	vector<unique_ptr<FlatRTree>> rtrees;
 
 	mutex combine_lock;
 };
@@ -162,6 +171,9 @@ public:
 		collection->InitializeAppend(append_state, TupleDataPinProperties::UNPIN_AFTER_DONE);
 
 		build_side_key_executor.AddExpression(*op.build_side_key);
+		if (op.build_side_partition_key) {
+			build_side_key_executor.AddExpression(*op.build_side_partition_key);
+		}
 		build_side_key_chunk.Initialize(context, op.build_side_key_types);
 		build_side_row_chunk.InitializeEmpty(layout->GetTypes());
 		build_side_payload_chunk.InitializeEmpty(op.build_side_payload_types);
@@ -265,9 +277,14 @@ SinkFinalizeType PhysicalSpatialKNNJoin::Finalize(Pipeline &pipeline, Event &eve
 		return IsLeftOuterJoin(join_type) ? SinkFinalizeType::READY : SinkFinalizeType::NO_OUTPUT_POSSIBLE;
 	}
 
-	// Phase 1: collect all bounding boxes and row pointers
-	vector<RTreeBuildEntry> all_entries;
-	all_entries.reserve(gstate.total_rtree_size);
+	// Phase 1: collect the bounding boxes and row pointers of each partition
+	const auto is_partitioned = build_side_partition_key != nullptr;
+	vector<vector<RTreeBuildEntry>> partitions;
+	value_map_t<idx_t> partition_lookup;
+	if (!is_partitioned) {
+		partitions.emplace_back();
+		partitions.back().reserve(gstate.total_rtree_size);
+	}
 
 	TupleDataChunkIterator iterator(*gstate.collection, TupleDataPinProperties::KEEP_EVERYTHING_PINNED, true);
 
@@ -279,6 +296,11 @@ SinkFinalizeType PhysicalSpatialKNNJoin::Finalize(Pipeline &pipeline, Event &eve
 	DataChunk geom_chunk;
 	geom_chunk.Initialize(context, {build_side_key_types[0]});
 	auto &geom_vec = geom_chunk.data[0];
+
+	DataChunk partition_chunk;
+	if (is_partitioned) {
+		partition_chunk.Initialize(context, {build_side_key_types[1]});
+	}
 
 	DataChunk bbox_chunk;
 	bbox_chunk.Initialize(context, {GeoTypes::BOX_2DF()});
@@ -295,9 +317,15 @@ SinkFinalizeType PhysicalSpatialKNNJoin::Finalize(Pipeline &pipeline, Event &eve
 		bbox_chunk.SetCardinality(row_count);
 
 		constexpr auto build_side_key_col = 0;
-		D_ASSERT(build_side_key_types.size() == 1);
+		constexpr auto build_side_partition_col = 1;
 
 		gstate.collection->Gather(row_pointer_vector, sel, row_count, build_side_key_col, geom_vec, sel, nullptr);
+		if (is_partitioned) {
+			partition_chunk.Reset();
+			partition_chunk.SetCardinality(row_count);
+			gstate.collection->Gather(row_pointer_vector, sel, row_count, build_side_partition_col,
+			                          partition_chunk.data[0], sel, nullptr);
+		}
 
 		bbox_chunk.Flatten();
 		bbox_executor.Execute(geom_chunk, bbox_chunk);
@@ -320,24 +348,39 @@ SinkFinalizeType PhysicalSpatialKNNJoin::Finalize(Pipeline &pipeline, Event &eve
 			bbox.max.x = xmax_data[row_idx];
 			bbox.max.y = ymax_data[row_idx];
 
-			all_entries.push_back({bbox, rows_ptr[row_idx]});
+			idx_t partition_idx = 0;
+			if (is_partitioned) {
+				// NULL keys form a partition of their own, like in GROUP BY
+				const auto entry = partition_lookup.emplace(partition_chunk.data[0].GetValue(row_idx), partitions.size());
+				if (entry.second) {
+					partitions.emplace_back();
+				}
+				partition_idx = entry.first->second;
+			}
+			partitions[partition_idx].push_back({bbox, rows_ptr[row_idx]});
 		}
 	} while (iterator.Next());
 
-	// All geometries were NULL or empty — no valid entries to index
-	if (all_entries.empty()) {
-		return IsLeftOuterJoin(join_type) ? SinkFinalizeType::READY : SinkFinalizeType::NO_OUTPUT_POSSIBLE;
-	}
-
-	// Phase 2: build single in-memory R-tree
+	// Phase 2: build one in-memory R-tree per partition
 	static constexpr auto RTREE_NODE_SIZE = 32;
 	auto &allocator = Allocator::Get(context);
 
-	gstate.rtree = make_uniq<FlatRTree>(allocator, all_entries.size(), RTREE_NODE_SIZE);
-	for (auto &entry : all_entries) {
-		gstate.rtree->Push(entry.bbox, entry.row_ptr);
+	for (auto &entries : partitions) {
+		if (entries.empty()) {
+			continue;
+		}
+		auto rtree = make_uniq<FlatRTree>(allocator, entries.size(), RTREE_NODE_SIZE);
+		for (auto &entry : entries) {
+			rtree->Push(entry.bbox, entry.row_ptr);
+		}
+		rtree->Build();
+		gstate.rtrees.push_back(std::move(rtree));
 	}
-	gstate.rtree->Build();
+
+	// All geometries were NULL or empty — no valid entries to index
+	if (gstate.rtrees.empty()) {
+		return IsLeftOuterJoin(join_type) ? SinkFinalizeType::READY : SinkFinalizeType::NO_OUTPUT_POSSIBLE;
+	}
 
 	return SinkFinalizeType::READY;
 }
@@ -402,7 +445,7 @@ public:
 
 class KNNJoinGlobalOperatorState final : public GlobalOperatorState {
 public:
-	unique_ptr<FlatRTree> rtree;
+	vector<unique_ptr<FlatRTree>> rtrees;
 	unique_ptr<TupleDataCollection> collection;
 };
 
@@ -424,7 +467,7 @@ unique_ptr<OperatorState> PhysicalSpatialKNNJoin::GetOperatorState(ExecutionCont
 unique_ptr<GlobalOperatorState> PhysicalSpatialKNNJoin::GetGlobalOperatorState(ClientContext &context) const {
 	auto &gstate = sink_state->Cast<KNNJoinGlobalSinkState>();
 	auto result = make_uniq<KNNJoinGlobalOperatorState>();
-	result->rtree = std::move(gstate.rtree);
+	result->rtrees = std::move(gstate.rtrees);
 	result->collection = std::move(gstate.collection);
 	return std::move(result);
 }
@@ -445,8 +488,7 @@ OperatorResultType PhysicalSpatialKNNJoin::ExecuteInternal(ExecutionContext &con
 		// START
 		//--------------------------------------------------------------------------------------------------------------
 		case KNNJoinState::START: {
-			bool has_rtree = (gstate.rtree != nullptr && gstate.rtree->Count() > 0);
-			if (!has_rtree) {
+			if (gstate.rtrees.empty()) {
 				if (IsLeftOuterJoin(join_type)) {
 					lstate.probe_side_row_chunk.ReferenceColumns(input, probe_side_output_columns);
 					PhysicalComparisonJoin::ConstructEmptyJoinResult(join_type, false, lstate.probe_side_row_chunk, chunk);
@@ -470,6 +512,8 @@ OperatorResultType PhysicalSpatialKNNJoin::ExecuteInternal(ExecutionContext &con
 			entries[1]->ToUnifiedFormat(input.size(), lstate.probe_side_box_ymin_vformat);
 			entries[2]->ToUnifiedFormat(input.size(), lstate.probe_side_box_xmax_vformat);
 			entries[3]->ToUnifiedFormat(input.size(), lstate.probe_side_box_ymax_vformat);
+
+			lstate.probe_side_key_chunk.data[0].ToUnifiedFormat(input.size(), lstate.probe_side_key_vformat);
 
 			lstate.probe_side_row_chunk.ReferenceColumns(input, probe_side_output_columns);
 
@@ -523,99 +567,54 @@ OperatorResultType PhysicalSpatialKNNJoin::ExecuteInternal(ExecutionContext &con
 			bbox.max.x = xmax_data[xmax_idx];
 			bbox.max.y = ymax_data[ymax_idx];
 
-			// Over-fetch candidates for exact distance refinement
-			// Spheroid needs more candidates because planar bbox distance is a worse lower bound
-			const uint32_t overfetch_factor = 2;
-
-			{
-				// Single in-memory R-tree: direct KNN search
-				const auto fetch_count = MinValue(effective_k * overfetch_factor, gstate.rtree->Count());
-				gstate.rtree->KNNSearch(lstate.knn_state, bbox, fetch_count);
-			}
-
-			// Compute exact distances and re-rank.
-			// Uses adaptive overfetch: if the k-th exact distance exceeds the
-			// last fetched bbox distance, we may have missed candidates and retry.
 			lstate.refined_results.clear();
 			lstate.arena.Reset();
 
-			// Get probe geometry for distance computation
-			auto &probe_key_data = lstate.probe_side_key_chunk.data[0];
-			probe_key_data.ToUnifiedFormat(input.size(), lstate.probe_side_key_vformat);
 			const auto probe_key_idx = lstate.probe_side_key_vformat.sel->get_index(lstate.input_index);
-			const auto &probe_blob = UnifiedVectorFormat::GetData<string_t>(lstate.probe_side_key_vformat)[probe_key_idx];
+			const auto &probe_blob =
+			    UnifiedVectorFormat::GetData<string_t>(lstate.probe_side_key_vformat)[probe_key_idx];
 
 			sgl::prepared_geometry probe_geom;
 			Serde::DeserializePrepared(probe_geom, lstate.arena, probe_blob.GetDataUnsafe(), probe_blob.GetSize());
 
-			auto compute_exact_distance = [&](const sgl::prepared_geometry &p_geom,
-			                                  const sgl::prepared_geometry &b_geom,
-			                                  float bbox_dist_sq) -> double {
-				// Fast path: if the bbox lower bound is already 0 (query point inside
-				// the candidate's bbox), the exact distance is at most bbox_dist_sq and
-				// commonly 0 for point-vs-point cases. Still compute exact for correctness.
-				(void)bbox_dist_sq;
-				double dist = 0.0;
-				if (!sgl::ops::get_euclidean_distance(p_geom, b_geom, dist)) {
-					// One side is empty — treat as infinitely far so it ranks last.
-					return std::numeric_limits<double>::infinity();
-				}
-				return dist;
-			};
+			// The R-tree yields candidates by increasing bounding box distance, which is a lower bound on the exact
+			// distance. We keep the k best candidates by exact distance, and stop once the next candidate's lower bound
+			// can no longer beat the current k-th best.
+			for (auto &rtree : gstate.rtrees) {
+				const auto partition_beg = lstate.refined_results.size();
 
-			for (idx_t i = 0; i < lstate.knn_state.results.size(); i++) {
-				auto row_ptr = lstate.knn_state.results[i];
-				auto geom_ptr = row_ptr + layout->GetOffsets()[0];
-				auto geom_blob = Load<string_t>(geom_ptr);
+				data_ptr_t row_ptr = nullptr;
+				double min_dist_sq = 0;
 
-				sgl::prepared_geometry build_geom;
-				Serde::DeserializePrepared(build_geom, lstate.arena, geom_blob.GetDataUnsafe(), geom_blob.GetSize());
+				rtree->InitKNN(lstate.knn_state, bbox);
+				while (rtree->NextKNN(lstate.knn_state, bbox, row_ptr, min_dist_sq)) {
+					auto &results = lstate.refined_results;
+					const auto is_full = results.size() - partition_beg == effective_k;
+					if (is_full && std::sqrt(min_dist_sq) >= results.back().exact_distance) {
+						break;
+					}
 
-				double dist = compute_exact_distance(probe_geom, build_geom, lstate.knn_state.result_distances_sq[i]);
-				lstate.refined_results.push_back({row_ptr, dist});
-			}
+					const auto geom_blob = Load<string_t>(row_ptr + layout->GetOffsets()[0]);
+					sgl::prepared_geometry build_geom;
+					Serde::DeserializePrepared(build_geom, lstate.arena, geom_blob.GetDataUnsafe(),
+					                           geom_blob.GetSize());
 
-			// Sort by exact distance and truncate to k
-			std::stable_sort(lstate.refined_results.begin(), lstate.refined_results.end(),
-			          [](const KNNCandidate &a, const KNNCandidate &b) { return a.exact_distance < b.exact_distance; });
+					double dist = 0.0;
+					if (!sgl::ops::get_euclidean_distance(probe_geom, build_geom, dist)) {
+						continue;
+					}
+					if (is_full && dist >= results.back().exact_distance) {
+						continue;
+					}
 
-			// Adaptive overfetch check: if the k-th exact distance is larger than the
-			// last bbox distance we fetched, a true nearest neighbor may have been missed.
-			// Retry with a much larger fetch count.
-			if (lstate.refined_results.size() >= effective_k && !lstate.knn_state.result_distances_sq.empty()) {
-				auto kth_exact = lstate.refined_results[effective_k - 1].exact_distance;
-				auto last_bbox = std::sqrt(static_cast<double>(lstate.knn_state.result_distances_sq.back()));
-				if (kth_exact > last_bbox * 1.001) {
-					// The k-th exact distance exceeds what we fetched from the R-tree.
-					// Re-fetch with a much larger candidate set.
-					auto expanded_fetch = MinValue(effective_k * 8u, gstate.rtree->Count());
-					if (expanded_fetch > lstate.knn_state.results.size()) {
-						lstate.refined_results.clear();
-						lstate.arena.Reset();
-						Serde::DeserializePrepared(probe_geom, lstate.arena, probe_blob.GetDataUnsafe(), probe_blob.GetSize());
-
-						gstate.rtree->KNNSearch(lstate.knn_state, bbox, expanded_fetch);
-
-						for (idx_t j = 0; j < lstate.knn_state.results.size(); j++) {
-							auto rp = lstate.knn_state.results[j];
-							auto gp = rp + layout->GetOffsets()[0];
-							auto gb = Load<string_t>(gp);
-							sgl::prepared_geometry bg;
-							Serde::DeserializePrepared(bg, lstate.arena, gb.GetDataUnsafe(), gb.GetSize());
-							double d = compute_exact_distance(probe_geom, bg, lstate.knn_state.result_distances_sq[j]);
-							lstate.refined_results.push_back({rp, d});
-						}
-
-						std::stable_sort(lstate.refined_results.begin(), lstate.refined_results.end(),
-						          [](const KNNCandidate &a, const KNNCandidate &b) {
-							          return a.exact_distance < b.exact_distance;
-						          });
+					const auto pos = std::upper_bound(
+					    results.begin() + static_cast<int64_t>(partition_beg), results.end(), dist,
+					    [](double d, const KNNCandidate &candidate) { return d < candidate.exact_distance; });
+					results.insert(pos, {row_ptr, dist});
+					if (results.size() - partition_beg > effective_k) {
+						results.pop_back();
 					}
 				}
-			}
-
-			if (lstate.refined_results.size() > effective_k) {
-				lstate.refined_results.resize(effective_k);
 			}
 
 			lstate.emit_idx = 0;

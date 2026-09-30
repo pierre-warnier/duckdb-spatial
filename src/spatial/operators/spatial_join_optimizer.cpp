@@ -425,8 +425,8 @@ static bool IsKNNJoinPredicate(const unique_ptr<Expression> &expr, const unorder
 		return false;
 	}
 
-	// After bind, ST_KNN has 2 args (k was folded into bind_data)
-	if (func.children.size() != 2) {
+	// After bind, ST_KNN has 2 args (k was folded into bind_data), plus an optional partition key
+	if (func.children.size() != 2 && func.children.size() != 3) {
 		return false;
 	}
 
@@ -439,6 +439,14 @@ static bool IsKNNJoinPredicate(const unique_ptr<Expression> &expr, const unorder
 
 	if (left_side == JoinSide::BOTH || right_side == JoinSide::BOTH) {
 		return false;
+	}
+
+	if (func.children.size() == 3) {
+		// The partition key has to come from the build side
+		const auto partition_side = JoinSide::GetJoinSide(*func.children[2], left_bindings, right_bindings);
+		if (partition_side != JoinSide::NONE && partition_side != right_side) {
+			return false;
+		}
 	}
 
 	needs_flipping = (left_side == JoinSide::RIGHT);

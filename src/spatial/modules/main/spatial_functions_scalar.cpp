@@ -12077,10 +12077,13 @@ struct ST_KNN {
 		}
 	};
 
-	static unique_ptr<FunctionData> Bind3(ClientContext &context, ScalarFunction &bound_function,
-	                                      vector<unique_ptr<Expression>> &arguments) {
+	static unique_ptr<FunctionData> Bind(ClientContext &context, ScalarFunction &bound_function,
+	                                     vector<unique_ptr<Expression>> &arguments) {
 		if (arguments[2]->IsFoldable()) {
 			const auto k_expr = ExpressionExecutor::EvaluateScalar(context, *arguments[2]);
+			if (k_expr.IsNull()) {
+				throw InvalidInputException("ST_KNN: k must not be NULL");
+			}
 			const auto k_value = k_expr.GetValue<int32_t>();
 			if (k_value < 1) {
 				throw InvalidInputException("ST_KNN: k must be >= 1, got %d", k_value);
@@ -12092,7 +12095,10 @@ struct ST_KNN {
 	}
 
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
-		throw InvalidInputException("ST_KNN cannot be used outside of a JOIN ON clause");
+		throw InvalidInputException(
+		    "ST_KNN cannot be used outside of a JOIN ON clause: it has to be the condition of an INNER or LEFT join, "
+		    "without an equality condition between both sides, and its partition key has to come from the same side "
+		    "as its second geometry");
 	}
 
 	static void Register(ExtensionLoader &loader) {
@@ -12102,18 +12108,47 @@ struct ST_KNN {
 				variant.AddParameter("geom2", LogicalType::GEOMETRY());
 				variant.AddParameter("k", LogicalType::INTEGER);
 				variant.SetReturnType(LogicalType::BOOLEAN);
-				variant.SetBind(Bind3);
+				variant.SetBind(Bind);
+				variant.SetFunction(Execute);
+			});
+			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+				variant.AddParameter("geom1", LogicalType::GEOMETRY());
+				variant.AddParameter("geom2", LogicalType::GEOMETRY());
+				variant.AddParameter("k", LogicalType::INTEGER);
+				variant.AddParameter("partition", LogicalType::ANY);
+				variant.SetReturnType(LogicalType::BOOLEAN);
+				variant.SetBind(Bind);
 				variant.SetFunction(Execute);
 			});
 			func.SetDescription(R"(
-				K-nearest neighbor spatial join predicate.
-				Finds the k nearest geometries from geom2 for each geom1.
-				Must be used in a JOIN ON clause.
+				K-nearest-neighbor join predicate: matches each row of the `geom1` side with its `k` nearest rows of the `geom2` side.
+
+				`ST_KNN` is not a regular function. It is only valid as the condition of a `JOIN ... ON`, where the optimizer replaces the join with a dedicated `SPATIAL_KNN_JOIN` operator. Evaluating it anywhere else raises an error.
+
+				- **Arguments**: `geom1` is the probe side (every row of it is matched), `geom2` is the searched side, regardless of the order in which the two tables are written in the `FROM` clause. `k` must be a constant integer `>= 1`.
+				- **Distance**: planar euclidean distance between the two geometries, in the units of their coordinates, exactly as computed by `ST_Distance`. There is no geodesic mode: reproject longitude/latitude data to a metric CRS with `ST_Transform` first.
+				- **Exactness**: the result is the exact set of `k` nearest rows. An R-tree over the `geom2` side yields candidates by bounding box distance, and candidates are refined with the exact geometry distance until no closer row can exist. If fewer than `k` rows are available, all of them are returned. Ties at the `k`-th distance are broken arbitrarily.
+				- **Join types**: `INNER` and `LEFT`. Rows with a `NULL` or empty geometry never match; with a `LEFT JOIN` a probe row without any match is returned once, with `NULL` for the columns of the other side.
+				- **Other conditions**: a condition on a single table restricts the rows of that table *before* the search, exactly like filtering it in a subquery. A condition comparing both tables is not part of the search: an equality (`a.x = b.x`) raises an error, anything else only filters the k rows that were found (`INNER` joins only). To search within groups of the `geom2` side, use the `partition` argument.
+				- **Partitioning**: the optional `partition` argument is an expression over the `geom2` side. The search is then run independently within each distinct value of it, so each probe row is matched with its `k` nearest rows *per partition value* (`NULL` forms a partition of its own), while scanning the probe side only once.
+				- **Memory**: the `geom2` side is materialized and indexed in memory, so it should be the smaller of the two inputs.
 			)");
 			func.SetExample(R"(
-				SELECT a.id, b.id
-				FROM table_a a
-				JOIN table_b b ON ST_KNN(a.geom, b.geom, 5);
+				-- The 5 nearest hydrants of each building, with their distance (coordinates in a metric CRS)
+				SELECT b.id, h.id, ST_Distance(b.geom, h.geom) AS dist
+				FROM buildings b
+				JOIN hydrants h ON ST_KNN(b.geom, h.geom, 5);
+
+				-- Longitude/latitude input: project both sides to a metric CRS first
+				SELECT b.id, h.id
+				FROM (SELECT id, ST_Transform(geom, 'EPSG:4326', 'EPSG:3812', always_xy := true) AS geom FROM buildings) b
+				JOIN (SELECT id, ST_Transform(geom, 'EPSG:4326', 'EPSG:3812', always_xy := true) AS geom FROM hydrants) h
+				  ON ST_KNN(b.geom, h.geom, 5);
+
+				-- The nearest point of interest of every category for each building, in a single join
+				SELECT b.id, p.category, ST_Distance(b.geom, p.geom) AS dist
+				FROM buildings b
+				JOIN pois p ON ST_KNN(b.geom, p.geom, 1, p.category);
 			)");
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "relation");

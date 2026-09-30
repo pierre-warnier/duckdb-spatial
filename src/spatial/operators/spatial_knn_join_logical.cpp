@@ -26,7 +26,9 @@ void LogicalSpatialKNNJoin::ResolveColumnBindings(ColumnBindingResolver &res, ve
 	res.VisitOperator(*children[0]);
 	res.VisitExpression(&cond.children[0]);
 	res.VisitOperator(*children[1]);
-	res.VisitExpression(&cond.children[1]);
+	for (idx_t i = 1; i < cond.children.size(); i++) {
+		res.VisitExpression(&cond.children[i]);
+	}
 
 	bindings = GetColumnBindings();
 }

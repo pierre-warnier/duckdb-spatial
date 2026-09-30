@@ -1,0 +1,183 @@
+# name: test/sql/join/spatial_knn_join_partition.test
+# description: ST_KNN with a partition key: k nearest rows within each partition of the build side
+# group: [join]
+
+require spatial
+
+statement ok
+SELECT setseed(0.42);
+
+statement ok
+CREATE TABLE probe AS
+SELECT i AS id, ST_Point(random() * 1000, random() * 1000) AS geom
+FROM range(2000) t(i);
+
+# 7 categories of very different sizes, plus rows without category
+statement ok
+CREATE TABLE build AS
+SELECT i AS id,
+       CASE WHEN i % 97 = 0 THEN NULL ELSE 'cat_' || (floor(sqrt(i % 49)))::INT END AS cat,
+       ST_Point(random() * 1000, random() * 1000) AS geom
+FROM range(5000) t(i);
+
+query I
+SELECT count(DISTINCT cat) FROM build;
+----
+7
+
+# The plan uses the KNN join and reports the partition key
+query II
+EXPLAIN SELECT * FROM probe p JOIN build b ON ST_KNN(p.geom, b.geom, 1, b.cat);
+----
+physical_plan	<REGEX>:.*SPATIAL_KNN_JOIN.*Partition: cat.*
+
+# One row per probe row and partition (7 categories + the NULL partition)
+query I
+SELECT count(*) FROM probe p JOIN build b ON ST_KNN(p.geom, b.geom, 1, b.cat);
+----
+16000
+
+# Exactly the same result as a brute-force ranking within each partition
+query I
+SELECT count(*) FROM (
+	(SELECT p.id, b.cat, b.id AS bid FROM probe p JOIN build b ON ST_KNN(p.geom, b.geom, 3, b.cat))
+	EXCEPT
+	(SELECT p.id, b.cat, b.id AS bid FROM probe p, build b
+	 QUALIFY row_number() OVER (PARTITION BY p.id, b.cat ORDER BY ST_Distance(p.geom, b.geom), b.id) <= 3)
+);
+----
+0
+
+query I
+SELECT count(*) FROM probe p JOIN build b ON ST_KNN(p.geom, b.geom, 3, b.cat);
+----
+48000
+
+# Same as one join per category
+query I
+SELECT count(*) FROM (
+	(SELECT p.id, b.id AS bid FROM probe p JOIN build b ON ST_KNN(p.geom, b.geom, 2, b.cat) WHERE b.cat = 'cat_3')
+	EXCEPT
+	(SELECT p.id, b.id AS bid FROM probe p JOIN (SELECT * FROM build WHERE cat = 'cat_3') b ON ST_KNN(p.geom, b.geom, 2))
+);
+----
+0
+
+# Partitions smaller than k return all of their rows
+statement ok
+CREATE TABLE small_build AS
+SELECT * FROM (VALUES
+	(1, 'a', ST_Point(0, 0)),
+	(2, 'a', ST_Point(10, 0)),
+	(3, 'a', ST_Point(20, 0)),
+	(4, 'b', ST_Point(5, 5)),
+	(5, NULL, ST_Point(1, 1)),
+	(6, 'c', NULL),
+	(7, 'c', ST_GeomFromText('POINT EMPTY'))
+) t(id, cat, geom);
+
+query ITI
+SELECT p.id, b.cat, b.id
+FROM (SELECT 1 AS id, ST_Point(1, 0) AS geom) p
+JOIN small_build b ON ST_KNN(p.geom, b.geom, 2, b.cat)
+ORDER BY ALL;
+----
+1	a	1
+1	a	2
+1	b	4
+1	NULL	5
+
+# The order of the tables does not matter, the second geometry is the searched side
+query ITI
+SELECT p.id, b.cat, b.id
+FROM small_build b
+JOIN (SELECT 1 AS id, ST_Point(1, 0) AS geom) p ON ST_KNN(p.geom, b.geom, 2, b.cat)
+ORDER BY ALL;
+----
+1	a	1
+1	a	2
+1	b	4
+1	NULL	5
+
+# The partition key can be any expression over the build side
+query II
+SELECT b.id % 2, count(*)
+FROM probe p JOIN build b ON ST_KNN(p.geom, b.geom, 1, b.id % 2)
+GROUP BY ALL ORDER BY ALL;
+----
+0	2000
+1	2000
+
+# A constant partition key is a single partition
+query I
+SELECT count(*) FROM (
+	(SELECT p.id, b.id AS bid FROM probe p JOIN build b ON ST_KNN(p.geom, b.geom, 2, 'all'))
+	EXCEPT
+	(SELECT p.id, b.id AS bid FROM probe p JOIN build b ON ST_KNN(p.geom, b.geom, 2))
+);
+----
+0
+
+# LEFT JOIN: probe rows without geometry are kept once
+statement ok
+CREATE TABLE probe_nulls AS
+SELECT * FROM (VALUES (1, ST_Point(1, 0)), (2, NULL)) t(id, geom);
+
+query ITI
+SELECT p.id, b.cat, b.id
+FROM probe_nulls p LEFT JOIN small_build b ON ST_KNN(p.geom, b.geom, 1, b.cat)
+ORDER BY ALL;
+----
+1	a	1
+1	b	4
+1	NULL	5
+2	NULL	NULL
+
+# LEFT JOIN against an empty build side
+query II
+SELECT count(*), count(b.id)
+FROM probe_nulls p LEFT JOIN (SELECT * FROM small_build WHERE false) b ON ST_KNN(p.geom, b.geom, 1, b.cat);
+----
+2	0
+
+# Non-point geometries: distances are exact, not bounding box distances
+statement ok
+CREATE TABLE lines AS
+SELECT i AS id, i % 5 AS grp,
+       ST_MakeLine(ST_Point(random() * 1000, random() * 1000), ST_Point(random() * 1000, random() * 1000)) AS geom
+FROM range(1500) t(i);
+
+query I
+SELECT count(*) FROM (
+	(SELECT p.id, l.grp, l.id AS lid FROM probe p JOIN lines l ON ST_KNN(p.geom, l.geom, 2, l.grp) WHERE p.id < 300)
+	EXCEPT
+	(SELECT p.id, l.grp, l.id AS lid FROM probe p, lines l WHERE p.id < 300
+	 QUALIFY row_number() OVER (PARTITION BY p.id, l.grp ORDER BY ST_Distance(p.geom, l.geom), l.id) <= 2)
+);
+----
+0
+
+query I
+SELECT count(*) FROM probe p JOIN lines l ON ST_KNN(p.geom, l.geom, 2, l.grp) WHERE p.id < 300;
+----
+3000
+
+# The partition key has to come from the searched side
+statement error
+SELECT count(*) FROM probe p JOIN build b ON ST_KNN(p.geom, b.geom, 1, p.id);
+----
+ST_KNN cannot be used outside of a JOIN ON clause
+
+# Parallel probing gives the same result
+statement ok
+SET threads = 8;
+
+query I
+SELECT count(*) FROM (
+	(SELECT p.id, b.cat, b.id AS bid FROM probe p JOIN build b ON ST_KNN(p.geom, b.geom, 3, b.cat))
+	EXCEPT
+	(SELECT p.id, b.cat, b.id AS bid FROM probe p, build b
+	 QUALIFY row_number() OVER (PARTITION BY p.id, b.cat ORDER BY ST_Distance(p.geom, b.geom), b.id) <= 3)
+);
+----
+0

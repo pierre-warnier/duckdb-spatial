@@ -81,11 +81,10 @@ private:
 
 class FlatRTreeKNNState {
 	friend class FlatRTree;
-	using Box = Box2D<float>;
 
-public:
+private:
 	struct HeapEntry {
-		float min_dist_sq;
+		double min_dist_sq;
 		uint32_t node_idx;
 		bool is_leaf;
 		data_ptr_t row_ptr;
@@ -95,12 +94,19 @@ public:
 		}
 	};
 
-	vector<data_ptr_t> results;
-	vector<float> result_distances_sq;
-	idx_t result_idx = 0;
+	void Push(const HeapEntry &entry) {
+		heap.push_back(entry);
+		std::push_heap(heap.begin(), heap.end(), std::greater<HeapEntry>());
+	}
 
-private:
-	std::priority_queue<HeapEntry, vector<HeapEntry>, std::greater<HeapEntry>> pq;
+	HeapEntry Pop() {
+		std::pop_heap(heap.begin(), heap.end(), std::greater<HeapEntry>());
+		const auto entry = heap.back();
+		heap.pop_back();
+		return entry;
+	}
+
+	vector<HeapEntry> heap;
 };
 
 //----------------------------------------------------------------------------------------------------------------------
@@ -339,55 +345,59 @@ public:
 	// KNN search (Hjaltason-Samet best-first traversal)
 	//------------------------------------------------------------------------------------------------------------------
 
-	// K-nearest neighbor search using Hjaltason-Samet priority queue traversal.
-	void KNNSearch(FlatRTreeKNNState &state, const Box &query, uint32_t k) const {
-		KNNSearchImpl(state, query, k, box_array, idx_array, row_array);
-	}
-
-private:
-	// Core KNN implementation — takes explicit array views for thread safety.
-	// Internal KNN search implementation.
-	void KNNSearchImpl(FlatRTreeKNNState &state, const Box &query, uint32_t k,
-	                   const typed_view<Box> &boxes, const typed_view<uint32_t> &indices,
-	                   const typed_view<data_ptr_t> &rows) const {
-		while (!state.pq.empty()) {
-			state.pq.pop();
-		}
-		state.results.clear();
-		state.result_distances_sq.clear();
-		state.result_idx = 0;
-
-		if (item_count == 0 || k == 0) {
+	void InitKNN(FlatRTreeKNNState &state, const Box &query) const {
+		state.heap.clear();
+		if (item_count == 0) {
 			return;
 		}
+		const auto root_idx = layer_bounds.back() - 1;
+		state.Push({MinDistanceSquared(query, box_array[root_idx]), root_idx, false, nullptr});
+	}
 
-		auto root_idx = layer_bounds.back() - 1;
-		float root_dist = query.MinDistanceSquared(boxes[root_idx]);
-		state.pq.push({root_dist, root_idx, false, nullptr});
-
-		while (!state.pq.empty() && state.results.size() < k) {
-			auto top = state.pq.top();
-			state.pq.pop();
+	// Yields the rows in order of non-decreasing distance between their bounding box and the query box.
+	// The reported distance is a lower bound on the distance between the geometries themselves.
+	bool NextKNN(FlatRTreeKNNState &state, const Box &query, data_ptr_t &row, double &min_dist_sq) const {
+		while (!state.heap.empty()) {
+			const auto top = state.Pop();
 
 			if (top.is_leaf) {
-				state.results.push_back(top.row_ptr);
-				state.result_distances_sq.push_back(top.min_dist_sq);
-				continue;
+				row = top.row_ptr;
+				min_dist_sq = top.min_dist_sq;
+				return true;
 			}
 
-			auto entry_beg = top.node_idx;
-			auto entry_end = std::min(static_cast<size_t>(entry_beg) + node_size, UpperBound(entry_beg));
+			const size_t entry_beg = top.node_idx;
+			const auto entry_end = std::min(entry_beg + node_size, UpperBound(entry_beg));
+			const auto is_leaf_level = entry_beg < item_count;
 
 			for (size_t i = entry_beg; i < entry_end; i++) {
-				float child_dist = query.MinDistanceSquared(boxes[i]);
-
-				if (entry_beg >= item_count) {
-					state.pq.push({child_dist, indices[i], false, nullptr});
+				const auto child_dist = MinDistanceSquared(query, box_array[i]);
+				if (is_leaf_level) {
+					state.Push({child_dist, idx_array[i], true, row_array[idx_array[i]]});
 				} else {
-					state.pq.push({child_dist, indices[i], true, rows[indices[i]]});
+					state.Push({child_dist, idx_array[i], false, nullptr});
 				}
 			}
 		}
+		return false;
+	}
+
+private:
+	// Computed in double precision so that the result stays a lower bound for boxes that were rounded outwards
+	static double MinDistanceSquared(const Box &lhs, const Box &rhs) {
+		double dx = 0;
+		double dy = 0;
+		if (rhs.max.x < lhs.min.x) {
+			dx = static_cast<double>(lhs.min.x) - static_cast<double>(rhs.max.x);
+		} else if (rhs.min.x > lhs.max.x) {
+			dx = static_cast<double>(rhs.min.x) - static_cast<double>(lhs.max.x);
+		}
+		if (rhs.max.y < lhs.min.y) {
+			dy = static_cast<double>(lhs.min.y) - static_cast<double>(rhs.max.y);
+		} else if (rhs.min.y > lhs.max.y) {
+			dy = static_cast<double>(rhs.min.y) - static_cast<double>(lhs.max.y);
+		}
+		return dx * dx + dy * dy;
 	}
 
 private:
