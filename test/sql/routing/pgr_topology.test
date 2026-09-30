@@ -1,0 +1,489 @@
+# name: test/sql/routing/pgr_topology.test
+# description: Test pgr_extractVertices, pgr_createTopology, pgr_nodeNetwork and pgr_analyzeGraph
+# group: [routing]
+
+require spatial
+
+# The geometries of the pgRouting sample graph
+statement ok
+CREATE TABLE edges AS SELECT id, ST_MakeLine(ST_Point(x1, y1), ST_Point(x2, y2)) AS geom FROM (VALUES
+	(1, 2, 0, 2, 1), (2, 2, 1, 3, 1), (3, 3, 1, 4, 1), (4, 2, 1, 2, 2), (5, 3, 1, 3, 2), (6, 0, 2, 1, 2),
+	(7, 1, 2, 2, 2), (8, 2, 2, 3, 2), (9, 3, 2, 4, 2), (10, 2, 2, 2, 3), (11, 3, 2, 3, 3), (12, 2, 3, 3, 3),
+	(13, 3, 3, 4, 3), (14, 2, 3, 2, 4), (15, 4, 2, 4, 3), (16, 4, 1, 4, 2), (17, 0.5, 3.5, 1.999999999999, 3.5), (18, 3.5, 2.3, 3.5, 4)
+) t(id, x1, y1, x2, y2);
+
+#----------------------------------------------------------------------------------------------------------------------
+# pgr_extractVertices
+#----------------------------------------------------------------------------------------------------------------------
+
+# Same vertices as the pgRouting documentation
+query IIIRRI
+SELECT id, in_edges, out_edges, x, y, ST_AsText(geom) FROM pgr_extractVertices((SELECT id, geom FROM edges));
+----
+1	NULL	[6]	0.0	2.0	POINT (0 2)
+2	NULL	[17]	0.5	3.5	POINT (0.5 3.5)
+3	[6]	[7]	1.0	2.0	POINT (1 2)
+4	[17]	NULL	1.999999999999	3.5	POINT (1.999999999999 3.5)
+5	NULL	[1]	2.0	0.0	POINT (2 0)
+6	[1]	[2, 4]	2.0	1.0	POINT (2 1)
+7	[4, 7]	[8, 10]	2.0	2.0	POINT (2 2)
+8	[10]	[12, 14]	2.0	3.0	POINT (2 3)
+9	[14]	NULL	2.0	4.0	POINT (2 4)
+10	[2]	[3, 5]	3.0	1.0	POINT (3 1)
+11	[5, 8]	[9, 11]	3.0	2.0	POINT (3 2)
+12	[11, 12]	[13]	3.0	3.0	POINT (3 3)
+13	NULL	[18]	3.5	2.3	POINT (3.5 2.3)
+14	[18]	NULL	3.5	4.0	POINT (3.5 4)
+15	[3]	[16]	4.0	1.0	POINT (4 1)
+16	[9, 16]	[15]	4.0	2.0	POINT (4 2)
+17	[13, 15]	NULL	4.0	3.0	POINT (4 3)
+
+# The source and target that pgRouting assigns to the sample edges
+statement ok
+CREATE TABLE vertices AS SELECT * FROM pgr_extractVertices((SELECT id, geom FROM edges));
+
+statement ok
+CREATE TABLE network AS
+	SELECT e.id, s.id AS source, t.id AS target, e.geom
+	FROM edges e JOIN vertices s ON ST_Equals(ST_StartPoint(e.geom), s.geom) JOIN vertices t ON ST_Equals(ST_EndPoint(e.geom), t.geom);
+
+query III
+SELECT id, source, target FROM network ORDER BY id;
+----
+1	5	6
+2	6	10
+3	10	15
+4	6	7
+5	10	11
+6	1	3
+7	3	7
+8	7	11
+9	11	16
+10	7	8
+11	11	12
+12	8	12
+13	12	17
+14	8	9
+15	16	17
+16	15	16
+17	2	4
+18	13	14
+
+# From the identifiers: no coordinates
+query IIIRRI
+SELECT * FROM pgr_extractVertices((SELECT id, source, target FROM network)) WHERE id <= 7;
+----
+1	NULL	[6]	NULL	NULL	NULL
+2	NULL	[17]	NULL	NULL	NULL
+3	[6]	[7]	NULL	NULL	NULL
+4	[17]	NULL	NULL	NULL	NULL
+5	NULL	[1]	NULL	NULL	NULL
+6	[1]	[2, 4]	NULL	NULL	NULL
+7	[4, 7]	[8, 10]	NULL	NULL	NULL
+
+# Without edge identifiers: no edge lists
+query IIIRRI
+SELECT id, in_edges, out_edges, x, y, ST_AsText(geom) FROM pgr_extractVertices((SELECT geom FROM edges)) WHERE id <= 3;
+----
+1	NULL	NULL	0.0	2.0	POINT (0 2)
+2	NULL	NULL	0.5	3.5	POINT (0.5 3.5)
+3	NULL	NULL	1.0	2.0	POINT (1 2)
+
+query IIIRRI
+SELECT * FROM pgr_extractVertices((SELECT source, target FROM network)) WHERE id <= 3;
+----
+1	NULL	NULL	NULL	NULL	NULL
+2	NULL	NULL	NULL	NULL	NULL
+3	NULL	NULL	NULL	NULL	NULL
+
+# From the start and end points
+query I
+SELECT count(*) FROM (
+	SELECT id, in_edges, out_edges, x, y, ST_AsText(geom) FROM pgr_extractVertices((SELECT id, ST_StartPoint(geom) AS startpoint, ST_EndPoint(geom) AS endpoint FROM edges))
+	EXCEPT SELECT id, in_edges, out_edges, x, y, ST_AsText(geom) FROM vertices);
+----
+0
+
+# The geometry wins over the identifiers, NULL and empty geometries are skipped, the extra dimensions ignored
+query IIIRRI
+SELECT id, in_edges, out_edges, x, y, ST_AsText(geom) FROM pgr_extractVertices((SELECT * FROM (VALUES
+	(1, 100, 200, ST_GeomFromText('LINESTRING Z (1 1 5, 2 2 6, 3 1 7)')),
+	(2, 100, 200, NULL),
+	(3, 100, 200, ST_GeomFromText('LINESTRING EMPTY')),
+	(4, 100, 200, ST_GeomFromText('LINESTRING (3 1, 1 1)'))
+) t(id, source, target, geom)));
+----
+1	[4]	[1]	1.0	1.0	POINT (1 1)
+2	[1]	[4]	3.0	1.0	POINT (3 1)
+
+query I
+SELECT count(*) FROM pgr_extractVertices((SELECT id, geom FROM edges WHERE id > 100));
+----
+0
+
+statement error
+SELECT * FROM pgr_extractVertices((SELECT id FROM edges));
+----
+needs a "geom" column
+
+statement error
+SELECT * FROM pgr_extractVertices((SELECT id, source FROM network));
+----
+missing the column "target"
+
+statement error
+SELECT * FROM pgr_extractVertices((SELECT id, ST_StartPoint(geom) AS startpoint FROM edges));
+----
+missing the column "endpoint"
+
+statement error
+SELECT * FROM pgr_extractVertices((SELECT id, ST_AsText(geom) AS geom FROM edges));
+----
+column "geom" of the edges input must be of GEOMETRY
+
+statement error
+SELECT * FROM pgr_extractVertices((SELECT id, ST_StartPoint(geom) AS geom FROM edges));
+----
+must contain LINESTRING geometries
+
+#----------------------------------------------------------------------------------------------------------------------
+# pgr_createTopology
+#----------------------------------------------------------------------------------------------------------------------
+
+# Vertices are numbered in the order they are met, going through the edges by identifier
+query III
+SELECT * FROM pgr_createTopology((SELECT id, geom FROM edges), 0);
+----
+1	1	2
+2	2	3
+3	3	4
+4	2	5
+5	3	6
+6	7	8
+7	8	5
+8	5	6
+9	6	9
+10	5	10
+11	6	11
+12	10	11
+13	11	12
+14	10	13
+15	9	12
+16	4	9
+17	14	15
+18	16	17
+
+# The end of edge 17 is within the tolerance of edge 14 but not of one of its end points
+query I
+SELECT count(*) FROM (
+	SELECT * FROM pgr_createTopology((SELECT id, geom FROM edges), 0.001)
+	EXCEPT SELECT * FROM pgr_createTopology((SELECT id, geom FROM edges), 0));
+----
+0
+
+# The topology is the one of pgr_extractVertices, up to the numbering of the vertices
+query I
+SELECT count(*) FROM (
+	SELECT n.source AS a, t.source AS b FROM network n JOIN pgr_createTopology((SELECT id, geom FROM edges), 0) t USING (id)
+	UNION SELECT n.target, t.target FROM network n JOIN pgr_createTopology((SELECT id, geom FROM edges), 0) t USING (id));
+----
+17
+
+# Snapping
+statement ok
+CREATE TABLE loose AS SELECT id, ST_GeomFromText(wkt) AS geom FROM (VALUES
+	(1, 'LINESTRING (0 0, 10 0)'),
+	(2, 'LINESTRING (10.04 0.03, 20 0)'),
+	(3, 'LINESTRING (10 0.2, 10 10)'),
+	(4, 'LINESTRING (20.01 0, 20 10, 0.05 0)'),
+	(5, NULL)
+) t(id, wkt);
+
+query III
+SELECT * FROM pgr_createTopology((SELECT * FROM loose), 0);
+----
+1	1	2
+2	3	4
+3	5	6
+4	7	8
+5	NULL	NULL
+
+query III
+SELECT * FROM pgr_createTopology((SELECT * FROM loose), 0.05);
+----
+1	1	2
+2	2	3
+3	4	5
+4	3	1
+5	NULL	NULL
+
+query III
+SELECT * FROM pgr_createTopology((SELECT * FROM loose), 0.25);
+----
+1	1	2
+2	2	3
+3	2	4
+4	3	1
+5	NULL	NULL
+
+# The order of the rows does not matter
+query I
+SELECT count(*) FROM (
+	SELECT * FROM pgr_createTopology((SELECT * FROM loose ORDER BY id DESC), 0.05)
+	EXCEPT SELECT * FROM pgr_createTopology((SELECT * FROM loose), 0.05));
+----
+0
+
+# A point snaps to the nearest vertex within the tolerance
+query III
+SELECT * FROM pgr_createTopology((SELECT * FROM (VALUES
+	(1, ST_GeomFromText('LINESTRING (0 0, 1 0)')),
+	(2, ST_GeomFromText('LINESTRING (0.4 0, 0.7 0)'))
+) t(id, geom)), 0.5);
+----
+1	1	2
+2	1	2
+
+statement error
+SELECT * FROM pgr_createTopology((SELECT * FROM loose), -1);
+----
+tolerance must be a non-negative number
+
+statement error
+SELECT * FROM pgr_createTopology((SELECT id, ST_Point(0, 0) AS geom FROM loose), 0);
+----
+must contain LINESTRING geometries
+
+statement error
+SELECT * FROM pgr_createTopology((SELECT * FROM loose));
+----
+
+#----------------------------------------------------------------------------------------------------------------------
+# pgr_nodeNetwork
+#----------------------------------------------------------------------------------------------------------------------
+
+# Edge 13 is crossed by edge 18, and edge 17 stops just short of edge 14
+query IIII
+SELECT id, old_id, sub_id, ST_AsText(geom) FROM pgr_nodeNetwork((SELECT id, geom FROM edges), 0.001) WHERE old_id IN (12, 13, 14, 17, 18);
+----
+12	12	1	LINESTRING (2 3, 3 3)
+13	13	1	LINESTRING (3 3, 3.5 3)
+14	13	2	LINESTRING (3.5 3, 4 3)
+15	14	1	LINESTRING (2 3, 2 3.5)
+16	14	2	LINESTRING (2 3.5, 2 4)
+19	17	1	LINESTRING (0.5 3.5, 1.999999999999 3.5)
+20	18	1	LINESTRING (3.5 2.3, 3.5 3)
+21	18	2	LINESTRING (3.5 3, 3.5 4)
+
+# Without tolerance the near miss does not split edge 14
+query II
+SELECT old_id, count(*) FROM pgr_nodeNetwork((SELECT id, geom FROM edges), 0) GROUP BY ALL HAVING count(*) > 1 ORDER BY ALL;
+----
+13	2
+18	2
+
+query I
+SELECT count(*) FROM pgr_nodeNetwork((SELECT id, geom FROM edges), 0);
+----
+20
+
+# Crossings, T junctions, shared stretches, several lines through one point, and a line crossed twice
+statement ok
+CREATE TABLE tangle AS SELECT id, ST_GeomFromText(wkt) AS geom FROM (VALUES
+	(1, 'LINESTRING (0 0, 10 0)'),
+	(2, 'LINESTRING (5 -5, 5 5)'),
+	(3, 'LINESTRING (0 -5, 10 5)'),
+	(4, 'LINESTRING (2 0, 2 3)'),
+	(5, 'LINESTRING (7 0, 9 0, 9 4)'),
+	(6, 'LINESTRING (0 2, 3 2, 3 -2, 8 -2, 8 3)'),
+	(7, 'LINESTRING (20 20, 21 21)'),
+	(8, NULL)
+) t(id, wkt);
+
+query IIII
+SELECT id, old_id, sub_id, ST_AsText(geom) FROM pgr_nodeNetwork((SELECT * FROM tangle), 0);
+----
+1	1	1	LINESTRING (0 0, 2 0)
+2	1	2	LINESTRING (2 0, 3 0)
+3	1	3	LINESTRING (3 0, 5 0)
+4	1	4	LINESTRING (5 0, 7 0)
+5	1	5	LINESTRING (7 0, 8 0)
+6	1	6	LINESTRING (8 0, 9 0)
+7	1	7	LINESTRING (9 0, 10 0)
+8	2	1	LINESTRING (5 -5, 5 -2)
+9	2	2	LINESTRING (5 -2, 5 0)
+10	2	3	LINESTRING (5 0, 5 5)
+11	3	1	LINESTRING (0 -5, 3 -2)
+12	3	2	LINESTRING (3 -2, 5 0)
+13	3	3	LINESTRING (5 0, 8 3)
+14	3	4	LINESTRING (8 3, 9 4)
+15	3	5	LINESTRING (9 4, 10 5)
+16	4	1	LINESTRING (2 0, 2 2)
+17	4	2	LINESTRING (2 2, 2 3)
+18	5	1	LINESTRING (7 0, 8 0)
+19	5	2	LINESTRING (8 0, 9 0)
+20	5	3	LINESTRING (9 0, 9 4)
+21	6	1	LINESTRING (0 2, 2 2)
+22	6	2	LINESTRING (2 2, 3 2, 3 0)
+23	6	3	LINESTRING (3 0, 3 -2)
+24	6	4	LINESTRING (3 -2, 5 -2)
+25	6	5	LINESTRING (5 -2, 8 -2, 8 0)
+26	6	6	LINESTRING (8 0, 8 3)
+27	7	1	LINESTRING (20 20, 21 21)
+
+# Afterwards the edges only meet at their end points, except for the stretch that the lines 1 and 5 share,
+# which is left as two pairs of identical edges
+statement ok
+CREATE TABLE noded AS SELECT * FROM pgr_nodeNetwork((SELECT * FROM tangle), 0);
+
+query IIII
+SELECT a.old_id, b.old_id, ST_AsText(a.geom), ST_Equals(a.geom, b.geom)
+FROM noded a JOIN noded b ON a.id < b.id AND ST_Intersects(a.geom, b.geom) WHERE NOT ST_Touches(a.geom, b.geom) ORDER BY a.id;
+----
+1	5	LINESTRING (7 0, 8 0)	true
+1	5	LINESTRING (8 0, 9 0)	true
+
+query II
+SELECT metric, count FROM pgr_analyzeGraph((
+	SELECT n.id, t.source, t.target, n.geom FROM noded n JOIN pgr_createTopology((SELECT id, geom FROM noded), 0) t USING (id)), 0)
+WHERE metric IN ('intersections', 'potential_gaps');
+----
+potential_gaps	0
+intersections	0
+
+# The pieces of a line add up to the line
+query I
+SELECT count(*) FROM (SELECT old_id, sum(ST_Length(geom)) AS length FROM noded GROUP BY old_id) n JOIN tangle t ON t.id = n.old_id
+WHERE abs(n.length - ST_Length(t.geom)) > 1e-9;
+----
+0
+
+# Noding again changes nothing
+query I
+SELECT count(*) FROM (
+	SELECT id, ST_AsText(geom) FROM pgr_nodeNetwork((SELECT id, geom FROM noded), 0)
+	EXCEPT SELECT id, ST_AsText(geom) FROM noded);
+----
+0
+
+query I
+SELECT count(*) FROM (
+	SELECT * FROM pgr_nodeNetwork((SELECT * FROM tangle ORDER BY id DESC), 0)
+	EXCEPT SELECT * FROM noded);
+----
+0
+
+# The coordinate system of the input is kept
+query I
+SELECT DISTINCT typeof(geom) FROM pgr_nodeNetwork((SELECT id, ST_SetCRS(geom, 'EPSG:31370') AS geom FROM tangle), 0);
+----
+GEOMETRY('EPSG:31370')
+
+query I
+SELECT count(*) FROM pgr_nodeNetwork((SELECT * FROM tangle), NULL);
+----
+0
+
+statement error
+SELECT * FROM pgr_nodeNetwork((SELECT * FROM tangle), 'wide');
+----
+must be numeric
+
+statement error
+SELECT * FROM pgr_nodeNetwork((SELECT id, ST_Point(1, 2) AS geom FROM tangle), 0);
+----
+must contain LINESTRING geometries
+
+# Randomized cross-check: after noding random segments no two pieces cross
+statement ok
+CREATE TABLE random_lines AS SELECT i AS id, ST_MakeLine(
+	ST_Point((hash(i + 1000) % 1000) / 10.0, (hash(i + 2000) % 1000) / 10.0),
+	ST_Point((hash(i + 3000) % 1000) / 10.0, (hash(i + 4000) % 1000) / 10.0)) AS geom
+FROM range(1, 61) t(i);
+
+statement ok
+CREATE TABLE random_noded AS SELECT * FROM pgr_nodeNetwork((SELECT * FROM random_lines), 0);
+
+query I
+SELECT count(*) > 300 FROM random_noded;
+----
+true
+
+# Every crossing of two lines gives four pieces
+query I
+SELECT (SELECT count(*) FROM random_noded) - 60 = 2 * (SELECT count(*) FROM random_lines a JOIN random_lines b ON a.id < b.id AND ST_Crosses(a.geom, b.geom));
+----
+true
+
+query I
+SELECT (SELECT count FROM pgr_analyzeGraph((SELECT id, id * 2 AS source, id * 2 + 1 AS target, geom FROM random_lines), 0) WHERE metric = 'intersections')
+     = (SELECT count(*) FROM random_lines a JOIN random_lines b ON a.id < b.id AND ST_Crosses(a.geom, b.geom));
+----
+true
+
+query I
+SELECT count FROM pgr_analyzeGraph((
+	SELECT n.id, t.source, t.target, n.geom FROM random_noded n JOIN pgr_createTopology((SELECT id, geom FROM random_noded), 1e-7) t USING (id)), 0)
+WHERE metric = 'intersections';
+----
+0
+
+#----------------------------------------------------------------------------------------------------------------------
+# pgr_analyzeGraph
+#----------------------------------------------------------------------------------------------------------------------
+
+# Same counts as pgRouting on the sample data
+query II
+SELECT * FROM pgr_analyzeGraph((SELECT id, source, target, geom FROM network), 0.001);
+----
+isolated_segments	2
+dead_ends	7
+potential_gaps	1
+intersections	1
+ring_geometries	0
+
+# Without tolerance the near miss of edge 17 is not a gap
+query II
+SELECT * FROM pgr_analyzeGraph((SELECT id, source, target, geom FROM network), 0);
+----
+isolated_segments	2
+dead_ends	7
+potential_gaps	0
+intersections	1
+ring_geometries	0
+
+# A ring, a closed line that crosses itself, a dead end that touches another edge, and edges without geometry
+query II
+SELECT * FROM pgr_analyzeGraph((SELECT id, source, target, ST_GeomFromText(wkt) AS geom FROM (VALUES
+	(1, 1, 1, 'LINESTRING (0 0, 4 0, 4 4, 0 4, 0 0)'),
+	(2, 2, 2, 'LINESTRING (10 0, 14 4, 14 0, 10 4, 10 0)'),
+	(3, 3, 4, 'LINESTRING (20 0, 30 0)'),
+	(4, 5, 6, 'LINESTRING (25 0, 25 5)'),
+	(5, 7, 8, NULL),
+	(6, 8, 9, NULL)
+) t(id, source, target, wkt)), 0.5);
+----
+isolated_segments	2
+dead_ends	6
+potential_gaps	1
+intersections	0
+ring_geometries	1
+
+query II
+SELECT * FROM pgr_analyzeGraph((SELECT id, source, target, geom FROM network WHERE id > 100), 0);
+----
+isolated_segments	0
+dead_ends	0
+potential_gaps	0
+intersections	0
+ring_geometries	0
+
+statement error
+SELECT * FROM pgr_analyzeGraph((SELECT id, geom FROM network), 0);
+----
+missing the required column "source"
+
+statement error
+SELECT * FROM pgr_analyzeGraph((SELECT id, source, target, geom FROM network), 'a');
+----
+must be numeric

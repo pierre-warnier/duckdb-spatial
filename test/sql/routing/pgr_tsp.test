@@ -19,8 +19,8 @@ CREATE TABLE square AS SELECT * FROM (VALUES
 	(2, 1, 1.0), (3, 2, 1.0), (4, 3, 1.0), (1, 4, 1.0), (3, 1, 5.0), (4, 2, 5.0)
 ) t(start_vid, end_vid, agg_cost);
 
-query IIRR
-SELECT * FROM pgr_TSP((SELECT * FROM square));
+query IITT
+SELECT * REPLACE (cost::VARCHAR AS cost, agg_cost::VARCHAR AS agg_cost) FROM pgr_TSP((SELECT * FROM square));
 ----
 1	1	0.0	0.0
 2	4	1.0	1.0
@@ -28,8 +28,8 @@ SELECT * FROM pgr_TSP((SELECT * FROM square));
 4	2	1.0	3.0
 5	1	1.0	4.0
 
-query IIRR
-SELECT * FROM pgr_TSP((SELECT * FROM square), start_id := 3);
+query IITT
+SELECT * REPLACE (cost::VARCHAR AS cost, agg_cost::VARCHAR AS agg_cost) FROM pgr_TSP((SELECT * FROM square), start_id := 3);
 ----
 1	3	0.0	0.0
 2	4	1.0	1.0
@@ -38,8 +38,8 @@ SELECT * FROM pgr_TSP((SELECT * FROM square), start_id := 3);
 5	3	1.0	4.0
 
 # The end node is the last one before the return to the start
-query IIRR
-SELECT * FROM pgr_TSP((SELECT * FROM square), 1, 3);
+query IITT
+SELECT * REPLACE (cost::VARCHAR AS cost, agg_cost::VARCHAR AS agg_cost) FROM pgr_TSP((SELECT * FROM square), 1, 3);
 ----
 1	1	0.0	0.0
 2	4	1.0	1.0
@@ -48,8 +48,8 @@ SELECT * FROM pgr_TSP((SELECT * FROM square), 1, 3);
 5	1	5.0	12.0
 
 # Only the end is given: it is used as the start
-query IIRR
-SELECT * FROM pgr_TSP((SELECT * FROM square), end_id := 2);
+query IITT
+SELECT * REPLACE (cost::VARCHAR AS cost, agg_cost::VARCHAR AS agg_cost) FROM pgr_TSP((SELECT * FROM square), end_id := 2);
 ----
 1	2	0.0	0.0
 2	3	1.0	1.0
@@ -58,8 +58,8 @@ SELECT * FROM pgr_TSP((SELECT * FROM square), end_id := 2);
 5	2	1.0	4.0
 
 # An asymmetric matrix uses the cheapest direction, a missing cell the shortest path through the other nodes
-query IIRR
-SELECT * FROM pgr_TSP((SELECT * FROM (VALUES (1, 2, 1.0), (2, 1, 9.0), (2, 3, 2.0), (3, 4, 1.0), (4, 1, 7.0), (4, 4, 100.0), (1, 3, -1.0)) t(start_vid, end_vid, agg_cost)));
+query IITT
+SELECT * REPLACE (cost::VARCHAR AS cost, agg_cost::VARCHAR AS agg_cost) FROM pgr_TSP((SELECT * FROM (VALUES (1, 2, 1.0), (2, 1, 9.0), (2, 3, 2.0), (3, 4, 1.0), (4, 1, 7.0), (4, 4, 100.0), (1, 3, -1.0)) t(start_vid, end_vid, agg_cost)));
 ----
 1	1	0.0	0.0
 2	4	4.0	4.0
@@ -68,16 +68,16 @@ SELECT * FROM pgr_TSP((SELECT * FROM (VALUES (1, 2, 1.0), (2, 1, 9.0), (2, 3, 2.
 5	1	1.0	8.0
 
 # Nodes that cannot be reached from the start are left out
-query IIRR
-SELECT * FROM pgr_TSP((SELECT * FROM (VALUES (1, 2, 1.0), (2, 3, 2.0), (1, 3, 2.5), (7, 8, 1.0)) t(start_vid, end_vid, agg_cost)));
+query IITT
+SELECT * REPLACE (cost::VARCHAR AS cost, agg_cost::VARCHAR AS agg_cost) FROM pgr_TSP((SELECT * FROM (VALUES (1, 2, 1.0), (2, 3, 2.0), (1, 3, 2.5), (7, 8, 1.0)) t(start_vid, end_vid, agg_cost)));
 ----
 1	1	0.0	0.0
 2	2	1.0	1.0
 3	3	2.0	3.0
 4	1	2.5	5.5
 
-query IIRR
-SELECT * FROM pgr_TSP((SELECT * FROM (VALUES (1, 2, 1.0), (2, 3, 2.0), (1, 3, 2.5), (7, 8, 1.0)) t(start_vid, end_vid, agg_cost)), start_id := 8);
+query IITT
+SELECT * REPLACE (cost::VARCHAR AS cost, agg_cost::VARCHAR AS agg_cost) FROM pgr_TSP((SELECT * FROM (VALUES (1, 2, 1.0), (2, 3, 2.0), (1, 3, 2.5), (7, 8, 1.0)) t(start_vid, end_vid, agg_cost)), start_id := 8);
 ----
 1	8	0.0	0.0
 2	7	1.0	1.0
@@ -114,8 +114,8 @@ SELECT * FROM pgr_TSP((SELECT start_vid, end_vid FROM square));
 missing the required column "agg_cost"
 
 # With pgr_dijkstraCostMatrix, as in the pgRouting documentation (whose metric approximation costs 20)
-query IIRR
-SELECT * FROM pgr_TSP((
+query IITT
+SELECT * REPLACE (cost::VARCHAR AS cost, agg_cost::VARCHAR AS agg_cost) FROM pgr_TSP((
 	SELECT * FROM pgr_dijkstraCostMatrix((SELECT * FROM edges), [1, 3, 5, 6, 7, 8, 9, 10, 11, 12, 15, 16, 17], directed := false)));
 ----
 1	1	0.0	0.0

@@ -100,7 +100,11 @@ void RoutingResult::Emit(idx_t &offset, DataChunk &output) const {
 			if (column.type.id() == LogicalTypeId::INTEGER) {
 				auto data = FlatVector::GetData<int32_t>(vector);
 				for (idx_t i = 0; i < count; i++) {
-					data[i] = UnsafeNumericCast<int32_t>(column.integers[offset + i]);
+					const auto value = column.integers[offset + i];
+					if (value > NumericLimits<int32_t>::Maximum() || value < NumericLimits<int32_t>::Minimum()) {
+						throw OutOfRangeException("The result has too many rows for its INTEGER sequence columns");
+					}
+					data[i] = UnsafeNumericCast<int32_t>(value);
 				}
 			} else {
 				auto data = FlatVector::GetData<int64_t>(vector);
@@ -467,9 +471,11 @@ void InsertInputBarrier(OptimizerExtensionInput &input, unique_ptr<LogicalOperat
 	if (bindings.empty()) {
 		return;
 	}
+	// Any column would do. The identifier is cheap to sort, and edges that arrive ordered do not have to be sorted again.
+	auto &names = plan->Cast<LogicalGet>().input_table_names;
 	idx_t column = 0;
-	for (idx_t i = 0; i < child->types.size(); i++) {
-		if (child->types[i].IsNumeric()) {
+	for (idx_t i = 0; i < child->types.size() && i < names.size(); i++) {
+		if (child->types[i].IsIntegral() && StringUtil::CIEquals(names[i], "id")) {
 			column = i;
 			break;
 		}

@@ -172,24 +172,24 @@ CREATE TABLE odd AS SELECT * FROM (VALUES
 	(5, 9000000000000000000, -9000000000000000000, 1.5, -1.0)
 ) t(id, source, target, cost, reverse_cost);
 
-query IIIIIIRR
-SELECT * FROM pgr_dijkstra((SELECT * FROM odd), -9000000000000000000, 9000000000000000000);
+query IIIIIITT
+SELECT * REPLACE (cost::VARCHAR AS cost, agg_cost::VARCHAR AS agg_cost) FROM pgr_dijkstra((SELECT * FROM odd), -9000000000000000000, 9000000000000000000);
 ----
 1	1	-9000000000000000000	9000000000000000000	-9000000000000000000	2	2.5	0.0
 2	2	-9000000000000000000	9000000000000000000	5	4	0.0	2.5
 3	3	-9000000000000000000	9000000000000000000	9000000000000000000	-1	0.0	2.5
 
-query IIIIIIRR
-SELECT * FROM pgr_dijkstra((SELECT * FROM odd), 5, -9000000000000000000);
+query IIIIIITT
+SELECT * REPLACE (cost::VARCHAR AS cost, agg_cost::VARCHAR AS agg_cost) FROM pgr_dijkstra((SELECT * FROM odd), 5, -9000000000000000000);
 ----
 1	1	5	-9000000000000000000	5	4	0.0	0.0
 2	2	5	-9000000000000000000	9000000000000000000	5	1.5	0.0
 3	3	5	-9000000000000000000	-9000000000000000000	-1	0.0	1.5
 
 # The function runs inside the calling transaction and reads CTEs, temporary tables and uncommitted rows
-query III
+query IIT
 WITH shortcut AS (SELECT * FROM edges UNION ALL SELECT 99, 6, 10, 0.5, -1)
-SELECT node, edge, cost FROM pgr_dijkstra((SELECT * FROM shortcut), 6, 10);
+SELECT node, edge, cost::VARCHAR FROM pgr_dijkstra((SELECT * FROM shortcut), 6, 10);
 ----
 6	99	0.5
 10	-1	0.0
@@ -313,6 +313,30 @@ SELECT * FROM pgr_dijkstraCostMatrix((SELECT * FROM edges), [5, 6, 10, 15, 2], f
 15	5	3.0
 15	6	2.0
 15	10	1.0
+
+# The start and end vertices have to be constants
+statement error
+SELECT * FROM range(3) r(i), LATERAL pgr_dijkstra((SELECT * FROM edges), r.i, 10);
+----
+
+# Without the optimizer the input is not materialized first: an input that comes from one pipeline still works,
+# an input that arrives in several parts is refused instead of being routed on partially
+statement ok
+PRAGMA disable_optimizer;
+
+query II
+SELECT node, edge FROM pgr_dijkstra((SELECT * FROM edges), 6, 10, false);
+----
+6	2
+10	-1
+
+statement error
+SELECT * FROM pgr_dijkstraCost((SELECT * FROM edges WHERE id <= 9 UNION ALL SELECT * FROM edges WHERE id > 9), 6, 10);
+----
+arrived in several parts
+
+statement ok
+PRAGMA enable_optimizer;
 
 # Errors
 statement error
@@ -484,7 +508,7 @@ SELECT count(*) FROM (
 
 # A large input arrives in many chunks
 query IIR
-SELECT count(*), max(node), max(agg_cost) FROM pgr_dijkstra((
+SELECT count(*), max(node), max(agg_cost)::BIGINT FROM pgr_dijkstra((
 	SELECT i AS id, i AS source, i + 1 AS target, 1 AS cost FROM range(100000) t(i)), 0, 100000);
 ----
-100001	100000	100000.0
+100001	100000	100000

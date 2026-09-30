@@ -22,8 +22,8 @@ SET VARIABLE points = (SELECT list(p) FROM points_of_interest p);
 
 # The queries of the pgRouting documentation, with the same results.
 # From point 1 to vertex 10, right side driving (the default on a directed graph), with details
-query IIIIIIRR
-SELECT seq, path_seq, start_vid, end_vid, node, edge, round(cost, 6), round(agg_cost, 6)
+query IIIIIITT
+SELECT seq, path_seq, start_vid, end_vid, node, edge, round(cost, 6)::VARCHAR, round(agg_cost, 6)::VARCHAR
 FROM pgr_withPoints((SELECT id, source, target, cost, reverse_cost FROM edges), getvariable('points'), -1, 10, details := true);
 ----
 1	1	-1	10	-1	1	0.4	0.0
@@ -37,8 +37,8 @@ FROM pgr_withPoints((SELECT id, source, target, cost, reverse_cost FROM edges), 
 9	9	-1	10	10	-1	0.0	6.4
 
 # From point 1 to point 3 and vertex 7 on an undirected graph
-query IIIIIIRR
-SELECT seq, path_seq, start_vid, end_vid, node, edge, round(cost, 6), round(agg_cost, 6)
+query IIIIIITT
+SELECT seq, path_seq, start_vid, end_vid, node, edge, round(cost, 6)::VARCHAR, round(agg_cost, 6)::VARCHAR
 FROM pgr_withPoints((SELECT * FROM edges), getvariable('points'), -1, [-3, 7], directed := false);
 ----
 1	1	-1	-3	-1	1	0.6	0.0
@@ -51,8 +51,8 @@ FROM pgr_withPoints((SELECT * FROM edges), getvariable('points'), -1, [-3, 7], d
 8	3	-1	7	7	-1	0.0	1.6
 
 # From point 1 and vertex 6 to point 3: without details the rows on the same edge are merged
-query IIIIIIRR
-SELECT seq, path_seq, start_vid, end_vid, node, edge, round(cost, 6), round(agg_cost, 6)
+query IIIIIITT
+SELECT seq, path_seq, start_vid, end_vid, node, edge, round(cost, 6)::VARCHAR, round(agg_cost, 6)::VARCHAR
 FROM pgr_withPoints((SELECT * FROM edges), getvariable('points'), [-1, 6], -3);
 ----
 1	1	-1	-3	-1	1	1.4	0.0
@@ -66,8 +66,8 @@ FROM pgr_withPoints((SELECT * FROM edges), getvariable('points'), [-1, 6], -3);
 9	4	6	-3	-3	-1	0.0	2.6
 
 # Left side driving
-query IIIIIIRR
-SELECT seq, path_seq, start_vid, end_vid, node, edge, round(cost, 6), round(agg_cost, 6)
+query IIIIIITT
+SELECT seq, path_seq, start_vid, end_vid, node, edge, round(cost, 6)::VARCHAR, round(agg_cost, 6)::VARCHAR
 FROM pgr_withPoints((SELECT * FROM edges), getvariable('points'), [-1, 6], [-3, 1], 'L');
 ----
 1	1	-1	-3	-1	1	0.6	0.0
@@ -90,8 +90,8 @@ FROM pgr_withPoints((SELECT * FROM edges), getvariable('points'), [-1, 6], [-3, 
 18	4	6	1	1	-1	0.0	3.0
 
 # Right side driving with details, to points and vertices
-query IIIIIIRR
-SELECT seq, path_seq, start_vid, end_vid, node, edge, round(cost, 6), round(agg_cost, 6)
+query IIIIIITT
+SELECT seq, path_seq, start_vid, end_vid, node, edge, round(cost, 6)::VARCHAR, round(agg_cost, 6)::VARCHAR
 FROM pgr_withPoints((SELECT * FROM edges), getvariable('points'), [5, -1], [-2, -3, -6, 10, 11], 'r', details := true);
 ----
 1	1	-1	-6	-1	1	0.4	0.0
@@ -159,8 +159,8 @@ FROM pgr_withPoints((SELECT * FROM edges), getvariable('points'), [5, -1], [-2, 
 63	5	5	11	11	-1	0.0	3.0
 
 # The driving side can be named, and both sides can be allowed
-query IIR
-SELECT start_vid, end_vid, round(max(agg_cost), 6)
+query IIT
+SELECT start_vid, end_vid, round(max(agg_cost), 6)::VARCHAR
 FROM pgr_withPoints((SELECT * FROM edges), getvariable('points'), [-1, -4, -6], [-2, -5, 3], driving_side := 'b') GROUP BY ALL ORDER BY ALL;
 ----
 -6	-5	5.1
@@ -174,8 +174,8 @@ FROM pgr_withPoints((SELECT * FROM edges), getvariable('points'), [-1, -4, -6], 
 -1	3	2.6
 
 # The points can be given inline; the identifier and the side are optional
-query IIIRR
-SELECT path_seq, node, edge, cost, agg_cost
+query IIITT
+SELECT path_seq, node, edge, cost::VARCHAR, agg_cost::VARCHAR
 FROM pgr_withPoints((SELECT * FROM edges), [{'edge_id': 7, 'fraction': 0.25}, {'edge_id': 9, 'fraction': 0.5}], -1, -2, details := true);
 ----
 1	-1	7	0.75	0.0
@@ -184,8 +184,8 @@ FROM pgr_withPoints((SELECT * FROM edges), [{'edge_id': 7, 'fraction': 0.25}, {'
 4	-2	-1	0.0	2.25
 
 # A point at the very start or end of an edge
-query IIIRR
-SELECT path_seq, node, edge, cost, agg_cost
+query IIITT
+SELECT path_seq, node, edge, cost::VARCHAR, agg_cost::VARCHAR
 FROM pgr_withPoints((SELECT * FROM edges), [{'pid': 1, 'edge_id': 7, 'fraction': 0.0}, {'pid': 2, 'edge_id': 9, 'fraction': 1.0}], -1, -2, details := true);
 ----
 1	-1	7	1.0	0.0
@@ -194,8 +194,8 @@ FROM pgr_withPoints((SELECT * FROM edges), [{'pid': 1, 'edge_id': 7, 'fraction':
 4	-2	-1	0.0	3.0
 
 # Two points on the same edge
-query IIIRR
-SELECT path_seq, node, edge, cost, agg_cost
+query IIITT
+SELECT path_seq, node, edge, cost::VARCHAR, agg_cost::VARCHAR
 FROM pgr_withPoints((SELECT * FROM edges), [{'pid': 1, 'edge_id': 7, 'fraction': 0.75}, {'pid': 2, 'edge_id': 7, 'fraction': 0.25}], -1, -2, 'b');
 ----
 1	-1	7	0.5	0.0

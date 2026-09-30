@@ -67,8 +67,8 @@ SELECT * FROM pgr_boykovKolmogorov((SELECT id, source, target, capacity, reverse
 4	11	11	12	130	0
 
 # Minimum cost: same totals as the pgRouting documentation (430 and 760)
-query IIIIIIRR
-SELECT * FROM pgr_maxFlowMinCost((SELECT id, source, target, capacity, reverse_capacity, cost, reverse_cost FROM edges), 11, 12);
+query IIIIIITT
+SELECT * REPLACE (cost::VARCHAR AS cost, agg_cost::VARCHAR AS agg_cost) FROM pgr_maxFlowMinCost((SELECT id, source, target, capacity, reverse_capacity, cost, reverse_cost FROM edges), 11, 12);
 ----
 1	10	7	8	100	30	100.0	100.0
 2	12	8	12	100	0	100.0	200.0
@@ -76,7 +76,7 @@ SELECT * FROM pgr_maxFlowMinCost((SELECT id, source, target, capacity, reverse_c
 4	11	11	12	130	0	130.0	430.0
 
 query IR
-SELECT sum(flow) FILTER (target IN (5, 10, 12)) - coalesce(sum(flow) FILTER (source IN (5, 10, 12)), 0), max(agg_cost)
+SELECT sum(flow) FILTER (target IN (5, 10, 12)) - coalesce(sum(flow) FILTER (source IN (5, 10, 12)), 0), max(agg_cost)::VARCHAR
 FROM pgr_minCostMaxFlow((SELECT id, source, target, capacity, reverse_capacity, cost, reverse_cost FROM edges), 11, [5, 10, 12]);
 ----
 340	760.0
@@ -98,8 +98,8 @@ SELECT sum(flow) FILTER (start_vid = 1), sum(flow) FILTER (end_vid = 6) FROM pgr
 23	23
 
 # Two routes with different costs and a bottleneck: the cheap route is used
-query IIIIIIRR
-SELECT * FROM pgr_maxFlowMinCost((SELECT * FROM (VALUES
+query IIIIIITT
+SELECT * REPLACE (cost::VARCHAR AS cost, agg_cost::VARCHAR AS agg_cost) FROM pgr_maxFlowMinCost((SELECT * FROM (VALUES
 	(1, 1, 2, 1, 5.0), (2, 2, 4, 1, 5.0), (3, 1, 3, 1, 1.0), (4, 3, 4, 1, 1.0), (5, 4, 5, 1, 0.5)
 ) t(id, source, target, capacity, cost)), 1, 5);
 ----
@@ -108,8 +108,8 @@ SELECT * FROM pgr_maxFlowMinCost((SELECT * FROM (VALUES
 3	5	4	5	1	0	0.5	2.5
 
 # A cheap path that is a dead end for the second unit of flow has to be partly undone
-query IIIIIIRR
-SELECT * FROM pgr_maxFlowMinCost((SELECT * FROM (VALUES
+query IIIIIITT
+SELECT * REPLACE (cost::VARCHAR AS cost, agg_cost::VARCHAR AS agg_cost) FROM pgr_maxFlowMinCost((SELECT * FROM (VALUES
 	(1, 1, 2, 1, 1.0), (2, 1, 3, 1, 4.0), (3, 2, 3, 1, 1.0), (4, 2, 4, 1, 6.0), (5, 3, 4, 1, 1.0)
 ) t(id, source, target, capacity, cost)), 1, 4);
 ----

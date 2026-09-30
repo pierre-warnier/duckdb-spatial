@@ -52,6 +52,7 @@ struct EdgeColumns {
 
 //! Edges are sorted so that the result never depends on the order in which the rows arrive
 vector<EdgeRecord> ReadEdges(const RoutingInput &input, const EdgeColumns &columns);
+void SortEdges(vector<EdgeRecord> &edges);
 
 class Graph {
 public:
@@ -71,6 +72,12 @@ public:
 	bool Lookup(int64_t id, uint32_t &index) const;
 	vector<uint32_t> LookupAll(const vector<int64_t> &ids, vector<int64_t> &found_ids) const;
 	void BuildReverse();
+
+private:
+	void CollectVertices();
+
+	int64_t dense_base = 0;
+	vector<uint32_t> dense_index;
 };
 
 struct HeapEntry {

@@ -25,7 +25,12 @@ vector<EdgeRecord> ReadEdges(const RoutingInput &input, const EdgeColumns &colum
 		edge.reverse_cost = has_reverse ? input.Get(columns.reverse_cost).numerics[i] : -1;
 		edges.push_back(edge);
 	}
-	std::sort(edges.begin(), edges.end(), [](const EdgeRecord &a, const EdgeRecord &b) {
+	SortEdges(edges);
+	return edges;
+}
+
+void SortEdges(vector<EdgeRecord> &edges) {
+	const auto less = [](const EdgeRecord &a, const EdgeRecord &b) {
 		if (a.id != b.id) {
 			return a.id < b.id;
 		}
@@ -39,8 +44,11 @@ vector<EdgeRecord> ReadEdges(const RoutingInput &input, const EdgeColumns &colum
 			return a.cost < b.cost;
 		}
 		return a.reverse_cost < b.reverse_cost;
-	});
-	return edges;
+	};
+	// The rows usually arrive ordered by identifier already
+	if (!std::is_sorted(edges.begin(), edges.end(), less)) {
+		std::sort(edges.begin(), edges.end(), less);
+	}
 }
 
 static void BuildAdjacency(uint32_t vertex_count, const vector<uint32_t> &tails, const vector<Arc> &arcs,
@@ -60,17 +68,12 @@ static void BuildAdjacency(uint32_t vertex_count, const vector<uint32_t> &tails,
 }
 
 Graph::Graph(vector<EdgeRecord> edges_p, bool directed_p) : directed(directed_p), edges(std::move(edges_p)) {
-	vertex_ids.reserve(edges.size() * 2);
-	for (auto &edge : edges) {
-		vertex_ids.push_back(edge.source);
-		vertex_ids.push_back(edge.target);
+	// Two vertices and two arcs per edge at most
+	if (edges.size() >= INVALID_ARC / 2) {
+		throw InvalidInputException("The graph is too large: at most %llu edges are supported",
+		                            static_cast<idx_t>(INVALID_ARC / 2) - 1);
 	}
-	std::sort(vertex_ids.begin(), vertex_ids.end());
-	vertex_ids.erase(std::unique(vertex_ids.begin(), vertex_ids.end()), vertex_ids.end());
-	if (vertex_ids.size() >= INVALID_VERTEX || edges.size() >= INVALID_ARC / 4) {
-		throw InvalidInputException("The graph is too large: at most %llu vertices and %llu edges are supported",
-		                            static_cast<idx_t>(INVALID_VERTEX) - 1, static_cast<idx_t>(INVALID_ARC / 4) - 1);
-	}
+	CollectVertices();
 
 	vector<uint32_t> tails;
 	vector<Arc> arcs;
@@ -109,7 +112,51 @@ Graph::Graph(vector<EdgeRecord> edges_p, bool directed_p) : directed(directed_p)
 	BuildAdjacency(VertexCount(), tails, arcs, out_offsets, out_arcs);
 }
 
+void Graph::CollectVertices() {
+	if (edges.empty()) {
+		return;
+	}
+	auto min_id = edges[0].source;
+	auto max_id = edges[0].source;
+	for (auto &edge : edges) {
+		min_id = MinValue(min_id, MinValue(edge.source, edge.target));
+		max_id = MaxValue(max_id, MaxValue(edge.source, edge.target));
+	}
+	// Identifiers that are packed closely enough are mapped with a table instead of a binary search
+	const auto range = static_cast<uint64_t>(max_id) - static_cast<uint64_t>(min_id);
+	if (range <= 8 * static_cast<uint64_t>(edges.size()) + 1024) {
+		dense_base = min_id;
+		dense_index.assign(range + 1, INVALID_VERTEX);
+		for (auto &edge : edges) {
+			dense_index[static_cast<uint64_t>(edge.source) - static_cast<uint64_t>(min_id)] = 0;
+			dense_index[static_cast<uint64_t>(edge.target) - static_cast<uint64_t>(min_id)] = 0;
+		}
+		for (uint64_t offset = 0; offset <= range; offset++) {
+			if (dense_index[offset] != INVALID_VERTEX) {
+				dense_index[offset] = UnsafeNumericCast<uint32_t>(vertex_ids.size());
+				vertex_ids.push_back(static_cast<int64_t>(static_cast<uint64_t>(min_id) + offset));
+			}
+		}
+		return;
+	}
+	vertex_ids.reserve(edges.size() * 2);
+	for (auto &edge : edges) {
+		vertex_ids.push_back(edge.source);
+		vertex_ids.push_back(edge.target);
+	}
+	std::sort(vertex_ids.begin(), vertex_ids.end());
+	vertex_ids.erase(std::unique(vertex_ids.begin(), vertex_ids.end()), vertex_ids.end());
+}
+
 bool Graph::Lookup(int64_t id, uint32_t &index) const {
+	if (!dense_index.empty()) {
+		const auto offset = static_cast<uint64_t>(id) - static_cast<uint64_t>(dense_base);
+		if (id < dense_base || offset >= dense_index.size() || dense_index[offset] == INVALID_VERTEX) {
+			return false;
+		}
+		index = dense_index[offset];
+		return true;
+	}
 	auto entry = std::lower_bound(vertex_ids.begin(), vertex_ids.end(), id);
 	if (entry == vertex_ids.end() || *entry != id) {
 		return false;

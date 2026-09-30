@@ -92,21 +92,7 @@ struct WithPointsData : public RoutingBindData {
 				AddChain(records, edge, backward, false, true);
 			}
 		}
-		std::sort(records.begin(), records.end(), [](const EdgeRecord &a, const EdgeRecord &b) {
-			if (a.id != b.id) {
-				return a.id < b.id;
-			}
-			if (a.source != b.source) {
-				return a.source < b.source;
-			}
-			if (a.target != b.target) {
-				return a.target < b.target;
-			}
-			if (a.cost != b.cost) {
-				return a.cost < b.cost;
-			}
-			return a.reverse_cost < b.reverse_cost;
-		});
+		SortEdges(records);
 		return records;
 	}
 

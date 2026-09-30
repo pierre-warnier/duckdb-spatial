@@ -47,8 +47,8 @@ SELECT * FROM pgr_trsp((SELECT id, source, target, cost FROM edges), getvariable
 12	4	6	10	10	-1	0.0	3.0
 
 # Many to one: from 1 the restricted turn costs less than any detour, its cost is on the edge that completes it
-query IIIIIIRR
-SELECT * FROM pgr_trsp((SELECT id, source, target, cost, reverse_cost FROM edges), getvariable('restrictions'), [6, 1], 8);
+query IIIIIITT
+SELECT * REPLACE (cost::VARCHAR AS cost, agg_cost::VARCHAR AS agg_cost) FROM pgr_trsp((SELECT id, source, target, cost, reverse_cost FROM edges), getvariable('restrictions'), [6, 1], 8);
 ----
 1	1	1	8	1	6	1.0	0.0
 2	2	1	8	3	7	1.0	1.0
@@ -60,7 +60,7 @@ SELECT * FROM pgr_trsp((SELECT id, source, target, cost, reverse_cost FROM edges
 
 # Many to many, undirected
 query IIIR
-SELECT start_vid, end_vid, string_agg(node::VARCHAR, '-' ORDER BY path_seq), max(agg_cost)
+SELECT start_vid, end_vid, string_agg(node::VARCHAR, '-' ORDER BY path_seq), max(agg_cost)::VARCHAR
 FROM pgr_trsp((SELECT id, source, target, cost, reverse_cost FROM edges), getvariable('restrictions'), [6, 1], [10, 8], false) GROUP BY ALL ORDER BY ALL;
 ----
 1	8	1-3-7-6-10-11-7-8	7.0
@@ -90,7 +90,7 @@ CREATE TABLE line AS SELECT * FROM (VALUES
 ) t(id, source, target, cost);
 
 query IIR
-SELECT end_vid, string_agg(edge::VARCHAR, ',' ORDER BY path_seq), max(agg_cost)
+SELECT end_vid, string_agg(edge::VARCHAR, ',' ORDER BY path_seq), max(agg_cost)::VARCHAR
 FROM pgr_trsp((SELECT * FROM line), [{'path': [1, 2, 3], 'cost': 5}], 1, [3, 4]) GROUP BY ALL ORDER BY ALL;
 ----
 3	1,2,-1	2.0
@@ -98,7 +98,7 @@ FROM pgr_trsp((SELECT * FROM line), [{'path': [1, 2, 3], 'cost': 5}], 1, [3, 4])
 
 # Starting in the middle of the restricted sequence is not restricted
 query IIR
-SELECT start_vid, string_agg(edge::VARCHAR, ',' ORDER BY path_seq), max(agg_cost)
+SELECT start_vid, string_agg(edge::VARCHAR, ',' ORDER BY path_seq), max(agg_cost)::VARCHAR
 FROM pgr_trsp((SELECT * FROM line), [{'path': [1, 2, 3], 'cost': 5}], [0, 2], 4) GROUP BY ALL ORDER BY ALL;
 ----
 0	6,2,3,-1	3.0
@@ -106,13 +106,13 @@ FROM pgr_trsp((SELECT * FROM line), [{'path': [1, 2, 3], 'cost': 5}], [0, 2], 4)
 
 # Overlapping restrictions add up, the detour through 5 becomes the cheapest
 query IIR
-SELECT end_vid, string_agg(edge::VARCHAR, ',' ORDER BY path_seq), max(agg_cost)
+SELECT end_vid, string_agg(edge::VARCHAR, ',' ORDER BY path_seq), max(agg_cost)::VARCHAR
 FROM pgr_trsp((SELECT * FROM line), [{'path': [1, 2, 3], 'cost': 0.5}, {'path': [2, 3], 'cost': 0.75}], 1, 4) GROUP BY ALL ORDER BY ALL;
 ----
 4	1,4,5,3,-1	4.0
 
 query IIR
-SELECT end_vid, string_agg(edge::VARCHAR, ',' ORDER BY path_seq), max(agg_cost)
+SELECT end_vid, string_agg(edge::VARCHAR, ',' ORDER BY path_seq), max(agg_cost)::VARCHAR
 FROM pgr_trsp((SELECT * FROM line), [{'path': [1, 2, 3], 'cost': 0.5}, {'path': [2, 3], 'cost': 0.25}], 1, 4) GROUP BY ALL ORDER BY ALL;
 ----
 4	1,2,3,-1	3.75
