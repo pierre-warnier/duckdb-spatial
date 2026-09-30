@@ -1,0 +1,475 @@
+# name: test/sql/topology/topology_createtopogeo.test
+# description: ST_CreateTopoGeo: hand-built cases, randomized coverage round trip, equivalence with edge-by-edge building
+# group: [topology]
+
+require spatial
+
+statement ok
+CREATE MACRO edges(topo) AS TABLE
+SELECT edge_id, start_node, end_node, next_left_edge, next_right_edge, left_face, right_face, ST_AsText(geom)
+FROM query_table(topo || '.edge') ORDER BY edge_id;
+
+statement ok
+CREATE MACRO faces(topo) AS TABLE
+SELECT face_id, ST_AsText(mbr) FROM query_table(topo || '.face') ORDER BY face_id;
+
+statement ok
+CREATE MACRO nodes(topo) AS TABLE
+SELECT node_id, containing_face, ST_AsText(geom) FROM query_table(topo || '.node') ORDER BY node_id;
+
+# Face polygons rebuilt in SQL from the left_face / right_face labels, independently of ST_GetFaceGeometry
+statement ok
+CREATE MACRO face_polygons(topo) AS TABLE
+SELECT face_id, ST_BuildArea(ST_Collect(list(geom))) AS geom
+FROM (SELECT left_face AS face_id, geom FROM query_table(topo || '.edge') WHERE left_face <> right_face
+      UNION ALL
+      SELECT right_face, geom FROM query_table(topo || '.edge') WHERE left_face <> right_face)
+WHERE face_id <> 0 GROUP BY face_id;
+
+# ----------------------------------------------------------------------------------------------------------------------
+# A square crossed by a line, with points inside, outside and on the boundary
+# ----------------------------------------------------------------------------------------------------------------------
+statement ok
+CALL CreateTopology('t');
+
+query T
+SELECT * FROM ST_CreateTopoGeo('t', ST_GeomFromText(
+	'GEOMETRYCOLLECTION(POLYGON((0 0, 10 0, 10 10, 0 10, 0 0)), LINESTRING(5 -2, 5 12), POINT(2 2), POINT(20 20), POINT(0 5), POINT(5 10))'));
+----
+Topology t populated
+
+query IIT
+FROM nodes('t');
+----
+1	NULL	POINT (0 5)
+2	NULL	POINT (5 0)
+3	NULL	POINT (5 -2)
+4	NULL	POINT (5 10)
+5	NULL	POINT (5 12)
+6	1	POINT (2 2)
+7	0	POINT (20 20)
+
+query IIIIIIIT
+FROM edges('t');
+----
+1	1	2	3	-5	1	0	LINESTRING (0 5, 0 0, 5 0)
+2	3	2	-1	2	0	0	LINESTRING (5 -2, 5 0)
+3	2	4	5	4	1	2	LINESTRING (5 0, 5 10)
+4	2	4	-3	-2	2	0	LINESTRING (5 0, 10 0, 10 10, 5 10)
+5	4	1	1	6	1	0	LINESTRING (5 10, 0 10, 0 5)
+6	4	5	-6	-4	0	0	LINESTRING (5 10, 5 12)
+
+query IT
+FROM faces('t');
+----
+0	NULL
+1	POLYGON ((0 0, 5 0, 5 10, 0 10, 0 0))
+2	POLYGON ((5 0, 10 0, 10 10, 5 10, 5 0))
+
+query IT
+SELECT face_id, ST_AsText(ST_Normalize(geom)) FROM face_polygons('t') ORDER BY face_id;
+----
+1	POLYGON ((0 0, 0 5, 0 10, 5 10, 5 0, 0 0))
+2	POLYGON ((5 0, 5 10, 10 10, 10 0, 5 0))
+
+query TII
+SELECT * FROM ValidateTopology('t');
+----
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Nested components: a polygon with a hole, an island in the hole, a point in the island, one in the hole, a dangling
+# line in the ring and an isolated line outside
+# ----------------------------------------------------------------------------------------------------------------------
+statement ok
+CALL CreateTopology('nested');
+
+statement ok
+SELECT * FROM ST_CreateTopoGeo('nested', ST_GeomFromText(
+	'GEOMETRYCOLLECTION(POLYGON((0 0, 30 0, 30 30, 0 30, 0 0), (10 10, 20 10, 20 20, 10 20, 10 10)), POLYGON((13 13, 17 13, 17 17, 13 17, 13 13)), POINT(15 15), POINT(11 11), LINESTRING(0 0, 5 5), LINESTRING(40 0, 40 10))'));
+
+query IIT
+FROM nodes('nested');
+----
+1	NULL	POINT (0 0)
+2	NULL	POINT (5 5)
+3	NULL	POINT (10 10)
+4	NULL	POINT (13 13)
+5	NULL	POINT (40 0)
+6	NULL	POINT (40 10)
+7	2	POINT (11 11)
+8	3	POINT (15 15)
+
+query IIIIIIIT
+FROM edges('nested');
+----
+1	1	2	-1	2	1	1	LINESTRING (0 0, 5 5)
+2	1	1	1	-2	1	0	LINESTRING (0 0, 30 0, 30 30, 0 30, 0 0)
+3	3	3	3	-3	2	1	LINESTRING (10 10, 20 10, 20 20, 10 20, 10 10)
+4	4	4	4	-4	3	2	LINESTRING (13 13, 17 13, 17 17, 13 17, 13 13)
+5	5	6	-5	5	0	0	LINESTRING (40 0, 40 10)
+
+query IT
+FROM faces('nested');
+----
+0	NULL
+1	POLYGON ((0 0, 30 0, 30 30, 0 30, 0 0))
+2	POLYGON ((10 10, 20 10, 20 20, 10 20, 10 10))
+3	POLYGON ((13 13, 17 13, 17 17, 13 17, 13 13))
+
+query IT
+SELECT face_id, ST_AsText(ST_Normalize(geom)) FROM face_polygons('nested') ORDER BY face_id;
+----
+1	POLYGON ((0 0, 0 30, 30 30, 30 0, 0 0), (10 10, 20 10, 20 20, 10 20, 10 10))
+2	POLYGON ((10 10, 10 20, 20 20, 20 10, 10 10), (13 13, 17 13, 17 17, 13 17, 13 13))
+3	POLYGON ((13 13, 13 17, 17 17, 17 13, 13 13))
+
+query TII
+SELECT * FROM ValidateTopology('nested');
+----
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Overlapping polygons are noded against each other; duplicate linework is merged; Z is dropped
+# ----------------------------------------------------------------------------------------------------------------------
+statement ok
+CALL CreateTopology('ov');
+
+statement ok
+SELECT * FROM ST_CreateTopoGeo('ov', ST_GeomFromText(
+	'GEOMETRYCOLLECTION Z (POLYGON Z ((0 0 1, 10 0 1, 10 10 1, 0 10 1, 0 0 1)), POLYGON Z ((5 5 2, 15 5 2, 15 15 2, 5 15 2, 5 5 2)), LINESTRING Z (0 0 3, 10 0 3))'));
+
+query IT
+SELECT face_id, ST_AsText(ST_Normalize(geom)) FROM face_polygons('ov') ORDER BY ST_Area(geom), face_id;
+----
+2	POLYGON ((5 5, 5 10, 10 10, 10 5, 5 5))
+1	POLYGON ((0 0, 0 10, 5 10, 5 5, 10 5, 10 0, 0 0))
+3	POLYGON ((5 10, 5 15, 15 15, 15 5, 10 5, 10 10, 5 10))
+
+query II
+SELECT (SELECT count(*) FROM ov.node), (SELECT count(*) FROM ov.edge);
+----
+4	6
+
+query I
+SELECT count(*) FROM ov.edge WHERE ST_HasZ(geom);
+----
+0
+
+query TII
+SELECT * FROM ValidateTopology('ov');
+----
+
+# The end points of the input lines stay nodes, even where the lines could be merged
+statement ok
+CALL CreateTopology('chain');
+
+statement ok
+SELECT * FROM ST_CreateTopoGeo('chain', ST_GeomFromText('MULTILINESTRING((0 0, 5 0), (5 0, 10 0, 10 5), (10 5, 0 0))'));
+
+query IIIIIIIT
+FROM edges('chain');
+----
+1	1	2	2	-3	1	0	LINESTRING (0 0, 5 0)
+2	2	3	3	-1	1	0	LINESTRING (5 0, 10 0, 10 5)
+3	3	1	1	-2	1	0	LINESTRING (10 5, 0 0)
+
+query TII
+SELECT * FROM ValidateTopology('chain');
+----
+
+# An empty collection populates nothing
+statement ok
+CALL CreateTopology('nothing');
+
+statement ok
+SELECT * FROM ST_CreateTopoGeo('nothing', ST_GeomFromText('GEOMETRYCOLLECTION EMPTY'));
+
+query II
+SELECT (SELECT count(*) FROM nothing.node), (SELECT count(*) FROM nothing.edge);
+----
+0	0
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Error conditions
+# ----------------------------------------------------------------------------------------------------------------------
+statement error
+SELECT * FROM ST_CreateTopoGeo('t', ST_GeomFromText('POINT(100 100)'));
+----
+SQL/MM Spatial exception - non-empty view
+
+statement ok
+INSERT INTO nothing.face VALUES (5, NULL);
+
+statement error
+SELECT * FROM ST_CreateTopoGeo('nothing', ST_GeomFromText('POINT(100 100)'));
+----
+SQL/MM Spatial exception - non-empty face view
+
+statement error
+SELECT * FROM ST_CreateTopoGeo('nope', ST_GeomFromText('POINT(100 100)'));
+----
+SQL/MM Spatial exception - invalid topology name
+
+statement error
+SELECT * FROM ST_CreateTopoGeo('t', NULL);
+----
+SQL/MM Spatial exception - null argument
+
+statement error
+SELECT * FROM ST_CreateTopoGeo(NULL, ST_GeomFromText('POINT(100 100)'));
+----
+SQL/MM Spatial exception - null argument
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Randomized round trip: a Voronoi diagram of 300 scattered points is a polygon coverage; its topology must have one
+# face per cell, with exactly the geometry of the cell
+# ----------------------------------------------------------------------------------------------------------------------
+statement ok
+CREATE TABLE cells AS
+SELECT unnest(ST_Dump(ST_VoronoiDiagram(ST_Collect(list(ST_Point((i * 7919 % 1009) / 10.0, (i * 104729 % 997) / 10.0)))))).geom AS geom
+FROM range(1, 301) t(i);
+
+query I
+SELECT count(*) FROM cells;
+----
+300
+
+statement ok
+CALL CreateTopology('voronoi');
+
+statement ok
+SET VARIABLE coverage = (SELECT ST_Collect(list(geom)) FROM cells);
+
+statement ok
+SELECT * FROM ST_CreateTopoGeo('voronoi', getvariable('coverage'));
+
+query TII
+SELECT * FROM ValidateTopology('voronoi');
+----
+
+query I
+SELECT count(*) FROM voronoi.face WHERE face_id <> 0;
+----
+300
+
+statement ok
+CREATE TABLE voronoi_faces AS FROM face_polygons('voronoi');
+
+# Every cell is exactly one face
+query II
+SELECT count(*), count(DISTINCT f.face_id) FROM cells c JOIN voronoi_faces f ON ST_Equals(c.geom, f.geom);
+----
+300	300
+
+query I
+SELECT abs((SELECT sum(ST_Area(geom)) FROM voronoi_faces) - (SELECT sum(ST_Area(geom)) FROM cells)) < 1e-6;
+----
+true
+
+query I
+SELECT ST_Equals((SELECT ST_Union_Agg(geom) FROM voronoi_faces), (SELECT ST_Union_Agg(geom) FROM cells));
+----
+true
+
+# The stored bounding boxes are those of the faces
+query I
+SELECT count(*) FROM voronoi.face f JOIN voronoi_faces p USING (face_id)
+WHERE ST_XMin(f.mbr) = ST_XMin(p.geom) AND ST_XMax(f.mbr) = ST_XMax(p.geom) AND ST_YMin(f.mbr) = ST_YMin(p.geom) AND ST_YMax(f.mbr) = ST_YMax(p.geom);
+----
+300
+
+# ST_GetFaceGeometry agrees, on a sample of faces
+loop i 1 31
+
+query I
+SELECT ST_Equals(st_getfacegeometry, (SELECT geom FROM voronoi_faces WHERE face_id = ${i})) FROM ST_GetFaceGeometry('voronoi', ${i});
+----
+true
+
+endloop
+
+# A grid with merged cells: shared borders longer than one cell, nodes of degree 3 and 4
+statement ok
+CREATE TABLE blocks AS
+SELECT ST_Union_Agg(ST_MakeEnvelope(i, j, i + 1, j + 1)) AS geom
+FROM range(10) a(i), range(10) b(j)
+GROUP BY CASE WHEN (i * 3 + j) % 4 = 0 AND i < 9 THEN (i + 1) * 100 + j ELSE i * 100 + j END;
+
+statement ok
+CALL CreateTopology('grid');
+
+statement ok
+SET VARIABLE coverage = (SELECT ST_Collect(list(geom)) FROM blocks);
+
+statement ok
+SELECT * FROM ST_CreateTopoGeo('grid', getvariable('coverage'));
+
+query TII
+SELECT * FROM ValidateTopology('grid');
+----
+
+statement ok
+CREATE TABLE grid_faces AS FROM face_polygons('grid');
+
+query I
+SELECT (SELECT count(*) FROM blocks) = (SELECT count(*) FROM grid.face WHERE face_id <> 0);
+----
+true
+
+query I
+SELECT (SELECT count(*) FROM blocks) = (SELECT count(*) FROM blocks c JOIN grid_faces f ON ST_Equals(c.geom, f.geom));
+----
+true
+
+query I
+SELECT abs((SELECT sum(ST_Area(geom)) FROM grid_faces) - 100) < 1e-9;
+----
+true
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Building the same linework edge by edge gives the same topology as ST_CreateTopoGeo, whichever variant is used, and
+# the topology is valid after every single call
+# ----------------------------------------------------------------------------------------------------------------------
+statement ok
+CALL CreateTopology('a');
+
+statement ok
+CREATE TABLE small_cells AS
+SELECT unnest(ST_Dump(ST_VoronoiDiagram(ST_Collect(list(ST_Point((i * 7919 % 1009) / 10.0, (i * 104729 % 997) / 10.0)))))).geom AS geom
+FROM range(1, 41) t(i);
+
+statement ok
+SET VARIABLE coverage = (SELECT ST_Collect(list(geom)) FROM small_cells);
+
+statement ok
+SELECT * FROM ST_CreateTopoGeo('a', getvariable('coverage'));
+
+query III
+SELECT (SELECT count(*) FROM a.node), (SELECT count(*) FROM a.edge), (SELECT count(*) FROM a.face WHERE face_id <> 0);
+----
+78	117	40
+
+query II
+SELECT (SELECT max(node_id) FROM a.node), (SELECT max(edge_id) FROM a.edge);
+----
+78	117
+
+statement ok
+CALL CreateTopology('b');
+
+statement ok
+CALL CreateTopology('c');
+
+loop i 1 79
+
+statement ok
+SET VARIABLE g = (SELECT geom FROM a.node WHERE node_id = ${i});
+
+statement ok
+SELECT * FROM ST_AddIsoNode('b', NULL, getvariable('g'));
+
+statement ok
+SELECT * FROM ST_AddIsoNode('c', 0, getvariable('g'));
+
+endloop
+
+loop i 1 118
+
+statement ok
+SET VARIABLE g = (SELECT geom FROM a.edge WHERE edge_id = ${i});
+
+statement ok
+SET VARIABLE s = (SELECT start_node FROM a.edge WHERE edge_id = ${i});
+
+statement ok
+SET VARIABLE e = (SELECT end_node FROM a.edge WHERE edge_id = ${i});
+
+query I
+SELECT st_addedgemodface = ${i} FROM ST_AddEdgeModFace('b', getvariable('s'), getvariable('e'), getvariable('g'));
+----
+true
+
+query I
+SELECT st_addedgenewfaces = ${i} FROM ST_AddEdgeNewFaces('c', getvariable('s'), getvariable('e'), getvariable('g'));
+----
+true
+
+query TII
+SELECT * FROM ValidateTopology('b');
+----
+
+query TII
+SELECT * FROM ValidateTopology('c');
+----
+
+endloop
+
+foreach topo b c
+
+# Same nodes, same edges, same links
+query I
+SELECT count(*) FROM a.edge x JOIN ${topo}.edge y USING (edge_id)
+WHERE x.start_node = y.start_node AND x.end_node = y.end_node AND x.next_left_edge = y.next_left_edge
+  AND x.next_right_edge = y.next_right_edge AND ST_AsText(x.geom) = ST_AsText(y.geom);
+----
+117
+
+query I
+SELECT count(*) FROM a.node x JOIN ${topo}.node y USING (node_id)
+WHERE x.containing_face IS NOT DISTINCT FROM y.containing_face AND ST_AsText(x.geom) = ST_AsText(y.geom);
+----
+78
+
+# Same faces up to their identifiers: the face labels of the edges map one to one
+query III
+SELECT count(DISTINCT old), count(DISTINCT new), count(DISTINCT (old, new)) FROM (
+	SELECT x.left_face AS old, y.left_face AS new FROM a.edge x JOIN ${topo}.edge y USING (edge_id)
+	UNION ALL
+	SELECT x.right_face, y.right_face FROM a.edge x JOIN ${topo}.edge y USING (edge_id));
+----
+41	41	41
+
+query I
+SELECT count(*) FROM ${topo}.face WHERE face_id <> 0;
+----
+40
+
+# Same face geometries and bounding boxes
+query I
+SELECT count(*) FROM face_polygons('a') x JOIN face_polygons('${topo}') y ON ST_Equals(x.geom, y.geom);
+----
+40
+
+query I
+SELECT count(*) FROM ${topo}.face f JOIN face_polygons('${topo}') p USING (face_id) WHERE ST_Equals(f.mbr, ST_Envelope(p.geom));
+----
+40
+
+endloop
+
+# ... and taking it apart again edge by edge keeps it valid down to the bare nodes
+loop i 1 118
+
+statement ok
+SELECT * FROM ST_RemEdgeModFace('b', ${i});
+
+statement ok
+SELECT * FROM ST_RemEdgeNewFace('c', 118 - ${i});
+
+query TII
+SELECT * FROM ValidateTopology('b');
+----
+
+query TII
+SELECT * FROM ValidateTopology('c');
+----
+
+endloop
+
+foreach topo b c
+
+query III
+SELECT (SELECT count(*) FROM ${topo}.edge), (SELECT count(*) FROM ${topo}.face), (SELECT count(*) FROM ${topo}.node WHERE containing_face = 0);
+----
+0	1	78
+
+endloop

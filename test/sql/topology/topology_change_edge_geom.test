@@ -1,0 +1,329 @@
+# name: test/sql/topology/topology_change_edge_geom.test
+# description: ST_ChangeEdgeGeom
+# group: [topology]
+
+require spatial
+
+statement ok
+CREATE MACRO edges(topo) AS TABLE
+SELECT edge_id, start_node, end_node, next_left_edge, next_right_edge, left_face, right_face, ST_AsText(geom)
+FROM query_table(topo || '.edge') ORDER BY edge_id;
+
+statement ok
+CREATE MACRO faces(topo) AS TABLE
+SELECT face_id, ST_AsText(mbr) FROM query_table(topo || '.face') ORDER BY face_id;
+
+# Two adjacent squares: e1 is the shared edge (10 0 -> 10 10), face 1 on its left, face 2 on its right
+statement ok
+CALL CreateTopology('t');
+
+statement ok
+SELECT * FROM ST_AddIsoNode('t', NULL, ST_Point(10, 0));
+
+statement ok
+SELECT * FROM ST_AddIsoNode('t', NULL, ST_Point(10, 10));
+
+statement ok
+SELECT * FROM ST_AddEdgeModFace('t', 1, 2, ST_GeomFromText('LINESTRING(10 0, 10 10)'));
+
+statement ok
+SELECT * FROM ST_AddEdgeModFace('t', 2, 1, ST_GeomFromText('LINESTRING(10 10, 0 10, 0 0, 10 0)'));
+
+statement ok
+SELECT * FROM ST_AddEdgeModFace('t', 1, 2, ST_GeomFromText('LINESTRING(10 0, 20 0, 20 10, 10 10)'));
+
+# An isolated node in each face
+statement ok
+SELECT * FROM ST_AddIsoNode('t', NULL, ST_Point(7, 5));
+
+statement ok
+SELECT * FROM ST_AddIsoNode('t', NULL, ST_Point(13, 5));
+
+# Bending the shared edge into face 2 changes both bounding boxes and nothing else
+query T
+SELECT * FROM ST_ChangeEdgeGeom('t', 1, ST_GeomFromText('LINESTRING(10 0, 12 5, 10 10)'));
+----
+Edge 1 changed
+
+query IIIIIIIT
+FROM edges('t');
+----
+1	1	2	2	3	1	2	LINESTRING (10 0, 12 5, 10 10)
+2	2	1	1	-3	1	0	LINESTRING (10 10, 0 10, 0 0, 10 0)
+3	1	2	-1	-2	2	0	LINESTRING (10 0, 20 0, 20 10, 10 10)
+
+query IT
+FROM faces('t');
+----
+0	NULL
+1	POLYGON ((0 0, 12 0, 12 10, 0 10, 0 0))
+2	POLYGON ((10 0, 20 0, 20 10, 10 10, 10 0))
+
+query TII
+SELECT * FROM ValidateTopology('t');
+----
+
+query I
+SELECT ST_Equals(st_getfacegeometry, ST_GeomFromText('POLYGON((0 0, 10 0, 12 5, 10 10, 0 10, 0 0))')) FROM ST_GetFaceGeometry('t', 1);
+----
+true
+
+query I
+SELECT ST_Equals(st_getfacegeometry, ST_GeomFromText('POLYGON((10 0, 20 0, 20 10, 10 10, 12 5, 10 0))')) FROM ST_GetFaceGeometry('t', 2);
+----
+true
+
+# ... and back the other way, into face 1: the box of face 1 shrinks again
+query T
+SELECT * FROM ST_ChangeEdgeGeom('t', 1, ST_GeomFromText('LINESTRING(10 0, 8 5, 10 10)'));
+----
+Edge 1 changed
+
+query IT
+FROM faces('t');
+----
+0	NULL
+1	POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))
+2	POLYGON ((8 0, 20 0, 20 10, 8 10, 8 0))
+
+query TII
+SELECT * FROM ValidateTopology('t');
+----
+
+# The edge cannot sweep over a node: node 3 (7 5) would end up in face 2
+statement error
+SELECT * FROM ST_ChangeEdgeGeom('t', 1, ST_GeomFromText('LINESTRING(10 0, 5 5, 10 10)'));
+----
+Edge motion collision at POINT(7 5)
+
+statement error
+SELECT * FROM ST_ChangeEdgeGeom('t', 1, ST_GeomFromText('LINESTRING(10 0, 15 5, 10 10)'));
+----
+Edge motion collision at POINT(13 5)
+
+# ... nor pass through one
+statement error
+SELECT * FROM ST_ChangeEdgeGeom('t', 1, ST_GeomFromText('LINESTRING(10 0, 13 5, 10 10)'));
+----
+SQL/MM Spatial exception - geometry crosses a node
+
+# ... nor meet another edge
+statement error
+SELECT * FROM ST_ChangeEdgeGeom('t', 1, ST_GeomFromText('LINESTRING(10 0, 25 5, 10 10)'));
+----
+SQL/MM Spatial exception - geometry crosses edge 3
+
+statement error
+SELECT * FROM ST_ChangeEdgeGeom('t', 1, ST_GeomFromText('LINESTRING(10 0, 5 0, 5 5, 10 10)'));
+----
+Spatial exception - geometry intersects edge 2
+
+# The end points must stay where they are
+statement error
+SELECT * FROM ST_ChangeEdgeGeom('t', 1, ST_GeomFromText('LINESTRING(10 1, 10 10)'));
+----
+SQL/MM Spatial exception - start node not geometry start point.
+
+statement error
+SELECT * FROM ST_ChangeEdgeGeom('t', 1, ST_GeomFromText('LINESTRING(10 0, 10 9)'));
+----
+SQL/MM Spatial exception - end node not geometry end point.
+
+statement error
+SELECT * FROM ST_ChangeEdgeGeom('t', 1, ST_GeomFromText('LINESTRING(10 0, 12 6, 9 6, 12 3, 10 10)'));
+----
+SQL/MM Spatial exception - curve not simple
+
+statement error
+SELECT * FROM ST_ChangeEdgeGeom('t', 1, ST_Point(10, 0));
+----
+SQL/MM Spatial exception - invalid curve
+
+statement error
+SELECT * FROM ST_ChangeEdgeGeom('t', 99, ST_GeomFromText('LINESTRING(10 0, 10 10)'));
+----
+SQL/MM Spatial exception - non-existent edge 99
+
+statement error
+SELECT * FROM ST_ChangeEdgeGeom('t', 1, NULL);
+----
+SQL/MM Spatial exception - null argument
+
+# Nothing changed
+query T
+SELECT ST_AsText(geom) FROM t.edge WHERE edge_id = 1;
+----
+LINESTRING (10 0, 8 5, 10 10)
+
+query TII
+SELECT * FROM ValidateTopology('t');
+----
+
+# The outer edges can grow: the box of the face follows
+query T
+SELECT * FROM ST_ChangeEdgeGeom('t', 3, ST_GeomFromText('LINESTRING(10 0, 20 0, 30 5, 20 10, 10 10)'));
+----
+Edge 3 changed
+
+query IT
+FROM faces('t');
+----
+0	NULL
+1	POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))
+2	POLYGON ((8 0, 30 0, 30 10, 8 10, 8 0))
+
+query TII
+SELECT * FROM ValidateTopology('t');
+----
+
+# ----------------------------------------------------------------------------------------------------------------------
+# The shared edge cannot leave its two faces by going around the right square, even though it meets nothing on the way:
+# the order of the edges around its end nodes would change
+# ----------------------------------------------------------------------------------------------------------------------
+statement ok
+CALL CreateTopology('d');
+
+statement ok
+SELECT * FROM ST_AddIsoNode('d', NULL, ST_Point(10, 0));
+
+statement ok
+SELECT * FROM ST_AddIsoNode('d', NULL, ST_Point(10, 10));
+
+statement ok
+SELECT * FROM ST_AddEdgeModFace('d', 1, 2, ST_GeomFromText('LINESTRING(10 0, 10 10)'));
+
+statement ok
+SELECT * FROM ST_AddEdgeModFace('d', 2, 1, ST_GeomFromText('LINESTRING(10 10, 0 10, 0 0, 10 0)'));
+
+statement ok
+SELECT * FROM ST_AddEdgeModFace('d', 1, 2, ST_GeomFromText('LINESTRING(10 0, 20 0, 20 10, 10 10)'));
+
+statement error
+SELECT * FROM ST_ChangeEdgeGeom('d', 1, ST_GeomFromText('LINESTRING(10 0, 10 -5, 25 -5, 25 15, 10 15, 10 10)'));
+----
+Edge changed disposition around start node 1
+
+# Leaving the start node correctly but reaching the end node from the outside
+statement error
+SELECT * FROM ST_ChangeEdgeGeom('d', 1, ST_GeomFromText('LINESTRING(10 0, 11 1, 19 1, 19 -5, 25 -5, 25 15, 10 15, 10 10)'));
+----
+SQL/MM Spatial exception - geometry crosses edge 3
+
+query T
+SELECT ST_AsText(geom) FROM d.edge WHERE edge_id = 1;
+----
+LINESTRING (10 0, 10 10)
+
+query TII
+SELECT * FROM ValidateTopology('d');
+----
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Closed edges keep their orientation
+# ----------------------------------------------------------------------------------------------------------------------
+statement ok
+CALL CreateTopology('c');
+
+statement ok
+SELECT * FROM ST_AddIsoNode('c', NULL, ST_Point(0, 0));
+
+statement ok
+SELECT * FROM ST_AddEdgeModFace('c', 1, 1, ST_GeomFromText('LINESTRING(0 0, 10 0, 10 10, 0 10, 0 0)'));
+
+statement ok
+SELECT * FROM ST_AddIsoNode('c', NULL, ST_Point(5, 5));
+
+statement error
+SELECT * FROM ST_ChangeEdgeGeom('c', 1, ST_GeomFromText('LINESTRING(0 0, 0 10, 10 10, 10 0, 0 0)'));
+----
+Edge twist at node POINT(0 0)
+
+# Shrinking the ring past the isolated node of its face
+statement error
+SELECT * FROM ST_ChangeEdgeGeom('c', 1, ST_GeomFromText('LINESTRING(0 0, 4 0, 4 4, 0 4, 0 0)'));
+----
+Edge motion collision at POINT(5 5)
+
+query T
+SELECT * FROM ST_ChangeEdgeGeom('c', 1, ST_GeomFromText('LINESTRING(0 0, 6 0, 6 6, 0 6, 0 0)'));
+----
+Edge 1 changed
+
+query IT
+FROM faces('c');
+----
+0	NULL
+1	POLYGON ((0 0, 6 0, 6 6, 0 6, 0 0))
+
+query TII
+SELECT * FROM ValidateTopology('c');
+----
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Two edges between the same two nodes: an edge cannot jump over the other one
+# ----------------------------------------------------------------------------------------------------------------------
+statement ok
+CALL CreateTopology('lens');
+
+statement ok
+SELECT * FROM ST_AddIsoNode('lens', NULL, ST_Point(0, 0));
+
+statement ok
+SELECT * FROM ST_AddIsoNode('lens', NULL, ST_Point(10, 0));
+
+statement ok
+SELECT * FROM ST_AddEdgeModFace('lens', 1, 2, ST_GeomFromText('LINESTRING(0 0, 5 -5, 10 0)'));
+
+statement ok
+SELECT * FROM ST_AddEdgeModFace('lens', 1, 2, ST_GeomFromText('LINESTRING(0 0, 5 5, 10 0)'));
+
+query IIIIIIIT
+FROM edges('lens');
+----
+1	1	2	-2	2	1	0	LINESTRING (0 0, 5 -5, 10 0)
+2	1	2	-1	1	0	1	LINESTRING (0 0, 5 5, 10 0)
+
+query TII
+SELECT * FROM ValidateTopology('lens');
+----
+
+statement error
+SELECT * FROM ST_ChangeEdgeGeom('lens', 2, ST_GeomFromText('LINESTRING(0 0, -5 -5, 5 -10, 15 -5, 10 0)'));
+----
+Edge ring changes winding
+
+query T
+SELECT * FROM ST_ChangeEdgeGeom('lens', 2, ST_GeomFromText('LINESTRING(0 0, 5 8, 10 0)'));
+----
+Edge 2 changed
+
+query IT
+FROM faces('lens');
+----
+0	NULL
+1	POLYGON ((0 -5, 10 -5, 10 8, 0 8, 0 -5))
+
+query TII
+SELECT * FROM ValidateTopology('lens');
+----
+
+# A dangling edge moved within its face
+statement ok
+SELECT * FROM ST_AddIsoNode('c', NULL, ST_Point(3, 3));
+
+statement ok
+SELECT * FROM ST_AddEdgeModFace('c', 1, 3, ST_GeomFromText('LINESTRING(0 0, 3 3)'));
+
+query T
+SELECT * FROM ST_ChangeEdgeGeom('c', 2, ST_GeomFromText('LINESTRING(0 0, 2 1, 3 3)'));
+----
+Edge 2 changed
+
+statement error
+SELECT * FROM ST_ChangeEdgeGeom('c', 2, ST_GeomFromText('LINESTRING(0 0, 2 5.5, 5.5 5.5, 5.5 3, 3 3)'));
+----
+Edge motion collision at POINT(5 5)
+
+query TII
+SELECT * FROM ValidateTopology('c');
+----

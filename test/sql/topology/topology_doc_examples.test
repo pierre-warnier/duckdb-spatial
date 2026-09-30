@@ -1,0 +1,914 @@
+# name: test/sql/topology/topology_doc_examples.test
+# description: The examples in the documentation of the topology functions run as written
+# group: [topology]
+
+require spatial
+
+# The statements below are the examples registered with the functions, with the results their comments announce.
+# Each one is first looked up in the registered example, so that the two cannot drift apart. The id shown by
+# TopologySummary depends on how many topologies were created before and is normalized
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE tags['category'] = 'topology' AND len(examples) = 1;
+----
+30
+
+# CreateTopology
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'CreateTopology' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'CALL CreateTopology(''city'', 31370)');
+----
+1
+
+statement ok
+CALL CreateTopology('city', 31370);
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'CreateTopology' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM topology.topology');
+----
+1
+
+statement ok
+SELECT * FROM topology.topology;
+
+statement ok
+CALL DropTopology('city');
+
+# DropTopology
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'DropTopology' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'CALL CreateTopology(''city'')');
+----
+1
+
+statement ok
+CALL CreateTopology('city');
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'DropTopology' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'CALL DropTopology(''city'')');
+----
+1
+
+statement ok
+CALL DropTopology('city');
+
+# GetEdgeByPoint
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'GetEdgeByPoint' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'CALL CreateTopology(''city'')');
+----
+1
+
+statement ok
+CALL CreateTopology('city');
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'GetEdgeByPoint' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM ST_CreateTopoGeo(''city'', ST_GeomFromText(''LINESTRING(0 0, 10 0)''))');
+----
+1
+
+statement ok
+SELECT * FROM ST_CreateTopoGeo('city', ST_GeomFromText('LINESTRING(0 0, 10 0)'));
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'GetEdgeByPoint' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM GetEdgeByPoint(''city'', ST_Point(5, 0.5), 1)');
+----
+1
+
+query T
+SELECT * FROM GetEdgeByPoint('city', ST_Point(5, 0.5), 1);
+----
+1
+
+statement ok
+CALL DropTopology('city');
+
+# GetFaceByPoint
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'GetFaceByPoint' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'CALL CreateTopology(''city'')');
+----
+1
+
+statement ok
+CALL CreateTopology('city');
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'GetFaceByPoint' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM ST_CreateTopoGeo(''city'', ST_GeomFromText(''POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))''))');
+----
+1
+
+statement ok
+SELECT * FROM ST_CreateTopoGeo('city', ST_GeomFromText('POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))'));
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'GetFaceByPoint' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM GetFaceByPoint(''city'', ST_Point(5, 5), 0)');
+----
+1
+
+query T
+SELECT * FROM GetFaceByPoint('city', ST_Point(5, 5), 0);
+----
+1
+
+statement ok
+CALL DropTopology('city');
+
+# GetNodeByPoint
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'GetNodeByPoint' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'CALL CreateTopology(''city'')');
+----
+1
+
+statement ok
+CALL CreateTopology('city');
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'GetNodeByPoint' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM ST_AddIsoNode(''city'', NULL, ST_Point(1, 1))');
+----
+1
+
+statement ok
+SELECT * FROM ST_AddIsoNode('city', NULL, ST_Point(1, 1));
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'GetNodeByPoint' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM GetNodeByPoint(''city'', ST_Point(1, 1.5), 1)');
+----
+1
+
+query T
+SELECT * FROM GetNodeByPoint('city', ST_Point(1, 1.5), 1);
+----
+1
+
+statement ok
+CALL DropTopology('city');
+
+# GetNodeEdges
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'GetNodeEdges' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'CALL CreateTopology(''city'')');
+----
+1
+
+statement ok
+CALL CreateTopology('city');
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'GetNodeEdges' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM ST_CreateTopoGeo(''city'', ST_GeomFromText(''MULTILINESTRING((0 0, 10 0), (0 0, 0 10))''))');
+----
+1
+
+statement ok
+SELECT * FROM ST_CreateTopoGeo('city', ST_GeomFromText('MULTILINESTRING((0 0, 10 0), (0 0, 0 10))'));
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'GetNodeEdges' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM GetNodeEdges(''city'', 1)');
+----
+1
+
+statement ok
+SELECT * FROM GetNodeEdges('city', 1);
+
+statement ok
+CALL DropTopology('city');
+
+# GetRingEdges
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'GetRingEdges' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'CALL CreateTopology(''city'')');
+----
+1
+
+statement ok
+CALL CreateTopology('city');
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'GetRingEdges' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM ST_CreateTopoGeo(''city'', ST_GeomFromText(''POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))''))');
+----
+1
+
+statement ok
+SELECT * FROM ST_CreateTopoGeo('city', ST_GeomFromText('POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))'));
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'GetRingEdges' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM GetRingEdges(''city'', 1)');
+----
+1
+
+statement ok
+SELECT * FROM GetRingEdges('city', 1);
+
+statement ok
+CALL DropTopology('city');
+
+# GetTopologyID
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'GetTopologyID' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'CALL CreateTopology(''city'')');
+----
+1
+
+statement ok
+CALL CreateTopology('city');
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'GetTopologyID' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM GetTopologyID(''city'')');
+----
+1
+
+statement ok
+SELECT * FROM GetTopologyID('city');
+
+statement ok
+CALL DropTopology('city');
+
+# GetTopologyName
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'GetTopologyName' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'CALL CreateTopology(''city'')');
+----
+1
+
+statement ok
+CALL CreateTopology('city');
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'GetTopologyName' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SET VARIABLE id = (SELECT * FROM GetTopologyID(''city''))');
+----
+1
+
+statement ok
+SET VARIABLE id = (SELECT * FROM GetTopologyID('city'));
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'GetTopologyName' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM GetTopologyName(getvariable(''id''))');
+----
+1
+
+query T
+SELECT * FROM GetTopologyName(getvariable('id'));
+----
+city
+
+statement ok
+CALL DropTopology('city');
+
+# GetTopologySRID
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'GetTopologySRID' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'CALL CreateTopology(''city'', 31370)');
+----
+1
+
+statement ok
+CALL CreateTopology('city', 31370);
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'GetTopologySRID' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM GetTopologySRID(''city'')');
+----
+1
+
+statement ok
+SELECT * FROM GetTopologySRID('city');
+
+statement ok
+CALL DropTopology('city');
+
+# ST_AddEdgeModFace
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_AddEdgeModFace' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'CALL CreateTopology(''city'')');
+----
+1
+
+statement ok
+CALL CreateTopology('city');
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_AddEdgeModFace' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM ST_CreateTopoGeo(''city'', ST_GeomFromText( ''GEOMETRYCOLLECTION(POLYGON((0 0, 10 0, 10 10, 0 10, 0 0)), POINT(5 0), POINT(5 10))''))');
+----
+1
+
+statement ok
+SELECT * FROM ST_CreateTopoGeo('city', ST_GeomFromText(
+    'GEOMETRYCOLLECTION(POLYGON((0 0, 10 0, 10 10, 0 10, 0 0)), POINT(5 0), POINT(5 10))'));
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_AddEdgeModFace' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SET VARIABLE a = (SELECT node_id FROM city.node WHERE ST_Equals(geom, ST_Point(5, 0)))');
+----
+1
+
+statement ok
+SET VARIABLE a = (SELECT node_id FROM city.node WHERE ST_Equals(geom, ST_Point(5, 0)));
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_AddEdgeModFace' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SET VARIABLE b = (SELECT node_id FROM city.node WHERE ST_Equals(geom, ST_Point(5, 10)))');
+----
+1
+
+statement ok
+SET VARIABLE b = (SELECT node_id FROM city.node WHERE ST_Equals(geom, ST_Point(5, 10)));
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_AddEdgeModFace' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM ST_AddEdgeModFace(''city'', getvariable(''a''), getvariable(''b''), ST_GeomFromText(''LINESTRING(5 0, 5 10)''))');
+----
+1
+
+statement ok
+SELECT * FROM ST_AddEdgeModFace('city', getvariable('a'), getvariable('b'),
+    ST_GeomFromText('LINESTRING(5 0, 5 10)'));
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_AddEdgeModFace' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT count(*) FROM city.face WHERE face_id <> 0');
+----
+1
+
+query T
+SELECT count(*) FROM city.face WHERE face_id <> 0;
+----
+2
+
+statement ok
+CALL DropTopology('city');
+
+# ST_AddEdgeNewFaces
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_AddEdgeNewFaces' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'CALL CreateTopology(''city'')');
+----
+1
+
+statement ok
+CALL CreateTopology('city');
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_AddEdgeNewFaces' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM ST_AddIsoNode(''city'', NULL, ST_Point(0, 0))');
+----
+1
+
+statement ok
+SELECT * FROM ST_AddIsoNode('city', NULL, ST_Point(0, 0));
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_AddEdgeNewFaces' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM ST_AddEdgeNewFaces(''city'', 1, 1, ST_GeomFromText(''LINESTRING(0 0, 10 0, 10 10, 0 10, 0 0)''))');
+----
+1
+
+statement ok
+SELECT * FROM ST_AddEdgeNewFaces('city', 1, 1, ST_GeomFromText('LINESTRING(0 0, 10 0, 10 10, 0 10, 0 0)'));
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_AddEdgeNewFaces' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT face_id FROM city.face');
+----
+1
+
+query T rowsort
+SELECT face_id FROM city.face;
+----
+0
+1
+
+statement ok
+CALL DropTopology('city');
+
+# ST_AddIsoEdge
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_AddIsoEdge' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'CALL CreateTopology(''city'')');
+----
+1
+
+statement ok
+CALL CreateTopology('city');
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_AddIsoEdge' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM ST_AddIsoNode(''city'', NULL, ST_Point(0, 0))');
+----
+1
+
+statement ok
+SELECT * FROM ST_AddIsoNode('city', NULL, ST_Point(0, 0));
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_AddIsoEdge' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM ST_AddIsoNode(''city'', NULL, ST_Point(5, 0))');
+----
+1
+
+statement ok
+SELECT * FROM ST_AddIsoNode('city', NULL, ST_Point(5, 0));
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_AddIsoEdge' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM ST_AddIsoEdge(''city'', 1, 2, ST_GeomFromText(''LINESTRING(0 0, 5 0)''))');
+----
+1
+
+query T
+SELECT * FROM ST_AddIsoEdge('city', 1, 2, ST_GeomFromText('LINESTRING(0 0, 5 0)'));
+----
+1
+
+statement ok
+CALL DropTopology('city');
+
+# ST_AddIsoNode
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_AddIsoNode' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'CALL CreateTopology(''city'')');
+----
+1
+
+statement ok
+CALL CreateTopology('city');
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_AddIsoNode' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM ST_AddIsoNode(''city'', NULL, ST_Point(1, 1))');
+----
+1
+
+query T
+SELECT * FROM ST_AddIsoNode('city', NULL, ST_Point(1, 1));
+----
+1
+
+statement ok
+CALL DropTopology('city');
+
+# ST_ChangeEdgeGeom
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_ChangeEdgeGeom' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'CALL CreateTopology(''city'')');
+----
+1
+
+statement ok
+CALL CreateTopology('city');
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_ChangeEdgeGeom' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM ST_CreateTopoGeo(''city'', ST_GeomFromText(''LINESTRING(0 0, 10 0)''))');
+----
+1
+
+statement ok
+SELECT * FROM ST_CreateTopoGeo('city', ST_GeomFromText('LINESTRING(0 0, 10 0)'));
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_ChangeEdgeGeom' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM ST_ChangeEdgeGeom(''city'', 1, ST_GeomFromText(''LINESTRING(0 0, 5 2, 10 0)''))');
+----
+1
+
+query T
+SELECT * FROM ST_ChangeEdgeGeom('city', 1, ST_GeomFromText('LINESTRING(0 0, 5 2, 10 0)'));
+----
+Edge 1 changed
+
+statement ok
+CALL DropTopology('city');
+
+# ST_CreateTopoGeo
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_CreateTopoGeo' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'CALL CreateTopology(''city'')');
+----
+1
+
+statement ok
+CALL CreateTopology('city');
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_CreateTopoGeo' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM ST_CreateTopoGeo(''city'', ST_GeomFromText( ''GEOMETRYCOLLECTION(POLYGON((0 0, 10 0, 10 10, 0 10, 0 0)), LINESTRING(5 0, 5 10), POINT(2 2))''))');
+----
+1
+
+statement ok
+SELECT * FROM ST_CreateTopoGeo('city', ST_GeomFromText(
+    'GEOMETRYCOLLECTION(POLYGON((0 0, 10 0, 10 10, 0 10, 0 0)), LINESTRING(5 0, 5 10), POINT(2 2))'));
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_CreateTopoGeo' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT count(*) FROM city.face WHERE face_id <> 0');
+----
+1
+
+query T
+SELECT count(*) FROM city.face WHERE face_id <> 0;
+----
+2
+
+statement ok
+CALL DropTopology('city');
+
+# ST_GetFaceEdges
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_GetFaceEdges' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'CALL CreateTopology(''city'')');
+----
+1
+
+statement ok
+CALL CreateTopology('city');
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_GetFaceEdges' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM ST_CreateTopoGeo(''city'', ST_GeomFromText(''POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))''))');
+----
+1
+
+statement ok
+SELECT * FROM ST_CreateTopoGeo('city', ST_GeomFromText('POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))'));
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_GetFaceEdges' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM ST_GetFaceEdges(''city'', 1)');
+----
+1
+
+statement ok
+SELECT * FROM ST_GetFaceEdges('city', 1);
+
+statement ok
+CALL DropTopology('city');
+
+# ST_GetFaceGeometry
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_GetFaceGeometry' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'CALL CreateTopology(''city'')');
+----
+1
+
+statement ok
+CALL CreateTopology('city');
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_GetFaceGeometry' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM ST_CreateTopoGeo(''city'', ST_GeomFromText(''POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))''))');
+----
+1
+
+statement ok
+SELECT * FROM ST_CreateTopoGeo('city', ST_GeomFromText('POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))'));
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_GetFaceGeometry' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT ST_AsText(st_getfacegeometry) FROM ST_GetFaceGeometry(''city'', 1)');
+----
+1
+
+query T
+SELECT ST_AsText(st_getfacegeometry) FROM ST_GetFaceGeometry('city', 1);
+----
+POLYGON ((0 0, 0 10, 10 10, 10 0, 0 0))
+
+statement ok
+CALL DropTopology('city');
+
+# ST_ModEdgeHeal
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_ModEdgeHeal' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'CALL CreateTopology(''city'')');
+----
+1
+
+statement ok
+CALL CreateTopology('city');
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_ModEdgeHeal' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM ST_CreateTopoGeo(''city'', ST_GeomFromText(''GEOMETRYCOLLECTION(LINESTRING(0 0, 10 0), POINT(4 0))''))');
+----
+1
+
+statement ok
+SELECT * FROM ST_CreateTopoGeo('city', ST_GeomFromText('GEOMETRYCOLLECTION(LINESTRING(0 0, 10 0), POINT(4 0))'));
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_ModEdgeHeal' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM ST_ModEdgeHeal(''city'', 1, 2)');
+----
+1
+
+statement ok
+SELECT * FROM ST_ModEdgeHeal('city', 1, 2);
+
+statement ok
+CALL DropTopology('city');
+
+# ST_ModEdgeSplit
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_ModEdgeSplit' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'CALL CreateTopology(''city'')');
+----
+1
+
+statement ok
+CALL CreateTopology('city');
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_ModEdgeSplit' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM ST_CreateTopoGeo(''city'', ST_GeomFromText(''LINESTRING(0 0, 10 0)''))');
+----
+1
+
+statement ok
+SELECT * FROM ST_CreateTopoGeo('city', ST_GeomFromText('LINESTRING(0 0, 10 0)'));
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_ModEdgeSplit' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM ST_ModEdgeSplit(''city'', 1, ST_Point(4, 0))');
+----
+1
+
+query T
+SELECT * FROM ST_ModEdgeSplit('city', 1, ST_Point(4, 0));
+----
+3
+
+statement ok
+CALL DropTopology('city');
+
+# ST_MoveIsoNode
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_MoveIsoNode' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'CALL CreateTopology(''city'')');
+----
+1
+
+statement ok
+CALL CreateTopology('city');
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_MoveIsoNode' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM ST_AddIsoNode(''city'', NULL, ST_Point(1, 1))');
+----
+1
+
+statement ok
+SELECT * FROM ST_AddIsoNode('city', NULL, ST_Point(1, 1));
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_MoveIsoNode' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM ST_MoveIsoNode(''city'', 1, ST_Point(2, 3))');
+----
+1
+
+query T
+SELECT * FROM ST_MoveIsoNode('city', 1, ST_Point(2, 3));
+----
+Isolated Node 1 moved to location 2,3
+
+statement ok
+CALL DropTopology('city');
+
+# ST_NewEdgeHeal
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_NewEdgeHeal' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'CALL CreateTopology(''city'')');
+----
+1
+
+statement ok
+CALL CreateTopology('city');
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_NewEdgeHeal' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM ST_CreateTopoGeo(''city'', ST_GeomFromText(''GEOMETRYCOLLECTION(LINESTRING(0 0, 10 0), POINT(4 0))''))');
+----
+1
+
+statement ok
+SELECT * FROM ST_CreateTopoGeo('city', ST_GeomFromText('GEOMETRYCOLLECTION(LINESTRING(0 0, 10 0), POINT(4 0))'));
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_NewEdgeHeal' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM ST_NewEdgeHeal(''city'', 1, 2)');
+----
+1
+
+query T
+SELECT * FROM ST_NewEdgeHeal('city', 1, 2);
+----
+3
+
+statement ok
+CALL DropTopology('city');
+
+# ST_NewEdgesSplit
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_NewEdgesSplit' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'CALL CreateTopology(''city'')');
+----
+1
+
+statement ok
+CALL CreateTopology('city');
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_NewEdgesSplit' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM ST_CreateTopoGeo(''city'', ST_GeomFromText(''LINESTRING(0 0, 10 0)''))');
+----
+1
+
+statement ok
+SELECT * FROM ST_CreateTopoGeo('city', ST_GeomFromText('LINESTRING(0 0, 10 0)'));
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_NewEdgesSplit' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM ST_NewEdgesSplit(''city'', 1, ST_Point(4, 0))');
+----
+1
+
+statement ok
+SELECT * FROM ST_NewEdgesSplit('city', 1, ST_Point(4, 0));
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_NewEdgesSplit' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT edge_id FROM city.edge ORDER BY edge_id');
+----
+1
+
+query T rowsort
+SELECT edge_id FROM city.edge ORDER BY edge_id;
+----
+2
+3
+
+statement ok
+CALL DropTopology('city');
+
+# ST_RemEdgeModFace
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_RemEdgeModFace' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'CALL CreateTopology(''city'')');
+----
+1
+
+statement ok
+CALL CreateTopology('city');
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_RemEdgeModFace' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM ST_CreateTopoGeo(''city'', ST_GeomFromText( ''GEOMETRYCOLLECTION(POLYGON((0 0, 10 0, 10 10, 0 10, 0 0)), LINESTRING(5 0, 5 10))''))');
+----
+1
+
+statement ok
+SELECT * FROM ST_CreateTopoGeo('city', ST_GeomFromText(
+    'GEOMETRYCOLLECTION(POLYGON((0 0, 10 0, 10 10, 0 10, 0 0)), LINESTRING(5 0, 5 10))'));
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_RemEdgeModFace' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SET VARIABLE middle = (SELECT edge_id FROM city.edge WHERE ST_Intersects(geom, ST_Point(5, 5)))');
+----
+1
+
+statement ok
+SET VARIABLE middle = (SELECT edge_id FROM city.edge WHERE ST_Intersects(geom, ST_Point(5, 5)));
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_RemEdgeModFace' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM ST_RemEdgeModFace(''city'', getvariable(''middle''))');
+----
+1
+
+statement ok
+SELECT * FROM ST_RemEdgeModFace('city', getvariable('middle'));
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_RemEdgeModFace' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT count(*) FROM city.face WHERE face_id <> 0');
+----
+1
+
+query T
+SELECT count(*) FROM city.face WHERE face_id <> 0;
+----
+1
+
+statement ok
+CALL DropTopology('city');
+
+# ST_RemEdgeNewFace
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_RemEdgeNewFace' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'CALL CreateTopology(''city'')');
+----
+1
+
+statement ok
+CALL CreateTopology('city');
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_RemEdgeNewFace' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM ST_CreateTopoGeo(''city'', ST_GeomFromText( ''GEOMETRYCOLLECTION(POLYGON((0 0, 10 0, 10 10, 0 10, 0 0)), LINESTRING(5 0, 5 10))''))');
+----
+1
+
+statement ok
+SELECT * FROM ST_CreateTopoGeo('city', ST_GeomFromText(
+    'GEOMETRYCOLLECTION(POLYGON((0 0, 10 0, 10 10, 0 10, 0 0)), LINESTRING(5 0, 5 10))'));
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_RemEdgeNewFace' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SET VARIABLE middle = (SELECT edge_id FROM city.edge WHERE ST_Intersects(geom, ST_Point(5, 5)))');
+----
+1
+
+statement ok
+SET VARIABLE middle = (SELECT edge_id FROM city.edge WHERE ST_Intersects(geom, ST_Point(5, 5)));
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_RemEdgeNewFace' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM ST_RemEdgeNewFace(''city'', getvariable(''middle''))');
+----
+1
+
+statement ok
+SELECT * FROM ST_RemEdgeNewFace('city', getvariable('middle'));
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_RemEdgeNewFace' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT count(*) FROM city.face WHERE face_id <> 0');
+----
+1
+
+query T
+SELECT count(*) FROM city.face WHERE face_id <> 0;
+----
+1
+
+statement ok
+CALL DropTopology('city');
+
+# ST_RemoveIsoEdge
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_RemoveIsoEdge' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'CALL CreateTopology(''city'')');
+----
+1
+
+statement ok
+CALL CreateTopology('city');
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_RemoveIsoEdge' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM ST_CreateTopoGeo(''city'', ST_GeomFromText(''LINESTRING(0 0, 10 0)''))');
+----
+1
+
+statement ok
+SELECT * FROM ST_CreateTopoGeo('city', ST_GeomFromText('LINESTRING(0 0, 10 0)'));
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_RemoveIsoEdge' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM ST_RemoveIsoEdge(''city'', 1)');
+----
+1
+
+query T
+SELECT * FROM ST_RemoveIsoEdge('city', 1);
+----
+Isolated edge 1 removed
+
+statement ok
+CALL DropTopology('city');
+
+# ST_RemoveIsoNode
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_RemoveIsoNode' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'CALL CreateTopology(''city'')');
+----
+1
+
+statement ok
+CALL CreateTopology('city');
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_RemoveIsoNode' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM ST_AddIsoNode(''city'', NULL, ST_Point(1, 1))');
+----
+1
+
+statement ok
+SELECT * FROM ST_AddIsoNode('city', NULL, ST_Point(1, 1));
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ST_RemoveIsoNode' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM ST_RemoveIsoNode(''city'', 1)');
+----
+1
+
+query T
+SELECT * FROM ST_RemoveIsoNode('city', 1);
+----
+Isolated node 1 removed
+
+statement ok
+CALL DropTopology('city');
+
+# TopoElementArray_Agg
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'TopoElementArray_Agg' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT TopoElementArray_Agg([face_id, 3] ORDER BY face_id) FROM (VALUES (1), (2), (3)) t(face_id)');
+----
+1
+
+query T
+SELECT TopoElementArray_Agg([face_id, 3] ORDER BY face_id) FROM (VALUES (1), (2), (3)) t(face_id);
+----
+[[1, 3], [2, 3], [3, 3]]
+
+# TopologySummary
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'TopologySummary' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'CALL CreateTopology(''city'')');
+----
+1
+
+statement ok
+CALL CreateTopology('city');
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'TopologySummary' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM TopologySummary(''city'')');
+----
+1
+
+query T
+SELECT unnest(string_split(regexp_replace(x, 'id \d+', 'id 1'), chr(10))) FROM (SELECT * FROM TopologySummary('city')) t(x);
+----
+Topology city (id 1, SRID 0, precision 0)
+0 nodes, 0 edges, 0 faces, 0 topogeoms in 0 layers
+
+statement ok
+CALL DropTopology('city');
+
+# ValidateTopology
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ValidateTopology' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'CALL CreateTopology(''city'')');
+----
+1
+
+statement ok
+CALL CreateTopology('city');
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ValidateTopology' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM ST_CreateTopoGeo(''city'', ST_GeomFromText(''POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))''))');
+----
+1
+
+statement ok
+SELECT * FROM ST_CreateTopoGeo('city', ST_GeomFromText('POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))'));
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE function_name = 'ValidateTopology' AND contains(regexp_replace(examples[1], '\s+', ' ', 'g'), 'SELECT * FROM ValidateTopology(''city'')');
+----
+1
+
+query TII
+SELECT * FROM ValidateTopology('city');
+----
+
+statement ok
+CALL DropTopology('city');

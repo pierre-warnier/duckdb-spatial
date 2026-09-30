@@ -1,0 +1,443 @@
+# name: test/sql/topology/topology_accessors.test
+# description: ST_GetFaceGeometry, ST_GetFaceEdges, GetNodeByPoint, GetEdgeByPoint, GetFaceByPoint, GetNodeEdges, GetRingEdges
+# group: [topology]
+
+require spatial
+
+# Two adjacent squares (faces 1 and 2) sharing e1; face 2 has a hole (face 3, e4) holding an isolated node, a dangling
+# edge e5 and an isolated edge e6; face 1 has an isolated node
+#
+#   (0,10) +---------e2--+ n2 ---------e3---+ (20,10)
+#          |             ^                  |
+#          |   f1        | e1    f2  [f3]   |
+#          |             |                  |
+#    (0,0) +-------------+ n1 --------------+ (20,0)
+statement ok
+CALL CreateTopology('t');
+
+statement ok
+SELECT * FROM ST_AddIsoNode('t', NULL, ST_Point(10, 0));
+
+statement ok
+SELECT * FROM ST_AddIsoNode('t', NULL, ST_Point(10, 10));
+
+statement ok
+SELECT * FROM ST_AddEdgeModFace('t', 1, 2, ST_GeomFromText('LINESTRING(10 0, 10 10)'));
+
+statement ok
+SELECT * FROM ST_AddEdgeModFace('t', 2, 1, ST_GeomFromText('LINESTRING(10 10, 0 10, 0 0, 10 0)'));
+
+statement ok
+SELECT * FROM ST_AddEdgeModFace('t', 1, 2, ST_GeomFromText('LINESTRING(10 0, 20 0, 20 10, 10 10)'));
+
+statement ok
+SELECT * FROM ST_AddIsoNode('t', NULL, ST_Point(14, 4));
+
+statement ok
+SELECT * FROM ST_AddEdgeModFace('t', 3, 3, ST_GeomFromText('LINESTRING(14 4, 18 4, 18 8, 14 8, 14 4)'));
+
+statement ok
+SELECT * FROM ST_AddIsoNode('t', NULL, ST_Point(16, 6));
+
+statement ok
+SELECT * FROM ST_AddIsoNode('t', NULL, ST_Point(12, 2));
+
+statement ok
+SELECT * FROM ST_AddEdgeModFace('t', 1, 5, ST_GeomFromText('LINESTRING(10 0, 12 2)'));
+
+statement ok
+SELECT * FROM ST_AddIsoNode('t', NULL, ST_Point(11, 8));
+
+statement ok
+SELECT * FROM ST_AddIsoNode('t', NULL, ST_Point(12, 9));
+
+statement ok
+SELECT * FROM ST_AddIsoEdge('t', 6, 7, ST_GeomFromText('LINESTRING(11 8, 12 9)'));
+
+statement ok
+SELECT * FROM ST_AddIsoNode('t', NULL, ST_Point(5, 5));
+
+query TII
+SELECT * FROM ValidateTopology('t');
+----
+
+query IIIIIIIT
+SELECT edge_id, start_node, end_node, next_left_edge, next_right_edge, left_face, right_face, ST_AsText(geom) FROM t.edge ORDER BY edge_id;
+----
+1	1	2	2	5	1	2	LINESTRING (10 0, 10 10)
+2	2	1	1	-3	1	0	LINESTRING (10 10, 0 10, 0 0, 10 0)
+3	1	2	-1	-2	2	0	LINESTRING (10 0, 20 0, 20 10, 10 10)
+4	3	3	4	-4	3	2	LINESTRING (14 4, 18 4, 18 8, 14 8, 14 4)
+5	1	5	-5	3	2	2	LINESTRING (10 0, 12 2)
+6	6	7	-6	6	2	2	LINESTRING (11 8, 12 9)
+
+query IIT
+SELECT node_id, containing_face, ST_AsText(geom) FROM t.node ORDER BY node_id;
+----
+1	NULL	POINT (10 0)
+2	NULL	POINT (10 10)
+3	NULL	POINT (14 4)
+4	3	POINT (16 6)
+5	NULL	POINT (12 2)
+6	NULL	POINT (11 8)
+7	NULL	POINT (12 9)
+8	1	POINT (5 5)
+
+# ----------------------------------------------------------------------------------------------------------------------
+# ST_GetFaceGeometry
+# ----------------------------------------------------------------------------------------------------------------------
+query T
+SELECT ST_AsText(ST_Normalize(st_getfacegeometry)) FROM ST_GetFaceGeometry('t', 1);
+----
+POLYGON ((0 0, 0 10, 10 10, 10 0, 0 0))
+
+# Dangling and isolated edges do not show in the face geometry
+query T
+SELECT ST_AsText(ST_Normalize(st_getfacegeometry)) FROM ST_GetFaceGeometry('t', 2);
+----
+POLYGON ((10 0, 10 10, 20 10, 20 0, 10 0), (14 4, 18 4, 18 8, 14 8, 14 4))
+
+query T
+SELECT ST_AsText(ST_Normalize(st_getfacegeometry)) FROM ST_GetFaceGeometry('t', 3);
+----
+POLYGON ((14 4, 14 8, 18 8, 18 4, 14 4))
+
+statement error
+SELECT * FROM ST_GetFaceGeometry('t', 0);
+----
+SQL/MM Spatial exception - universal face has no geometry
+
+statement error
+SELECT * FROM ST_GetFaceGeometry('t', 99);
+----
+SQL/MM Spatial exception - non-existent face.
+
+statement error
+SELECT * FROM ST_GetFaceGeometry('t', NULL);
+----
+SQL/MM Spatial exception - null argument
+
+statement error
+SELECT * FROM ST_GetFaceGeometry('nope', 1);
+----
+SQL/MM Spatial exception - invalid topology name
+
+# ----------------------------------------------------------------------------------------------------------------------
+# ST_GetFaceEdges: the face is on the left of every signed edge, rings start at their smallest edge, shell first
+# ----------------------------------------------------------------------------------------------------------------------
+query II
+SELECT * FROM ST_GetFaceEdges('t', 1);
+----
+1	1
+2	2
+
+query II
+SELECT * FROM ST_GetFaceEdges('t', 2);
+----
+1	-1
+2	3
+3	-4
+
+query II
+SELECT * FROM ST_GetFaceEdges('t', 3);
+----
+1	4
+
+query II
+SELECT * FROM ST_GetFaceEdges('t', 0);
+----
+1	-2
+2	-3
+
+query II
+SELECT * FROM ST_GetFaceEdges('t', 99);
+----
+
+# ----------------------------------------------------------------------------------------------------------------------
+# GetRingEdges: the walk goes through the dangling edge, in both directions
+# ----------------------------------------------------------------------------------------------------------------------
+query II
+SELECT * FROM GetRingEdges('t', 1);
+----
+1	1
+2	2
+
+query II
+SELECT * FROM GetRingEdges('t', -1);
+----
+1	-1
+2	5
+3	-5
+4	3
+
+query II
+SELECT * FROM GetRingEdges('t', 3);
+----
+1	3
+2	-1
+3	5
+4	-5
+
+query II
+SELECT * FROM GetRingEdges('t', -3);
+----
+1	-3
+2	-2
+
+query II
+SELECT * FROM GetRingEdges('t', 4);
+----
+1	4
+
+query II
+SELECT * FROM GetRingEdges('t', -4);
+----
+1	-4
+
+query II
+SELECT * FROM GetRingEdges('t', 6);
+----
+1	6
+2	-6
+
+query II
+SELECT * FROM GetRingEdges('t', -1, 4);
+----
+1	-1
+2	5
+3	-5
+4	3
+
+statement error
+SELECT * FROM GetRingEdges('t', -1, 3);
+----
+Max traversing limit hit: 3
+
+query II
+SELECT * FROM GetRingEdges('t', 99);
+----
+
+statement error
+SELECT * FROM GetRingEdges('t', NULL);
+----
+SQL/MM Spatial exception - null argument
+
+# ----------------------------------------------------------------------------------------------------------------------
+# GetNodeEdges: clockwise from north, positive when the edge starts at the node
+# ----------------------------------------------------------------------------------------------------------------------
+# Node 1 (10 0): e1 leaves north, e5 north-east, e3 east, e2 arrives from the west
+query II
+SELECT * FROM GetNodeEdges('t', 1);
+----
+1	1
+2	5
+3	3
+4	-2
+
+# Node 2 (10 10): e3 arrives from the east, e1 from the south, e2 leaves west
+query II
+SELECT * FROM GetNodeEdges('t', 2);
+----
+1	-3
+2	-1
+3	2
+
+# A closed edge shows twice: e4 leaves node 3 (14 4) east and comes back from the north
+query II
+SELECT * FROM GetNodeEdges('t', 3);
+----
+1	-4
+2	4
+
+query II
+SELECT * FROM GetNodeEdges('t', 4);
+----
+
+query II
+SELECT * FROM GetNodeEdges('t', 99);
+----
+
+# ----------------------------------------------------------------------------------------------------------------------
+# GetNodeByPoint
+# ----------------------------------------------------------------------------------------------------------------------
+query I
+SELECT * FROM GetNodeByPoint('t', ST_Point(10, 0), 0);
+----
+1
+
+query I
+SELECT * FROM GetNodeByPoint('t', ST_Point(10.5, 0), 0);
+----
+0
+
+query I
+SELECT * FROM GetNodeByPoint('t', ST_Point(10.5, 0), 0.5);
+----
+1
+
+query I
+SELECT * FROM GetNodeByPoint('t', ST_Point(9, 9), 1.5);
+----
+2
+
+statement error
+SELECT * FROM GetNodeByPoint('t', ST_Point(11, 1), 2);
+----
+Two or more nodes found
+
+statement error
+SELECT * FROM GetNodeByPoint('t', ST_GeomFromText('LINESTRING(0 0, 1 1)'), 2);
+----
+SQL/MM Spatial exception - invalid point
+
+statement error
+SELECT * FROM GetNodeByPoint('t', ST_Point(11, 1), -1);
+----
+Tolerance must be a non-negative number
+
+statement error
+SELECT * FROM GetNodeByPoint('t', NULL, 1);
+----
+SQL/MM Spatial exception - null argument
+
+# ----------------------------------------------------------------------------------------------------------------------
+# GetEdgeByPoint
+# ----------------------------------------------------------------------------------------------------------------------
+query I
+SELECT * FROM GetEdgeByPoint('t', ST_Point(10, 5), 0);
+----
+1
+
+query I
+SELECT * FROM GetEdgeByPoint('t', ST_Point(9.5, 5), 0);
+----
+0
+
+query I
+SELECT * FROM GetEdgeByPoint('t', ST_Point(9.5, 5), 0.5);
+----
+1
+
+query I
+SELECT * FROM GetEdgeByPoint('t', ST_Point(0, 5), 0);
+----
+2
+
+query I
+SELECT * FROM GetEdgeByPoint('t', ST_Point(16, 3), 1);
+----
+4
+
+# A node is on all its edges
+statement error
+SELECT * FROM GetEdgeByPoint('t', ST_Point(10, 0), 0);
+----
+Two or more edges found
+
+statement error
+SELECT * FROM GetEdgeByPoint('t', ST_Point(11, 5), 3);
+----
+Two or more edges found
+
+# ----------------------------------------------------------------------------------------------------------------------
+# GetFaceByPoint
+# ----------------------------------------------------------------------------------------------------------------------
+query I
+SELECT * FROM GetFaceByPoint('t', ST_Point(5, 5), 0);
+----
+1
+
+query I
+SELECT * FROM GetFaceByPoint('t', ST_Point(12, 5), 0);
+----
+2
+
+query I
+SELECT * FROM GetFaceByPoint('t', ST_Point(16, 6), 0);
+----
+3
+
+query I
+SELECT * FROM GetFaceByPoint('t', ST_Point(30, 5), 0);
+----
+0
+
+# A point inside a face is in that face whatever the tolerance
+query I
+SELECT * FROM GetFaceByPoint('t', ST_Point(9, 5), 5);
+----
+1
+
+# On the dangling edge and on the isolated edge: still inside face 2
+query I
+SELECT * FROM GetFaceByPoint('t', ST_Point(11, 1), 0);
+----
+2
+
+query I
+SELECT * FROM GetFaceByPoint('t', ST_Point(11.5, 8.5), 0);
+----
+2
+
+# Outside, but within the tolerance of the boundary of a single face
+query I
+SELECT * FROM GetFaceByPoint('t', ST_Point(-1, 5), 1);
+----
+1
+
+query I
+SELECT * FROM GetFaceByPoint('t', ST_Point(21, 5), 2);
+----
+2
+
+query I
+SELECT * FROM GetFaceByPoint('t', ST_Point(-1, 5), 0.5);
+----
+0
+
+# On the boundary between a face and the universal face
+query I
+SELECT * FROM GetFaceByPoint('t', ST_Point(0, 5), 0);
+----
+1
+
+# On an edge shared by two faces, or outside near two faces
+statement error
+SELECT * FROM GetFaceByPoint('t', ST_Point(10, 5), 0);
+----
+Two or more faces found
+
+statement error
+SELECT * FROM GetFaceByPoint('t', ST_Point(10, -1), 2);
+----
+Two or more faces found
+
+statement error
+SELECT * FROM GetFaceByPoint('t', ST_GeomFromText('LINESTRING(0 0, 1 1)'), 0);
+----
+SQL/MM Spatial exception - invalid point
+
+statement error
+SELECT * FROM GetFaceByPoint('nope', ST_Point(0, 5), 0);
+----
+SQL/MM Spatial exception - invalid topology name
+
+# The accessors do not change anything and work from inside a transaction that changed the database
+statement ok
+BEGIN;
+
+statement ok
+CREATE TABLE unrelated AS SELECT 1 AS x;
+
+query I
+SELECT * FROM GetFaceByPoint('t', ST_Point(5, 5), 0);
+----
+1
+
+query II
+SELECT * FROM ST_GetFaceEdges('t', 3);
+----
+1	4
+
+statement ok
+ROLLBACK;

@@ -1,0 +1,655 @@
+# name: test/sql/topology/topology_add_edge.test
+# description: ST_AddEdgeModFace and ST_AddEdgeNewFaces: links, face splits, holes, dangling edges
+# group: [topology]
+
+require spatial
+
+statement ok
+CREATE MACRO edges(topo) AS TABLE
+SELECT edge_id, start_node, end_node, next_left_edge, next_right_edge, left_face, right_face, ST_AsText(geom)
+FROM query_table(topo || '.edge') ORDER BY edge_id;
+
+statement ok
+CREATE MACRO faces(topo) AS TABLE
+SELECT face_id, ST_AsText(mbr) FROM query_table(topo || '.face') ORDER BY face_id;
+
+statement ok
+CREATE MACRO nodes(topo) AS TABLE
+SELECT node_id, containing_face, ST_AsText(geom) FROM query_table(topo || '.node') ORDER BY node_id;
+
+# Face polygons rebuilt in SQL from the left_face / right_face labels, independently of ST_GetFaceGeometry
+statement ok
+CREATE MACRO face_polygons(topo) AS TABLE
+SELECT face_id, ST_AsText(ST_Normalize(ST_BuildArea(ST_Collect(list(geom))))) AS polygon
+FROM (SELECT left_face AS face_id, geom FROM query_table(topo || '.edge') WHERE left_face <> right_face
+      UNION ALL
+      SELECT right_face, geom FROM query_table(topo || '.edge') WHERE left_face <> right_face)
+WHERE face_id <> 0 GROUP BY face_id ORDER BY face_id;
+
+# ----------------------------------------------------------------------------------------------------------------------
+# A square made of a single closed edge, drawn counter-clockwise: the new face is on its left
+# ----------------------------------------------------------------------------------------------------------------------
+statement ok
+CALL CreateTopology('sq');
+
+statement ok
+SELECT * FROM ST_AddIsoNode('sq', NULL, ST_Point(0, 0));
+
+query I
+SELECT * FROM ST_AddEdgeModFace('sq', 1, 1, ST_GeomFromText('LINESTRING(0 0, 10 0, 10 10, 0 10, 0 0)'));
+----
+1
+
+query IIIIIIIT
+FROM edges('sq');
+----
+1	1	1	1	-1	1	0	LINESTRING (0 0, 10 0, 10 10, 0 10, 0 0)
+
+query IT
+FROM faces('sq');
+----
+0	NULL
+1	POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))
+
+query IIT
+FROM nodes('sq');
+----
+1	NULL	POINT (0 0)
+
+query TII
+SELECT * FROM ValidateTopology('sq');
+----
+
+query I
+SELECT ST_Equals(st_getfacegeometry, ST_GeomFromText('POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))')) FROM ST_GetFaceGeometry('sq', 1);
+----
+true
+
+# The same square drawn clockwise: the universal face is on its left, so the new face is on the right
+statement ok
+CALL CreateTopology('cw');
+
+statement ok
+SELECT * FROM ST_AddIsoNode('cw', NULL, ST_Point(0, 0));
+
+statement ok
+SELECT * FROM ST_AddEdgeModFace('cw', 1, 1, ST_GeomFromText('LINESTRING(0 0, 0 10, 10 10, 10 0, 0 0)'));
+
+query IIIIIIIT
+FROM edges('cw');
+----
+1	1	1	1	-1	0	1	LINESTRING (0 0, 0 10, 10 10, 10 0, 0 0)
+
+query IT
+FROM faces('cw');
+----
+0	NULL
+1	POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))
+
+query TII
+SELECT * FROM ValidateTopology('cw');
+----
+
+# With ST_AddEdgeNewFaces the universal face is never replaced
+statement ok
+CALL CreateTopology('nf');
+
+statement ok
+SELECT * FROM ST_AddIsoNode('nf', NULL, ST_Point(0, 0));
+
+statement ok
+SELECT * FROM ST_AddEdgeNewFaces('nf', 1, 1, ST_GeomFromText('LINESTRING(0 0, 0 10, 10 10, 10 0, 0 0)'));
+
+query IIIIIIIT
+FROM edges('nf');
+----
+1	1	1	1	-1	0	1	LINESTRING (0 0, 0 10, 10 10, 10 0, 0 0)
+
+query IT
+FROM faces('nf');
+----
+0	NULL
+1	POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))
+
+query TII
+SELECT * FROM ValidateTopology('nf');
+----
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Two adjacent squares sharing an edge, built edge by edge
+#
+#   (0,10) +-----------+ n2 (10,10) ----+ (20,10)
+#          |           ^                |
+#          |    f1     | e1     f2      |
+#          |           |                |
+#    (0,0) +-----------+ n1 (10,0) -----+ (20,0)
+# ----------------------------------------------------------------------------------------------------------------------
+statement ok
+CALL CreateTopology('t');
+
+statement ok
+SELECT * FROM ST_AddIsoNode('t', NULL, ST_Point(10, 0));
+
+statement ok
+SELECT * FROM ST_AddIsoNode('t', NULL, ST_Point(10, 10));
+
+query I
+SELECT * FROM ST_AddEdgeModFace('t', 1, 2, ST_GeomFromText('LINESTRING(10 0, 10 10)'));
+----
+1
+
+# A lone edge: walking it forward comes back along itself
+query IIIIIIIT
+FROM edges('t');
+----
+1	1	2	-1	1	0	0	LINESTRING (10 0, 10 10)
+
+query IIT
+FROM nodes('t');
+----
+1	NULL	POINT (10 0)
+2	NULL	POINT (10 10)
+
+query TII
+SELECT * FROM ValidateTopology('t');
+----
+
+# Closing the left square: counter-clockwise ring e1, e2, so the new face 1 is on the left of both
+query I
+SELECT * FROM ST_AddEdgeModFace('t', 2, 1, ST_GeomFromText('LINESTRING(10 10, 0 10, 0 0, 10 0)'));
+----
+2
+
+query IIIIIIIT
+FROM edges('t');
+----
+1	1	2	2	-2	1	0	LINESTRING (10 0, 10 10)
+2	2	1	1	-1	1	0	LINESTRING (10 10, 0 10, 0 0, 10 0)
+
+query IT
+FROM faces('t');
+----
+0	NULL
+1	POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))
+
+query TII
+SELECT * FROM ValidateTopology('t');
+----
+
+# Closing the right square: e1 now separates faces 1 and 2
+query I
+SELECT * FROM ST_AddEdgeModFace('t', 1, 2, ST_GeomFromText('LINESTRING(10 0, 20 0, 20 10, 10 10)'));
+----
+3
+
+query IIIIIIIT
+FROM edges('t');
+----
+1	1	2	2	3	1	2	LINESTRING (10 0, 10 10)
+2	2	1	1	-3	1	0	LINESTRING (10 10, 0 10, 0 0, 10 0)
+3	1	2	-1	-2	2	0	LINESTRING (10 0, 20 0, 20 10, 10 10)
+
+query IT
+FROM faces('t');
+----
+0	NULL
+1	POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))
+2	POLYGON ((10 0, 20 0, 20 10, 10 10, 10 0))
+
+query IT
+FROM face_polygons('t');
+----
+1	POLYGON ((0 0, 0 10, 10 10, 10 0, 0 0))
+2	POLYGON ((10 0, 10 10, 20 10, 20 0, 10 0))
+
+query TII
+SELECT * FROM ValidateTopology('t');
+----
+
+query I
+SELECT ST_Equals(st_getfacegeometry, ST_GeomFromText('POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))')) FROM ST_GetFaceGeometry('t', 1);
+----
+true
+
+query I
+SELECT ST_Equals(st_getfacegeometry, ST_GeomFromText('POLYGON((10 0, 20 0, 20 10, 10 10, 10 0))')) FROM ST_GetFaceGeometry('t', 2);
+----
+true
+
+# ----------------------------------------------------------------------------------------------------------------------
+# A hole: a closed edge inside face 2. The isolated node inside the ring moves to the new face, the other stays
+# ----------------------------------------------------------------------------------------------------------------------
+statement ok
+SELECT * FROM ST_AddIsoNode('t', 2, ST_Point(12, 2));
+
+statement ok
+SELECT * FROM ST_AddIsoNode('t', NULL, ST_Point(13, 3));
+
+statement ok
+SELECT * FROM ST_AddIsoNode('t', NULL, ST_Point(19, 9));
+
+query I
+SELECT * FROM ST_AddEdgeModFace('t', 3, 3, ST_GeomFromText('LINESTRING(12 2, 18 2, 18 8, 12 8, 12 2)'));
+----
+4
+
+query IIIIIIIT
+FROM edges('t');
+----
+1	1	2	2	3	1	2	LINESTRING (10 0, 10 10)
+2	2	1	1	-3	1	0	LINESTRING (10 10, 0 10, 0 0, 10 0)
+3	1	2	-1	-2	2	0	LINESTRING (10 0, 20 0, 20 10, 10 10)
+4	3	3	4	-4	3	2	LINESTRING (12 2, 18 2, 18 8, 12 8, 12 2)
+
+query IT
+FROM faces('t');
+----
+0	NULL
+1	POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))
+2	POLYGON ((10 0, 20 0, 20 10, 10 10, 10 0))
+3	POLYGON ((12 2, 18 2, 18 8, 12 8, 12 2))
+
+query IIT
+FROM nodes('t');
+----
+1	NULL	POINT (10 0)
+2	NULL	POINT (10 10)
+3	NULL	POINT (12 2)
+4	3	POINT (13 3)
+5	2	POINT (19 9)
+
+query IT
+FROM face_polygons('t');
+----
+1	POLYGON ((0 0, 0 10, 10 10, 10 0, 0 0))
+2	POLYGON ((10 0, 10 10, 20 10, 20 0, 10 0), (12 2, 18 2, 18 8, 12 8, 12 2))
+3	POLYGON ((12 2, 12 8, 18 8, 18 2, 12 2))
+
+query TII
+SELECT * FROM ValidateTopology('t');
+----
+
+query I
+SELECT ST_Equals(st_getfacegeometry, ST_GeomFromText('POLYGON((10 0, 20 0, 20 10, 10 10, 10 0), (12 2, 12 8, 18 8, 18 2, 12 2))')) FROM ST_GetFaceGeometry('t', 2);
+----
+true
+
+query I
+SELECT ST_Equals(st_getfacegeometry, ST_GeomFromText('POLYGON((12 2, 18 2, 18 8, 12 8, 12 2))')) FROM ST_GetFaceGeometry('t', 3);
+----
+true
+
+# ----------------------------------------------------------------------------------------------------------------------
+# ST_AddEdgeNewFaces with a clockwise ring inside face 1: face 1 is replaced by face 4 (right of the new edge, the
+# inside of the ring) and face 5 (left of it, what remains of face 1, which keeps the bounding box of face 1)
+# ----------------------------------------------------------------------------------------------------------------------
+statement ok
+SELECT * FROM ST_AddIsoNode('t', NULL, ST_Point(2, 2));
+
+query I
+SELECT * FROM ST_AddEdgeNewFaces('t', 6, 6, ST_GeomFromText('LINESTRING(2 2, 2 8, 8 8, 8 2, 2 2)'));
+----
+5
+
+query IIIIIIIT
+FROM edges('t');
+----
+1	1	2	2	3	5	2	LINESTRING (10 0, 10 10)
+2	2	1	1	-3	5	0	LINESTRING (10 10, 0 10, 0 0, 10 0)
+3	1	2	-1	-2	2	0	LINESTRING (10 0, 20 0, 20 10, 10 10)
+4	3	3	4	-4	3	2	LINESTRING (12 2, 18 2, 18 8, 12 8, 12 2)
+5	6	6	5	-5	5	4	LINESTRING (2 2, 2 8, 8 8, 8 2, 2 2)
+
+query IT
+FROM faces('t');
+----
+0	NULL
+2	POLYGON ((10 0, 20 0, 20 10, 10 10, 10 0))
+3	POLYGON ((12 2, 18 2, 18 8, 12 8, 12 2))
+4	POLYGON ((2 2, 8 2, 8 8, 2 8, 2 2))
+5	POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))
+
+query IT
+FROM face_polygons('t');
+----
+2	POLYGON ((10 0, 10 10, 20 10, 20 0, 10 0), (12 2, 18 2, 18 8, 12 8, 12 2))
+3	POLYGON ((12 2, 12 8, 18 8, 18 2, 12 2))
+4	POLYGON ((2 2, 2 8, 8 8, 8 2, 2 2))
+5	POLYGON ((0 0, 0 10, 10 10, 10 0, 0 0), (2 2, 8 2, 8 8, 2 8, 2 2))
+
+query TII
+SELECT * FROM ValidateTopology('t');
+----
+
+# ----------------------------------------------------------------------------------------------------------------------
+# A bridge from the hole to the shell of face 5 has the same face on both sides and splits nothing
+# ----------------------------------------------------------------------------------------------------------------------
+query I
+SELECT * FROM ST_AddEdgeNewFaces('t', 6, 1, ST_GeomFromText('LINESTRING(2 2, 10 0)'));
+----
+6
+
+query IIIIIIIT
+FROM edges('t');
+----
+1	1	2	2	3	5	2	LINESTRING (10 0, 10 10)
+2	2	1	-6	-3	5	0	LINESTRING (10 10, 0 10, 0 0, 10 0)
+3	1	2	-1	-2	2	0	LINESTRING (10 0, 20 0, 20 10, 10 10)
+4	3	3	4	-4	3	2	LINESTRING (12 2, 18 2, 18 8, 12 8, 12 2)
+5	6	6	6	-5	5	4	LINESTRING (2 2, 2 8, 8 8, 8 2, 2 2)
+6	6	1	1	5	5	5	LINESTRING (2 2, 10 0)
+
+query I
+SELECT count(*) FROM t.face;
+----
+5
+
+query TII
+SELECT * FROM ValidateTopology('t');
+----
+
+query I
+SELECT ST_Equals(st_getfacegeometry, ST_GeomFromText('POLYGON((0 0, 10 0, 10 10, 0 10, 0 0), (2 2, 2 8, 8 8, 8 2, 2 2))')) FROM ST_GetFaceGeometry('t', 5);
+----
+true
+
+# A second bridge between the same two rings closes a ring and splits face 5 in two
+statement ok
+SELECT * FROM ST_ModEdgeSplit('t', 5, ST_Point(8, 8));
+
+query I
+SELECT * FROM ST_AddEdgeModFace('t', 7, 2, ST_GeomFromText('LINESTRING(8 8, 10 10)'));
+----
+8
+
+query IIIIIIIT
+FROM edges('t');
+----
+1	1	2	-8	3	5	2	LINESTRING (10 0, 10 10)
+2	2	1	-6	-3	6	0	LINESTRING (10 10, 0 10, 0 0, 10 0)
+3	1	2	-1	-2	2	0	LINESTRING (10 0, 20 0, 20 10, 10 10)
+4	3	3	4	-4	3	2	LINESTRING (12 2, 18 2, 18 8, 12 8, 12 2)
+5	6	7	8	-7	6	4	LINESTRING (2 2, 2 8, 8 8)
+6	6	1	1	5	5	6	LINESTRING (2 2, 10 0)
+7	7	6	6	-5	5	4	LINESTRING (8 8, 8 2, 2 2)
+8	7	2	2	7	6	5	LINESTRING (8 8, 10 10)
+
+query IT
+FROM faces('t');
+----
+0	NULL
+2	POLYGON ((10 0, 20 0, 20 10, 10 10, 10 0))
+3	POLYGON ((12 2, 18 2, 18 8, 12 8, 12 2))
+4	POLYGON ((2 2, 8 2, 8 8, 2 8, 2 2))
+5	POLYGON ((2 0, 10 0, 10 10, 2 10, 2 0))
+6	POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))
+
+query IT
+FROM face_polygons('t');
+----
+2	POLYGON ((10 0, 10 10, 20 10, 20 0, 10 0), (12 2, 18 2, 18 8, 12 8, 12 2))
+3	POLYGON ((12 2, 12 8, 18 8, 18 2, 12 2))
+4	POLYGON ((2 2, 2 8, 8 8, 8 2, 2 2))
+5	POLYGON ((2 2, 8 2, 8 8, 10 10, 10 0, 2 2))
+6	POLYGON ((0 0, 0 10, 10 10, 8 8, 2 8, 2 2, 10 0, 0 0))
+
+query TII
+SELECT * FROM ValidateTopology('t');
+----
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Splitting a face with a chord: ModFace keeps the face on the right of the new edge, NewFaces replaces it
+# ----------------------------------------------------------------------------------------------------------------------
+statement ok
+CALL CreateTopology('chord_mod');
+
+statement ok
+CALL CreateTopology('chord_new');
+
+foreach topo chord_mod chord_new
+
+statement ok
+SELECT * FROM ST_AddIsoNode('${topo}', NULL, ST_Point(0, 0));
+
+statement ok
+SELECT * FROM ST_AddIsoNode('${topo}', NULL, ST_Point(10, 10));
+
+statement ok
+SELECT * FROM ST_AddEdgeModFace('${topo}', 1, 2, ST_GeomFromText('LINESTRING(0 0, 10 0, 10 10)'));
+
+statement ok
+SELECT * FROM ST_AddEdgeModFace('${topo}', 2, 1, ST_GeomFromText('LINESTRING(10 10, 0 10, 0 0)'));
+
+statement ok
+SELECT * FROM ST_AddIsoNode('${topo}', NULL, ST_Point(8, 2));
+
+statement ok
+SELECT * FROM ST_AddIsoNode('${topo}', NULL, ST_Point(2, 8));
+
+query TII
+SELECT * FROM ValidateTopology('${topo}');
+----
+
+endloop
+
+query I
+SELECT * FROM ST_AddEdgeModFace('chord_mod', 1, 2, ST_GeomFromText('LINESTRING(0 0, 10 10)'));
+----
+3
+
+# Face 1 keeps the lower-right triangle, on the right of the chord; face 2 is the upper-left one
+query IIIIIIIT
+FROM edges('chord_mod');
+----
+1	1	2	-3	-2	1	0	LINESTRING (0 0, 10 0, 10 10)
+2	2	1	3	-1	2	0	LINESTRING (10 10, 0 10, 0 0)
+3	1	2	2	1	2	1	LINESTRING (0 0, 10 10)
+
+query IT
+FROM faces('chord_mod');
+----
+0	NULL
+1	POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))
+2	POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))
+
+query IIT
+FROM nodes('chord_mod');
+----
+1	NULL	POINT (0 0)
+2	NULL	POINT (10 10)
+3	1	POINT (8 2)
+4	2	POINT (2 8)
+
+query IT
+FROM face_polygons('chord_mod');
+----
+1	POLYGON ((0 0, 10 10, 10 0, 0 0))
+2	POLYGON ((0 0, 0 10, 10 10, 0 0))
+
+query TII
+SELECT * FROM ValidateTopology('chord_mod');
+----
+
+query I
+SELECT * FROM ST_AddEdgeNewFaces('chord_new', 1, 2, ST_GeomFromText('LINESTRING(0 0, 10 10)'));
+----
+3
+
+# Face 1 is gone: face 2 is on the right of the chord, face 3 on its left
+query IIIIIIIT
+FROM edges('chord_new');
+----
+1	1	2	-3	-2	2	0	LINESTRING (0 0, 10 0, 10 10)
+2	2	1	3	-1	3	0	LINESTRING (10 10, 0 10, 0 0)
+3	1	2	2	1	3	2	LINESTRING (0 0, 10 10)
+
+query IT
+FROM faces('chord_new');
+----
+0	NULL
+2	POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))
+3	POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))
+
+query IIT
+FROM nodes('chord_new');
+----
+1	NULL	POINT (0 0)
+2	NULL	POINT (10 10)
+3	2	POINT (8 2)
+4	3	POINT (2 8)
+
+query TII
+SELECT * FROM ValidateTopology('chord_new');
+----
+
+# A chord that is not a straight line gives the two faces tight bounding boxes
+statement ok
+CALL CreateTopology('bbox');
+
+statement ok
+SELECT * FROM ST_CreateTopoGeo('bbox', ST_GeomFromText('GEOMETRYCOLLECTION(POLYGON((0 0, 10 0, 10 10, 0 10, 0 0)), POINT(4 0), POINT(4 10))'));
+
+statement ok
+SET VARIABLE a = (SELECT node_id FROM bbox.node WHERE ST_Equals(geom, ST_Point(4, 0)));
+
+statement ok
+SET VARIABLE b = (SELECT node_id FROM bbox.node WHERE ST_Equals(geom, ST_Point(4, 10)));
+
+statement ok
+SELECT * FROM ST_AddEdgeModFace('bbox', getvariable('a'), getvariable('b'), ST_GeomFromText('LINESTRING(4 0, 4 10)'));
+
+query T
+SELECT ST_AsText(ST_Normalize(mbr)) FROM bbox.face WHERE face_id <> 0 ORDER BY ST_XMin(mbr);
+----
+POLYGON ((0 0, 0 10, 4 10, 4 0, 0 0))
+POLYGON ((4 0, 4 10, 10 10, 10 0, 4 0))
+
+query TII
+SELECT * FROM ValidateTopology('bbox');
+----
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Dangling edges: one end on an isolated node, inside a face and in the universal face
+# ----------------------------------------------------------------------------------------------------------------------
+statement ok
+SELECT * FROM ST_AddIsoNode('sq', NULL, ST_Point(5, 5));
+
+statement ok
+SELECT * FROM ST_AddIsoNode('sq', NULL, ST_Point(-5, -5));
+
+query I
+SELECT * FROM ST_AddEdgeModFace('sq', 1, 2, ST_GeomFromText('LINESTRING(0 0, 5 5)'));
+----
+2
+
+query I
+SELECT * FROM ST_AddEdgeNewFaces('sq', 3, 1, ST_GeomFromText('LINESTRING(-5 -5, 0 0)'));
+----
+3
+
+query IIIIIIIT
+FROM edges('sq');
+----
+1	1	1	2	-3	1	0	LINESTRING (0 0, 10 0, 10 10, 0 10, 0 0)
+2	1	2	-2	1	1	1	LINESTRING (0 0, 5 5)
+3	3	1	-1	3	0	0	LINESTRING (-5 -5, 0 0)
+
+query IIT
+FROM nodes('sq');
+----
+1	NULL	POINT (0 0)
+2	NULL	POINT (5 5)
+3	NULL	POINT (-5 -5)
+
+query I
+SELECT count(*) FROM sq.face;
+----
+2
+
+query TII
+SELECT * FROM ValidateTopology('sq');
+----
+
+query II
+SELECT * FROM GetRingEdges('sq', 1);
+----
+1	1
+2	2
+3	-2
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Error conditions: nothing is changed by a failed call
+# ----------------------------------------------------------------------------------------------------------------------
+statement error
+SELECT * FROM ST_AddEdgeModFace('sq', 1, 99, ST_GeomFromText('LINESTRING(0 0, 5 5)'));
+----
+SQL/MM Spatial exception - non-existent node
+
+statement error
+SELECT * FROM ST_AddEdgeModFace('sq', 2, 3, ST_GeomFromText('LINESTRING(5 5, -5 -5)'));
+----
+SQL/MM Spatial exception - geometry crosses a node
+
+statement error
+SELECT * FROM ST_AddEdgeModFace('sq', 2, 3, ST_GeomFromText('LINESTRING(5 5, 5 -5, -5 -5)'));
+----
+SQL/MM Spatial exception - geometry crosses edge 1
+
+statement error
+SELECT * FROM ST_AddEdgeNewFaces('sq', 1, 2, ST_GeomFromText('LINESTRING(0 0, 5 5)'));
+----
+SQL/MM Spatial exception - coincident edge 2
+
+statement error
+SELECT * FROM ST_AddEdgeNewFaces('sq', 1, 2, ST_GeomFromText('LINESTRING(0 0, 5 0, 5 5)'));
+----
+Spatial exception - geometry intersects edge 1
+
+statement error
+SELECT * FROM ST_AddEdgeModFace('sq', 1, 2, ST_GeomFromText('LINESTRING(1 1, 5 5)'));
+----
+SQL/MM Spatial exception - start node not geometry start point.
+
+statement error
+SELECT * FROM ST_AddEdgeModFace('sq', 1, 2, ST_GeomFromText('LINESTRING(0 0, 5 6)'));
+----
+SQL/MM Spatial exception - end node not geometry end point.
+
+statement error
+SELECT * FROM ST_AddEdgeModFace('sq', 2, 2, ST_GeomFromText('LINESTRING(5 5, 7 7, 7 5, 6 7, 5 5)'));
+----
+SQL/MM Spatial exception - curve not simple
+
+statement error
+SELECT * FROM ST_AddEdgeModFace('sq', 2, 2, ST_GeomFromText('POLYGON((5 5, 7 7, 7 5, 5 5))'));
+----
+SQL/MM Spatial exception - invalid curve
+
+statement error
+SELECT * FROM ST_AddEdgeModFace('sq', 2, 2, ST_GeomFromText('LINESTRING(5 5, 5 5)'));
+----
+Invalid edge (no two distinct vertices exist)
+
+statement error
+SELECT * FROM ST_AddEdgeModFace('sq', NULL, 2, ST_GeomFromText('LINESTRING(0 0, 5 5)'));
+----
+SQL/MM Spatial exception - null argument
+
+statement error
+SELECT * FROM ST_AddEdgeNewFaces('sq', 1, 2, NULL);
+----
+SQL/MM Spatial exception - null argument
+
+statement error
+SELECT * FROM ST_AddEdgeNewFaces('nope', 1, 2, ST_GeomFromText('LINESTRING(0 0, 5 5)'));
+----
+SQL/MM Spatial exception - invalid topology name
+
+query II
+SELECT (SELECT count(*) FROM sq.edge), (SELECT count(*) FROM sq.face);
+----
+3	2
+
+query TII
+SELECT * FROM ValidateTopology('sq');
+----

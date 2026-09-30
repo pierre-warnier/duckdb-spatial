@@ -1,0 +1,328 @@
+# name: test/sql/topology/topology_management.test
+# description: CreateTopology, DropTopology, GetTopologyID, GetTopologySRID, GetTopologyName, TopologySummary
+# group: [topology]
+
+require spatial
+
+# Nothing is registered before the first CreateTopology
+query I
+SELECT * FROM GetTopologyID('city');
+----
+NULL
+
+query I
+SELECT * FROM GetTopologyName(1);
+----
+NULL
+
+statement error
+SELECT * FROM TopologySummary('city');
+----
+SQL/MM Spatial exception - invalid topology name
+
+statement error
+SELECT * FROM ValidateTopology('city');
+----
+SQL/MM Spatial exception - invalid topology name
+
+query I
+CALL CreateTopology('city');
+----
+1
+
+query I
+SELECT createtopology FROM CreateTopology('roads', 31370, 0.5);
+----
+2
+
+query ITITT
+SELECT id, name, srid, "precision" = (CASE id WHEN 1 THEN 0 ELSE 0.5 END), hasz FROM topology.topology ORDER BY id;
+----
+1	city	0	true	false
+2	roads	31370	true	false
+
+# The schema of a topology follows PostGIS
+query TTT
+SELECT table_name, column_name, data_type FROM information_schema.columns
+WHERE table_schema = 'city' ORDER BY table_name, ordinal_position;
+----
+edge	edge_id	INTEGER
+edge	start_node	INTEGER
+edge	end_node	INTEGER
+edge	next_left_edge	INTEGER
+edge	next_right_edge	INTEGER
+edge	left_face	INTEGER
+edge	right_face	INTEGER
+edge	geom	GEOMETRY
+edge_data	edge_id	INTEGER
+edge_data	start_node	INTEGER
+edge_data	end_node	INTEGER
+edge_data	next_left_edge	INTEGER
+edge_data	abs_next_left_edge	INTEGER
+edge_data	next_right_edge	INTEGER
+edge_data	abs_next_right_edge	INTEGER
+edge_data	left_face	INTEGER
+edge_data	right_face	INTEGER
+edge_data	geom	GEOMETRY
+face	face_id	INTEGER
+face	mbr	GEOMETRY
+node	node_id	INTEGER
+node	containing_face	INTEGER
+node	geom	GEOMETRY
+
+query TT
+SELECT table_name, data_type FROM information_schema.columns
+WHERE table_schema = 'roads' AND column_name IN ('geom', 'mbr') ORDER BY table_name;
+----
+edge	GEOMETRY('EPSG:31370')
+edge_data	GEOMETRY('EPSG:31370')
+face	GEOMETRY('EPSG:31370')
+node	GEOMETRY('EPSG:31370')
+
+query T
+SELECT sequence_name FROM duckdb_sequences() WHERE schema_name = 'city' ORDER BY 1;
+----
+edge_data_edge_id_seq
+face_face_id_seq
+node_node_id_seq
+
+# A new topology only holds the universal face
+query IT
+SELECT face_id, mbr FROM city.face;
+----
+0	NULL
+
+query II
+SELECT (SELECT count(*) FROM city.node), (SELECT count(*) FROM city.edge);
+----
+0	0
+
+query I
+SELECT * FROM GetTopologyID('roads');
+----
+2
+
+query I
+SELECT * FROM GetTopologyID('ROADS');
+----
+2
+
+query I
+SELECT * FROM GetTopologySRID('roads');
+----
+31370
+
+query I
+SELECT * FROM GetTopologySRID('city');
+----
+0
+
+query I
+SELECT * FROM GetTopologySRID('nothing');
+----
+NULL
+
+query T
+SELECT * FROM GetTopologyName(2);
+----
+roads
+
+query T
+SELECT * FROM GetTopologyName(99);
+----
+NULL
+
+query T
+SELECT * FROM GetTopologyName(NULL);
+----
+NULL
+
+query T
+SELECT unnest(string_split(topologysummary, chr(10))) FROM TopologySummary('roads');
+----
+Topology roads (id 2, SRID 31370, precision 0.5)
+0 nodes, 0 edges, 0 faces, 0 topogeoms in 0 layers
+
+statement ok
+SELECT * FROM ST_CreateTopoGeo('city', ST_GeomFromText('GEOMETRYCOLLECTION(POLYGON((0 0, 10 0, 10 10, 0 10, 0 0)), LINESTRING(5 0, 5 10), POINT(2 2))'));
+
+query T
+SELECT unnest(string_split(topologysummary, chr(10))) FROM TopologySummary('city');
+----
+Topology city (id 1, SRID 0, precision 0)
+3 nodes, 3 edges, 2 faces, 0 topogeoms in 0 layers
+
+# Error conditions of CreateTopology
+statement error
+CALL CreateTopology('city');
+----
+Topology "city" already exists
+
+statement error
+CALL CreateTopology('City');
+----
+Topology "city" already exists
+
+statement error
+CALL CreateTopology('main');
+----
+Schema "main" already exists
+
+statement error
+CALL CreateTopology('topology');
+----
+Schema "topology" already exists
+
+statement error
+CALL CreateTopology('my topo');
+----
+SQL/MM Spatial exception - invalid topology name
+
+statement error
+CALL CreateTopology('1st');
+----
+SQL/MM Spatial exception - invalid topology name
+
+statement error
+CALL CreateTopology('a"; DROP SCHEMA city CASCADE; --');
+----
+SQL/MM Spatial exception - invalid topology name
+
+statement error
+CALL CreateTopology('');
+----
+SQL/MM Spatial exception - invalid topology name
+
+statement error
+CALL CreateTopology(NULL);
+----
+SQL/MM Spatial exception - null argument
+
+statement error
+CALL CreateTopology('neg', -1);
+----
+SRID must be a non-negative integer
+
+statement error
+CALL CreateTopology('neg', 0, -1);
+----
+Precision must be a non-negative number
+
+statement error
+CALL CreateTopology('withz', 0, 0, true);
+----
+Topologies with Z coordinates are not supported
+
+query I
+CALL CreateTopology('noz', 4326, 0, false);
+----
+3
+
+# A failed CreateTopology leaves nothing behind
+query I
+SELECT count(*) FROM duckdb_schemas() WHERE schema_name IN ('neg', 'withz', 'my topo');
+----
+0
+
+query I
+SELECT count(*) FROM topology.topology;
+----
+3
+
+# The SRID of a geometry argument is checked when its type carries a coordinate system
+statement ok
+SELECT * FROM ST_AddIsoNode('roads', NULL, ST_Point(150000, 170000)::GEOMETRY('EPSG:31370'));
+
+statement ok
+SELECT * FROM ST_AddIsoNode('roads', NULL, ST_Point(150001, 170000));
+
+statement error
+SELECT * FROM ST_AddIsoNode('roads', NULL, ST_Point(4.35, 50.85)::GEOMETRY('EPSG:4326'));
+----
+Geometry SRID (EPSG:4326) does not match topology SRID (31370)
+
+statement error
+SELECT * FROM ST_AddIsoNode('city', NULL, ST_Point(4.35, 50.85)::GEOMETRY('EPSG:4326'));
+----
+Geometry SRID (EPSG:4326) does not match topology SRID (0)
+
+statement error
+SELECT * FROM GetNodeByPoint('roads', ST_Point(4.35, 50.85)::GEOMETRY('EPSG:4326'), 0);
+----
+Geometry SRID (EPSG:4326) does not match topology SRID (31370)
+
+query IT
+SELECT node_id, ST_CRS(geom) FROM roads.node ORDER BY node_id;
+----
+1	EPSG:31370
+2	EPSG:31370
+
+# Geometry arguments also take WKT text, and nothing else
+query I
+SELECT * FROM ST_AddIsoNode('roads', NULL, 'POINT(150002 170000)');
+----
+3
+
+statement error
+SELECT * FROM ST_AddIsoNode('roads', NULL, 42);
+----
+ST_AddIsoNode: argument 3 must be a GEOMETRY, not INTEGER
+
+# DropTopology
+query T
+CALL DropTopology('roads');
+----
+Topology 'roads' dropped
+
+query I
+SELECT count(*) FROM duckdb_schemas() WHERE schema_name = 'roads';
+----
+0
+
+query IT
+SELECT id, name FROM topology.topology ORDER BY id;
+----
+1	city
+3	noz
+
+statement error
+CALL DropTopology('roads');
+----
+SQL/MM Spatial exception - invalid topology name
+
+# Only registered topologies can be dropped
+statement ok
+CREATE SCHEMA plain;
+
+statement error
+CALL DropTopology('plain');
+----
+SQL/MM Spatial exception - invalid topology name
+
+statement error
+CALL DropTopology(NULL);
+----
+SQL/MM Spatial exception - null argument
+
+# A dropped name can be reused and gets a new id
+query I
+CALL CreateTopology('roads');
+----
+4
+
+query I
+SELECT * FROM GetTopologySRID('roads');
+----
+0
+
+# Every topology function is documented and tagged
+query I
+SELECT count(*) FROM duckdb_functions()
+WHERE tags['category'] = 'topology' AND (tags['ext'] IS DISTINCT FROM 'spatial' OR description IS NULL OR len(examples) = 0);
+----
+0
+
+query I
+SELECT count(DISTINCT function_name) FROM duckdb_functions() WHERE tags['category'] = 'topology';
+----
+30
