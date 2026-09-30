@@ -1065,6 +1065,16 @@ void TileExecute(Call &c) {
 
 } // namespace
 
+void WarpInto(GDALDataset &src, GDALDataset &dst, const string &algorithm, double max_error) {
+	WarpSource source(src);
+	CPLErrorReset();
+	CheckGDAL(GDALReprojectImage(GDALDataset::ToHandle(source.dataset), nullptr, GDALDataset::ToHandle(&dst), nullptr,
+	                             ParseResampleAlgorithm(algorithm), 0, MaxValue(0.0, max_error), nullptr, nullptr,
+	                             nullptr),
+	          "Could not resample the raster");
+	CPLErrorReset();
+}
+
 //======================================================================================================================
 // Registration
 //======================================================================================================================

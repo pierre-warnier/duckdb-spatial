@@ -52,6 +52,7 @@ GDALDatasetUniquePtr OpenRasterFile(const RasterFile &file) {
 
 unique_ptr<FunctionData> ReadRasterBind(ClientContext &context, TableFunctionBindInput &input,
                                         vector<LogicalType> &return_types, vector<string> &names) {
+	const GDALScope scope;
 	auto result = make_uniq<ReadRasterBindData>();
 	if (input.inputs[0].IsNull()) {
 		throw BinderException("ST_ReadRaster: the path cannot be NULL");
@@ -130,6 +131,7 @@ unique_ptr<LocalTableFunctionState> ReadRasterInitLocal(ExecutionContext &contex
 
 void ReadRasterScan(ClientContext &context, TableFunctionInput &input, DataChunk &output) {
 	static constexpr idx_t MAX_CHUNK_BYTES = 32 * 1024 * 1024;
+	const GDALScope scope;
 
 	auto &bind_data = input.bind_data->Cast<ReadRasterBindData>();
 	auto &gstate = input.global_state->Cast<ReadRasterGlobalState>();

@@ -52,6 +52,21 @@ void CheckGDAL(CPLErr err, const char *fallback) {
 	}
 }
 
+static const char *const PAM_OPTION = "GDAL_PAM_ENABLED";
+
+GDALScope::GDALScope() : had_previous(false) {
+	const auto current = CPLGetThreadLocalConfigOption(PAM_OPTION, nullptr);
+	if (current) {
+		had_previous = true;
+		previous = current;
+	}
+	CPLSetThreadLocalConfigOption(PAM_OPTION, "NO");
+}
+
+GDALScope::~GDALScope() {
+	CPLSetThreadLocalConfigOption(PAM_OPTION, had_previous ? previous.c_str() : nullptr);
+}
+
 //======================================================================================================================
 // In-memory files
 //======================================================================================================================
@@ -1058,6 +1073,7 @@ ClientContext &Call::Context() const {
 
 void ExecuteCall(const vector<Param> &params, const std::function<void(Call &)> &function, DataChunk &args,
                  ExpressionState &state, Vector &result) {
+	const GDALScope scope;
 	Call call(params, args, state, result);
 	const auto all_constant = args.AllConstant();
 	const auto count = all_constant ? MinValue<idx_t>(args.size(), 1) : args.size();
@@ -1248,6 +1264,7 @@ static const char *const INVALID_RASTER_MESSAGE =
     "Could not cast BLOB to RASTER: not a GeoTIFF byte stream (use ST_FromGDALRaster to convert a raster file)";
 
 static bool BlobToRasterCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
+	const GDALScope scope;
 	UnifiedVectorFormat format;
 	source.ToUnifiedFormat(count, format);
 	const auto blobs = UnifiedVectorFormat::GetData<string_t>(format);

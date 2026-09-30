@@ -36,6 +36,21 @@ LogicalType RasterType();
 [[noreturn]] void ThrowGDALError(const string &fallback);
 void CheckGDAL(CPLErr err, const char *fallback);
 
+// RASTER values live in /vsimem, where GDAL must never leave .aux.xml side-car files behind. This turns GDAL's
+// side-car metadata off for the raster work of the current thread only, so that nothing changes for the rest of the
+// process (ST_Read, COPY ... FORMAT GDAL)
+class GDALScope {
+public:
+	GDALScope();
+	GDALScope(const GDALScope &) = delete;
+	GDALScope &operator=(const GDALScope &) = delete;
+	~GDALScope();
+
+private:
+	bool had_previous;
+	string previous;
+};
+
 //======================================================================================================================
 // In-memory files
 //======================================================================================================================
@@ -237,6 +252,10 @@ OGRGeometryUniquePtr MakePolygon(const double *xs, const double *ys, idx_t count
 // The polygon covering pixels [x0, x1) x [y0, y1), 0-based
 OGRGeometryUniquePtr PixelPolygon(const GeoTransform &gt, double x0, double y0, double x1, double y1);
 
+// Resamples the source onto the grid of the target, over the pixels the target already has. Both must be in the same
+// coordinate system. NODATA pixels of the source leave the target untouched
+void WarpInto(GDALDataset &src, GDALDataset &dst, const string &algorithm, double max_error);
+
 // Burns a value into every pixel of the band the geometry covers (pixel centre rule, or any touched pixel)
 void BurnGeometry(GDALDataset &ds, int32_t band, const OGRGeometry &geom, double value, bool all_touched);
 
@@ -410,6 +429,7 @@ void RegisterRasterProcessingFunctions(ExtensionLoader &loader);
 void RegisterRasterStatisticsFunctions(ExtensionLoader &loader);
 void RegisterRasterMapAlgebraFunctions(ExtensionLoader &loader);
 void RegisterRasterVectorFunctions(ExtensionLoader &loader);
+void RegisterRasterAggregateFunctions(ExtensionLoader &loader);
 
 } // namespace raster
 } // namespace duckdb

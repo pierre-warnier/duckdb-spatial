@@ -360,6 +360,7 @@ struct SummaryStatsAgg {
 	}
 
 	static void Update(Vector inputs[], AggregateInputData &, idx_t input_count, Vector &state_vec, idx_t count) {
+		const GDALScope scope;
 		UnifiedVectorFormat raster_format;
 		UnifiedVectorFormat band_format;
 		UnifiedVectorFormat exclude_format;

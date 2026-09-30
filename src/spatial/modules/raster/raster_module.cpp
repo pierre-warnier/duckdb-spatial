@@ -16,8 +16,6 @@ void RegisterRasterModule(ExtensionLoader &loader) {
 		GDALRegister_VRT();
 		GDALRegister_HFA();
 		GDALRegister_Derived();
-		// RASTER values live in /vsimem: never write .aux.xml side-car files next to them
-		CPLSetConfigOption("GDAL_PAM_ENABLED", "NO");
 	});
 
 	raster::RegisterRasterType(loader);
@@ -27,6 +25,7 @@ void RegisterRasterModule(ExtensionLoader &loader) {
 	raster::RegisterRasterStatisticsFunctions(loader);
 	raster::RegisterRasterMapAlgebraFunctions(loader);
 	raster::RegisterRasterVectorFunctions(loader);
+	raster::RegisterRasterAggregateFunctions(loader);
 }
 
 } // namespace duckdb

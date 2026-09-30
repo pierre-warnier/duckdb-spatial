@@ -40,7 +40,6 @@ static void LoadInternal(ExtensionLoader &loader) {
 
 	RegisterProjModule(loader);
 	RegisterGDALModule(loader);
-	RegisterRasterModule(loader);
 #if SPATIAL_USE_GEOS
 	RegisterGEOSModule(loader);
 #endif
@@ -48,6 +47,7 @@ static void LoadInternal(ExtensionLoader &loader) {
 	RegisterShapefileModule(loader);
 	RegisterMapboxVectorTileModule(loader);
 	RegisterWKBModule(loader);
+	RegisterRasterModule(loader);
 
 	RTreeModule::RegisterIndex(loader);
 	RTreeModule::RegisterIndexPragmas(loader);
