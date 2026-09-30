@@ -3,6 +3,8 @@
 #include "duckdb.hpp"
 #include "duckdb/common/types/geometry.hpp"
 #include "duckdb/function/scalar_function.hpp"
+#include "duckdb/function/function_set.hpp"
+#include "duckdb/parser/parsed_data/create_function_info.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
 
 #include "gdal_priv.h"
@@ -363,6 +365,10 @@ private:
 
 // Keeps the tags of a function that already exists when overloads are added to it
 InsertionOrderPreservingMap<string> FunctionTags(ExtensionLoader &loader, CatalogType type, const char *name);
+
+// Registers aggregate overloads. DuckDB cannot add overloads to an existing aggregate, so an aggregate of the same
+// name is replaced by one that has both its overloads and the new ones
+void RegisterAggregate(ExtensionLoader &loader, AggregateFunctionSet set, vector<FunctionDescription> descriptions);
 
 //======================================================================================================================
 // Function families

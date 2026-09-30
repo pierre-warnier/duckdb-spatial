@@ -7,6 +7,8 @@
 #include "duckdb/function/cast/default_casts.hpp"
 #include "duckdb/common/operator/cast_operators.hpp"
 #include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
+#include "duckdb/parser/parsed_data/create_aggregate_function_info.hpp"
+#include "duckdb/catalog/catalog_entry/aggregate_function_catalog_entry.hpp"
 
 #include "gdal_alg.h"
 #include "memdataset.h"
@@ -1107,6 +1109,45 @@ void RasterFunction::Register(ExtensionLoader &loader) {
 	const auto transaction = CatalogTransaction::GetSystemTransaction(db);
 	auto &schema = catalog.GetSchema(transaction, DEFAULT_SCHEMA);
 	auto entry = schema.GetEntry(transaction, CatalogType::SCALAR_FUNCTION_ENTRY, name);
+	if (!entry) {
+		throw InternalException("Function \"%s\" not found after registration", name);
+	}
+	entry->Cast<FunctionEntry>().tags = tags;
+}
+
+void RegisterAggregate(ExtensionLoader &loader, AggregateFunctionSet set, vector<FunctionDescription> descriptions) {
+	const auto name = set.name;
+	auto tags = FunctionTags(loader, CatalogType::AGGREGATE_FUNCTION_ENTRY, name.c_str());
+
+	auto &db = loader.GetDatabaseInstance();
+	auto &catalog = Catalog::GetSystemCatalog(db);
+	const auto transaction = CatalogTransaction::GetSystemTransaction(db);
+	auto &schema = catalog.GetSchema(transaction, DEFAULT_SCHEMA);
+
+	auto on_conflict = OnCreateConflict::ERROR_ON_CONFLICT;
+	const auto existing = schema.GetEntry(transaction, CatalogType::AGGREGATE_FUNCTION_ENTRY, name);
+	if (existing) {
+		auto &aggregate = existing->Cast<AggregateFunctionCatalogEntry>();
+		AggregateFunctionSet merged(name);
+		for (const auto &function : aggregate.functions.functions) {
+			merged.AddFunction(function);
+		}
+		for (const auto &function : set.functions) {
+			merged.AddFunction(function);
+		}
+		set = std::move(merged);
+		auto merged_descriptions = aggregate.descriptions;
+		merged_descriptions.insert(merged_descriptions.end(), descriptions.begin(), descriptions.end());
+		descriptions = std::move(merged_descriptions);
+		on_conflict = OnCreateConflict::REPLACE_ON_CONFLICT;
+	}
+
+	CreateAggregateFunctionInfo info(std::move(set));
+	info.on_conflict = on_conflict;
+	info.descriptions = std::move(descriptions);
+	loader.RegisterFunction(std::move(info));
+
+	auto entry = schema.GetEntry(transaction, CatalogType::AGGREGATE_FUNCTION_ENTRY, name);
 	if (!entry) {
 		throw InternalException("Function \"%s\" not found after registration", name);
 	}
