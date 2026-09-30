@@ -5,6 +5,7 @@
 #include "index/rtree/rtree.hpp"
 #include "spatial/index/rtree/rtree_module.hpp"
 #include "spatial/modules/gdal/gdal_module.hpp"
+#include "spatial/modules/geography/geography_module.hpp"
 #if SPATIAL_USE_GEOS
 #include "spatial/modules/geos/geos_module.hpp"
 #endif
@@ -46,6 +47,7 @@ static void LoadInternal(ExtensionLoader &loader) {
 	RegisterShapefileModule(loader);
 	RegisterMapboxVectorTileModule(loader);
 	RegisterWKBModule(loader);
+	RegisterGeographyModule(loader);
 
 	RTreeModule::RegisterIndex(loader);
 	RTreeModule::RegisterIndexPragmas(loader);

@@ -1,3 +1,4 @@
+#include "spatial/modules/geography/geography_module.hpp"
 #include "spatial/index/rtree/rtree_index_create_logical.hpp"
 #include "spatial/index/rtree/rtree_index.hpp"
 #include "spatial/index/rtree/rtree_index_create_physical.hpp"
@@ -152,7 +153,7 @@ PhysicalOperator &RTreeIndex::CreatePlan(PlanIndexInput &input) {
 	auto &expr = op.unbound_expressions[0];
 
 	// Validate that we have the right type of expression (also allow GEOMETRY types with a CRS)
-	if (expr->return_type.id() != LogicalTypeId::GEOMETRY) {
+	if (expr->return_type.id() != LogicalTypeId::GEOMETRY || GeographyType::IsGeography(expr->return_type)) {
 		throw BinderException("RTree indexes can only be created over GEOMETRY columns.");
 	}
 
@@ -219,7 +220,7 @@ PhysicalOperator &LogicalCreateRTreeIndex::CreatePlan(ClientContext &context, Ph
 	auto &expr = op.unbound_expressions[0];
 
 	// Validate that we have the right type of expression (also allow GEOMETRY types with a CRS)
-	if (expr->return_type.id() != LogicalTypeId::GEOMETRY) {
+	if (expr->return_type.id() != LogicalTypeId::GEOMETRY || GeographyType::IsGeography(expr->return_type)) {
 		throw BinderException("RTree indexes can only be created over GEOMETRY columns.");
 	}
 

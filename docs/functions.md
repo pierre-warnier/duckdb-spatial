@@ -83,6 +83,11 @@
 | [`ST_ForcePolygonCCW`](#st_forcepolygonccw) | Forces polygon exterior rings to be counter-clockwise |
 | [`ST_ForcePolygonCW`](#st_forcepolygoncw) | Forces polygon exterior rings to be clockwise |
 | [`ST_FrechetDistance`](#st_frechetdistance) | Returns the Frechet distance between two geometries |
+| [`ST_GeogFromText`](#st_geogfromtext) | Creates a GEOGRAPHY from its WKT representation. |
+| [`ST_GeogFromWKB`](#st_geogfromwkb) | Creates a GEOGRAPHY from its WKB representation. |
+| [`ST_GeogFromWKT`](#st_geogfromwkt) | Creates a GEOGRAPHY from its WKT representation. |
+| [`ST_GeogPoint`](#st_geogpoint) | Creates a GEOGRAPHY point from a longitude and a latitude in degrees on WGS84 |
+| [`ST_GeographyFromText`](#st_geographyfromtext) | Creates a GEOGRAPHY from its WKT representation. |
 | [`ST_GeoHash`](#st_geohash) | Returns the GeoHash string of a geometry's centroid at the given precision |
 | [`ST_GeometricMedian`](#st_geometricmedian) | Returns the geometric median of a geometry's vertices (Weiszfeld algorithm) |
 | [`ST_GeometryN`](#st_geometryn) | Returns the Nth geometry from a geometry collection (0-indexed) |
@@ -535,6 +540,7 @@ DOUBLE ST_Area (polygon POLYGON_2D)
 DOUBLE ST_Area (linestring LINESTRING_2D)
 DOUBLE ST_Area (point POINT_2D)
 DOUBLE ST_Area (box BOX_2D)
+DOUBLE ST_Area (geog GEOGRAPHY)
 ```
 
 #### Description
@@ -837,6 +843,7 @@ VARCHAR ST_AsText (point POINT_2D)
 VARCHAR ST_AsText (linestring LINESTRING_2D)
 VARCHAR ST_AsText (polygon POLYGON_2D)
 VARCHAR ST_AsText (box BOX_2D)
+VARCHAR ST_AsText (geog GEOGRAPHY)
 ```
 
 #### Description
@@ -875,10 +882,11 @@ SELECT ST_AsTWKB(ST_Point(1, 2), 0)
 ### ST_AsWKB
 
 
-#### Signature
+#### Signatures
 
 ```sql
 BLOB ST_AsWKB (geom GEOMETRY)
+BLOB ST_AsWKB (geog GEOGRAPHY)
 ```
 
 #### Description
@@ -977,6 +985,8 @@ SELECT ST_AsText(ST_Box2dFromGeoHash('dr5regw3p'))
 GEOMETRY ST_Buffer (geom GEOMETRY, distance DOUBLE)
 GEOMETRY ST_Buffer (geom GEOMETRY, distance DOUBLE, num_triangles INTEGER)
 GEOMETRY ST_Buffer (geom GEOMETRY, distance DOUBLE, num_triangles INTEGER, cap_style VARCHAR, join_style VARCHAR, mitre_limit DOUBLE)
+GEOGRAPHY ST_Buffer (geog GEOGRAPHY, distance DOUBLE)
+GEOGRAPHY ST_Buffer (geog GEOGRAPHY, distance DOUBLE, num_triangles INTEGER)
 ```
 
 #### Description
@@ -1482,6 +1492,7 @@ DOUBLE ST_Distance (point1 POINT_2D, point2 POINT_2D)
 DOUBLE ST_Distance (point POINT_2D, linestring LINESTRING_2D)
 DOUBLE ST_Distance (linestring LINESTRING_2D, point POINT_2D)
 DOUBLE ST_Distance (geom1 GEOMETRY, geom2 GEOMETRY)
+DOUBLE ST_Distance (geog1 GEOGRAPHY, geog2 GEOGRAPHY)
 ```
 
 #### Description
@@ -1606,10 +1617,11 @@ SELECT unnest(ST_Dump('MULTIPOINT(1 2, 3 4)'::GEOMETRY), recursive := true);
 ### ST_DWithin
 
 
-#### Signature
+#### Signatures
 
 ```sql
 BOOLEAN ST_DWithin (geom1 GEOMETRY, geom2 GEOMETRY, distance DOUBLE)
+BOOLEAN ST_DWithin (geog1 GEOGRAPHY, geog2 GEOGRAPHY, distance DOUBLE)
 ```
 
 #### Description
@@ -1934,6 +1946,119 @@ DOUBLE ST_FrechetDistance (geom1 GEOMETRY, geom2 GEOMETRY)
 #### Description
 
 Returns the Frechet distance between two geometries
+
+----
+
+### ST_GeogFromText
+
+
+#### Signature
+
+```sql
+GEOGRAPHY ST_GeogFromText (wkt VARCHAR)
+```
+
+#### Description
+
+Creates a GEOGRAPHY from its WKT representation.
+
+The coordinates are longitude and latitude in degrees on WGS84, in that order. Longitudes outside of [-180, 180] and latitudes outside of [-90, 90] raise an error. `ST_GeogFromText`, `ST_GeogFromWKT` and `ST_GeographyFromText` are the same function.
+
+#### Example
+
+```sql
+SELECT ST_GeogFromText('POINT(4.3517 50.8503)');
+```
+
+----
+
+### ST_GeogFromWKB
+
+
+#### Signature
+
+```sql
+GEOGRAPHY ST_GeogFromWKB (wkb BLOB)
+```
+
+#### Description
+
+Creates a GEOGRAPHY from its WKB representation.
+
+The coordinates are longitude and latitude in degrees on WGS84, in that order. Longitudes outside of [-180, 180] and latitudes outside of [-90, 90] raise an error.
+
+#### Example
+
+```sql
+SELECT ST_GeogFromWKB(ST_AsWKB(ST_Point(4.3517, 50.8503)));
+```
+
+----
+
+### ST_GeogFromWKT
+
+
+#### Signature
+
+```sql
+GEOGRAPHY ST_GeogFromWKT (wkt VARCHAR)
+```
+
+#### Description
+
+Creates a GEOGRAPHY from its WKT representation.
+
+The coordinates are longitude and latitude in degrees on WGS84, in that order. Longitudes outside of [-180, 180] and latitudes outside of [-90, 90] raise an error. `ST_GeogFromText`, `ST_GeogFromWKT` and `ST_GeographyFromText` are the same function.
+
+#### Example
+
+```sql
+SELECT ST_GeogFromText('POINT(4.3517 50.8503)');
+```
+
+----
+
+### ST_GeogPoint
+
+
+#### Signature
+
+```sql
+GEOGRAPHY ST_GeogPoint (longitude DOUBLE, latitude DOUBLE)
+```
+
+#### Description
+
+Creates a GEOGRAPHY point from a longitude and a latitude in degrees on WGS84
+
+#### Example
+
+```sql
+SELECT ST_GeogPoint(4.3517, 50.8503);
+```
+
+----
+
+### ST_GeographyFromText
+
+
+#### Signature
+
+```sql
+GEOGRAPHY ST_GeographyFromText (wkt VARCHAR)
+```
+
+#### Description
+
+Creates a GEOGRAPHY from its WKT representation.
+
+The coordinates are longitude and latitude in degrees on WGS84, in that order. Longitudes outside of [-180, 180] and latitudes outside of [-90, 90] raise an error. `ST_GeogFromText`, `ST_GeogFromWKT` and `ST_GeographyFromText` are the same function.
+
+#### Example
+
+```sql
+SELECT ST_GeogFromText('POINT(4.3517 50.8503)');
+```
 
 ----
 
@@ -2427,6 +2552,7 @@ Returns the intersection of two geometries
 ```sql
 BOOLEAN ST_Intersects (box1 BOX_2D, box2 BOX_2D)
 BOOLEAN ST_Intersects (geom1 GEOMETRY, geom2 GEOMETRY)
+BOOLEAN ST_Intersects (geog1 GEOGRAPHY, geog2 GEOGRAPHY)
 ```
 
 #### Description
@@ -2677,6 +2803,7 @@ Returns the largest empty circle within a geometry
 ```sql
 DOUBLE ST_Length (geom GEOMETRY)
 DOUBLE ST_Length (linestring LINESTRING_2D)
+DOUBLE ST_Length (geog GEOGRAPHY)
 ```
 
 #### Description
@@ -3487,6 +3614,7 @@ Returns true if the geometries overlap
 DOUBLE ST_Perimeter (geom GEOMETRY)
 DOUBLE ST_Perimeter (polygon POLYGON_2D)
 DOUBLE ST_Perimeter (box BOX_2D)
+DOUBLE ST_Perimeter (geog GEOGRAPHY)
 ```
 
 #### Description
@@ -3713,10 +3841,11 @@ GEOMETRYCOLLECTION (POLYGON ((0 0, 0 10, 10 10, 10 0, 0 0)))
 ### ST_Project
 
 
-#### Signature
+#### Signatures
 
 ```sql
 GEOMETRY ST_Project (point GEOMETRY, distance DOUBLE, azimuth DOUBLE)
+GEOGRAPHY ST_Project (origin GEOGRAPHY, distance DOUBLE, azimuth DOUBLE)
 ```
 
 #### Description
@@ -3912,10 +4041,11 @@ SELECT ST_AsText(ST_Scroll(ST_GeomFromText('LINESTRING(0 0, 1 0, 1 1, 0 1, 0 0)'
 ### ST_Segmentize
 
 
-#### Signature
+#### Signatures
 
 ```sql
 GEOMETRY ST_Segmentize (geom GEOMETRY, max_segment_length DOUBLE)
+GEOGRAPHY ST_Segmentize (geog GEOGRAPHY, max_segment_length DOUBLE)
 ```
 
 #### Description

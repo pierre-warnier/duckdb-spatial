@@ -1,8 +1,8 @@
 # DuckDB Spatial Extension (Enhanced Fork)
 
-This fork of [duckdb/duckdb-spatial](https://github.com/duckdb/duckdb-spatial) extends the DuckDB spatial extension with **84 additional functions**, a **native KNN spatial join operator**, **DBSCAN/K-means clustering**, and significant **performance optimizations** to the spatial join pipeline. The goal is PostGIS parity and SedonaDB-competitive performance within DuckDB's analytical engine.
+This fork of [duckdb/duckdb-spatial](https://github.com/duckdb/duckdb-spatial) extends the DuckDB spatial extension with **89 additional functions**, a **native KNN spatial join operator**, a **GEOGRAPHY type**, **DBSCAN/K-means clustering**, and significant **performance optimizations** to the spatial join pipeline. The goal is PostGIS parity and SedonaDB-competitive performance within DuckDB's analytical engine.
 
-**249 documented functions** (vs. 165 upstream) | **182 tests / 2593 assertions** | Synced with upstream v1.5-variegata
+**254 documented functions** (vs. 165 upstream) | **183 tests / 2718 assertions** | Synced with upstream v1.5-variegata
 
 **Table of contents**
 - [What's new in this fork](#whats-new-in-this-fork)
@@ -32,6 +32,22 @@ JOIN pois p ON ST_KNN(b.geom, p.geom, 1, p.category);
 
 Distances are planar, in the units of the coordinates: project longitude/latitude data to a metric CRS first. The searched side (the second geometry) is indexed in memory. See [`ST_KNN`](docs/functions.md#st_knn) in the function reference for the full semantics.
 
+## Geography
+
+A `GEOGRAPHY` type for longitude/latitude data on the WGS84 ellipsoid: edges are geodesics, polygons include their interior, and results are in meters and square meters.
+
+```sql
+SELECT ST_Distance(ST_GeogPoint(4.3517, 50.8503), ST_GeogPoint(-74.006, 40.7128));   -- 5904542.0 m
+SELECT ST_Area('POLYGON((4 50, 5 50, 5 51, 4 51, 4 50))'::GEOGRAPHY);                -- 7892061583 m²
+SELECT ST_Buffer(geog, 500), ST_DWithin(geog, ST_GeogPoint(4.3517, 50.8503), 10000) FROM places;
+```
+
+- Constructors: `ST_GeogPoint(lon, lat)`, `ST_GeogFromText` / `ST_GeogFromWKT`, `ST_GeogFromWKB`, and explicit casts from `VARCHAR` and `GEOMETRY`. Coordinates are always longitude then latitude, whatever `geometry_always_xy` says, and out-of-range values are rejected. A geometry that carries a CRS has to drop it first (`geom::GEOMETRY::GEOGRAPHY`): nothing is reprojected.
+- Geodesic overloads: `ST_Area`, `ST_Length`, `ST_Perimeter`, `ST_Distance`, `ST_DWithin`, `ST_Intersects`, `ST_Buffer`, `ST_Project`, `ST_Segmentize`, `ST_AsText`, `ST_AsWKB`. Distances between edges are computed on the ellipsoid itself (checked against an independent implementation to a few nanometers), handle polygons around a pole or across the date line, and cost the product of the vertex counts in the worst case. `ST_Buffer` works in an azimuthal equidistant projection centered on the geography, so its accuracy decreases for geographies spanning hundreds of kilometers.
+- There is deliberately no implicit cast to `GEOMETRY`: the planar functions do not silently apply to geographies. Cast explicitly (`geog::GEOMETRY`) to use them.
+- Since `ST_Buffer`, `ST_DWithin`, `ST_Project` and `ST_Segmentize` now have two overloads, a bare string literal or `NULL` argument has to be cast (`'POINT(0 0)'::GEOMETRY`), as was already the case for most other functions.
+- Joins on geography predicates run as regular joins, and R-tree indexes cannot be created on geography columns.
+
 ## Spatial Clustering
 
 PostGIS-compatible window functions for density-based and partition-based clustering.
@@ -56,7 +72,7 @@ Also includes `ST_ClusterIntersecting` and `ST_ClusterWithin` aggregate function
 - **Robust predicates**: Shewchuk adaptive-precision `orient2d` replaces the fast-but-wrong `orient2d_fast`, eliminating false positives in point-in-polygon and intersection tests near collinear edges
 - **Native ST_Intersects**: GEOMETRY-to-GEOMETRY intersection without GEOS fallback for the common bbox-miss and point-in-polygon cases
 
-## 84 New Functions (PostGIS parity)
+## 89 New Functions (PostGIS parity)
 
 | Category | Functions |
 |---|---|
@@ -71,6 +87,7 @@ Also includes `ST_ClusterIntersecting` and `ST_ClusterWithin` aggregate function
 | **Decomposition** (3) | `ST_DumpPoints`, `ST_DumpRings`, `ST_DumpSegments` |
 | **Constructors** (2) | `ST_LineFromMultiPoint`, `ST_Polygon` |
 | **Grids** (2) | `ST_HexagonGrid`, `ST_SquareGrid` |
+| **Geography** (5) | `ST_GeogPoint`, `ST_GeogFromText`, `ST_GeogFromWKT`, `ST_GeographyFromText`, `ST_GeogFromWKB` |
 | **Geodesic** (1) | `ST_Project` |
 | **Join** (1) | `ST_KNN` |
 
