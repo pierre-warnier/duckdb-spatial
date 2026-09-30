@@ -19,13 +19,9 @@
 namespace duckdb {
 
 LogicalType GeographyType::Get() {
-	auto type = LogicalType::GEOMETRY("OGC:CRS84");
+	LogicalType type(LogicalTypeId::BLOB);
 	type.SetAlias(NAME);
 	return type;
-}
-
-bool GeographyType::IsGeography(const LogicalType &type) {
-	return type.id() == LogicalTypeId::GEOMETRY && type.GetAlias() == NAME;
 }
 
 namespace {
@@ -135,6 +131,22 @@ bool VarcharToGeographyCast(Vector &source, Vector &result, idx_t count, CastPar
 		Geometry::FromString(wkt, blob, result, true);
 		return lstate.Verify(blob);
 	});
+	return true;
+}
+
+bool BlobToGeographyCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
+	auto &lstate = parameters.local_state->Cast<LocalState>();
+	UnaryExecutor::Execute<string_t, string_t>(source, result, count, [&](const string_t &wkb) {
+		lstate.arena.Reset();
+		string_t blob;
+		Geometry::FromBinary(wkb, blob, result, true);
+		return lstate.Verify(blob);
+	});
+	return true;
+}
+
+bool GeographyToBlobCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
+	Geometry::ToBinary(source, result, count);
 	return true;
 }
 
@@ -641,7 +653,9 @@ void RegisterGeographyModule(ExtensionLoader &loader) {
 	loader.RegisterCastFunction(LogicalType::VARCHAR, geography_type,
 	                            BoundCastInfo(VarcharToGeographyCast, nullptr, LocalState::InitCast));
 	loader.RegisterCastFunction(geography_type, LogicalType::VARCHAR, GeographyToVarcharCast);
-	loader.RegisterCastFunction(geography_type, LogicalType::BLOB, DefaultCasts::ReinterpretCast);
+	loader.RegisterCastFunction(LogicalType::BLOB, geography_type,
+	                            BoundCastInfo(BlobToGeographyCast, nullptr, LocalState::InitCast));
+	loader.RegisterCastFunction(geography_type, LogicalType::BLOB, GeographyToBlobCast);
 
 	ST_GeogFromText::Register(loader);
 	ST_GeogFromWKB::Register(loader);

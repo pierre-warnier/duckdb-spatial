@@ -4,7 +4,6 @@
 #include "spatial/util/distance_extract.hpp"
 #include "spatial/util/knn_extract.hpp"
 #include "spatial/spatial_types.hpp"
-#include "spatial/modules/geography/geography_module.hpp"
 
 #include "duckdb/main/database.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
@@ -120,12 +119,6 @@ static bool IsSpatialJoinPredicate(const unique_ptr<Expression> &expr, const uno
 	// The function's operands must be GEOMETRY 
 	if (func.children[0]->return_type.id() != LogicalTypeId::GEOMETRY ||
 	    func.children[1]->return_type.id() != LogicalTypeId::GEOMETRY) {
-		return false;
-	}
-
-	// The bounding box of the vertices of a geography does not bound its geodesic edges
-	if (GeographyType::IsGeography(func.children[0]->return_type) ||
-	    GeographyType::IsGeography(func.children[1]->return_type)) {
 		return false;
 	}
 

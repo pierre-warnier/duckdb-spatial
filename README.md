@@ -2,7 +2,7 @@
 
 This fork of [duckdb/duckdb-spatial](https://github.com/duckdb/duckdb-spatial) extends the DuckDB spatial extension with **89 additional functions**, a **native KNN spatial join operator**, a **GEOGRAPHY type**, **DBSCAN/K-means clustering**, and significant **performance optimizations** to the spatial join pipeline. The goal is PostGIS parity and SedonaDB-competitive performance within DuckDB's analytical engine.
 
-**254 documented functions** (vs. 165 upstream) | **183 tests / 2718 assertions** | Synced with upstream v1.5-variegata
+**254 documented functions** (vs. 165 upstream) | **184 tests / 2736 assertions** | Synced with upstream v1.5-variegata
 
 **Table of contents**
 - [What's new in this fork](#whats-new-in-this-fork)
@@ -47,6 +47,7 @@ SELECT ST_Buffer(geog, 500), ST_DWithin(geog, ST_GeogPoint(4.3517, 50.8503), 100
 - There is deliberately no implicit cast to `GEOMETRY`: the planar functions do not silently apply to geographies. Cast explicitly (`geog::GEOMETRY`) to use them.
 - Since `ST_Buffer`, `ST_DWithin`, `ST_Project` and `ST_Segmentize` now have two overloads, a bare string literal or `NULL` argument has to be cast (`'POINT(0 0)'::GEOMETRY`), as was already the case for most other functions.
 - Joins on geography predicates run as regular joins, and R-tree indexes cannot be created on geography columns.
+- A geography is stored as WKB under its own type name, so the column keeps its type in databases of any storage version. Other formats see a plain `BLOB`: cast to `GEOMETRY` before exporting to GeoParquet or through GDAL, and cast the WKB back with `::GEOGRAPHY` when reading.
 
 ## Spatial Clustering
 

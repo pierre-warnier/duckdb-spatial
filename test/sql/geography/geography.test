@@ -339,7 +339,18 @@ NULL	NULL
 statement error
 SELECT ST_Point(1, 2)::GEOMETRY('EPSG:3812')::GEOGRAPHY;
 ----
-Cannot cast
+Unimplemented type for cast
+
+# Casting to and from BLOB goes through WKB
+query II
+SELECT ST_GeogPoint(1, 2)::BLOB = ST_AsWKB(ST_Point(1, 2)), ST_AsWKB(ST_Point(1, 2))::GEOGRAPHY;
+----
+true	POINT (1 2)
+
+statement error
+SELECT ST_AsWKB(ST_Point(1, 200))::GEOGRAPHY;
+----
+GEOGRAPHY coordinates must be (longitude, latitude) in degrees
 
 query T
 SELECT ST_Transform(ST_Point(650000, 667000)::GEOMETRY('EPSG:3812'), 'OGC:CRS84')::GEOMETRY::GEOGRAPHY IS NOT NULL;
