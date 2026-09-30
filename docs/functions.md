@@ -21,7 +21,9 @@
 | [`ST_AsEWKB`](#st_asewkb) | Returns the geometry as EWKB (Extended Well-Known Binary). Alias for ST_AsWKB. |
 | [`ST_AsEWKT`](#st_asewkt) | Returns the geometry as an Extended WKT (EWKT) string |
 | [`ST_AsGeoJSON`](#st_asgeojson) | Returns the geometry as a GeoJSON fragment |
+| [`ST_AsGML`](#st_asgml) | Returns the geometry as a GML (Geography Markup Language) element. |
 | [`ST_AsHEXWKB`](#st_ashexwkb) | Returns the geometry as a HEXWKB string |
+| [`ST_AsKML`](#st_askml) | Returns the geometry as a KML (Keyhole Markup Language) geometry element. |
 | [`ST_AsLatLonText`](#st_aslatlontext) | Returns a point as a DMS (degrees-minutes-seconds) latitude/longitude string |
 | [`ST_AsMVTGeom`](#st_asmvtgeom) | Transform and clip geometry to a tile boundary |
 | [`ST_AsSVG`](#st_assvg) | Convert the geometry into a SVG fragment or path |
@@ -89,8 +91,10 @@
 | [`ST_GeomFromEWKT`](#st_geomfromewkt) | Parses an Extended WKT (EWKT) string, optionally with SRID prefix |
 | [`ST_GeomFromGeoHash`](#st_geomfromgeohash) | Returns the center point of a GeoHash cell |
 | [`ST_GeomFromGeoJSON`](#st_geomfromgeojson) | Deserializes a GEOMETRY from a GeoJSON fragment. |
+| [`ST_GeomFromGML`](#st_geomfromgml) | Creates a geometry from a GML (Geography Markup Language) geometry element. |
 | [`ST_GeomFromHEXEWKB`](#st_geomfromhexewkb) | Deserialize a GEOMETRY from a HEX(E)WKB encoded string |
 | [`ST_GeomFromHEXWKB`](#st_geomfromhexwkb) | Deserialize a GEOMETRY from a HEX(E)WKB encoded string |
+| [`ST_GeomFromKML`](#st_geomfromkml) | Creates a geometry from a KML (Keyhole Markup Language) geometry element. |
 | [`ST_GeomFromText`](#st_geomfromtext) | Deserialize a GEOMETRY from a WKT encoded string |
 | [`ST_GeomFromTWKB`](#st_geomfromtwkb) | Decodes a Tiny WKB (TWKB) binary into a geometry |
 | [`ST_GeomFromWKB`](#st_geomfromwkb) | Creates a geometry from Well-Known Binary (WKB) representation |
@@ -674,6 +678,36 @@ SELECT CAST({
 
 ----
 
+### ST_AsGML
+
+
+#### Signatures
+
+```sql
+VARCHAR ST_AsGML (geom GEOMETRY)
+VARCHAR ST_AsGML (version INTEGER, geom GEOMETRY)
+```
+
+#### Description
+
+Returns the geometry as a GML (Geography Markup Language) element.
+
+The `version` is 2 (GML 2.1.2, the default) or 3 (GML 3.1.1). Coordinates are written as they are, with 15 significant digits, and no `srsName` is emitted. M values are dropped, and an empty geometry returns `NULL`.
+
+#### Example
+
+```sql
+SELECT ST_AsGML(ST_Point(1, 2));
+----
+<gml:Point><gml:coordinates>1,2</gml:coordinates></gml:Point>
+
+SELECT ST_AsGML(3, ST_Point(1, 2));
+----
+<gml:Point><gml:pos>1 2</gml:pos></gml:Point>
+```
+
+----
+
 ### ST_AsHEXWKB
 
 
@@ -693,6 +727,31 @@ Returns the geometry as a HEXWKB string
 SELECT ST_AsHexWKB('POLYGON((0 0, 0 1, 1 1, 1 0, 0 0))'::GEOMETRY);
 ----
 01030000000100000005000000000000000000000000000...
+```
+
+----
+
+### ST_AsKML
+
+
+#### Signature
+
+```sql
+VARCHAR ST_AsKML (geom GEOMETRY)
+```
+
+#### Description
+
+Returns the geometry as a KML (Keyhole Markup Language) geometry element.
+
+KML coordinates are longitude, latitude in WGS84, written with 15 significant digits. The geometry is not reprojected: coordinates outside of the longitude/latitude range raise an error, so transform the geometry to `EPSG:4326` (with `always_xy := true`) first if it is in another coordinate system. M values are dropped, and an empty geometry returns `NULL`.
+
+#### Example
+
+```sql
+SELECT ST_AsKML(ST_Point(4.35, 50.85));
+----
+<Point><coordinates>4.35,50.85</coordinates></Point>
 ```
 
 ----
@@ -2048,6 +2107,31 @@ POINT (1 2)
 
 ----
 
+### ST_GeomFromGML
+
+
+#### Signature
+
+```sql
+GEOMETRY ST_GeomFromGML (gml VARCHAR)
+```
+
+#### Description
+
+Creates a geometry from a GML (Geography Markup Language) geometry element.
+
+Accepts GML 2 and GML 3 geometry elements, with or without the `gml:` namespace prefix. The `srsName` attribute is ignored.
+
+#### Example
+
+```sql
+SELECT ST_GeomFromGML('<gml:LineString><gml:coordinates>0,0 1,1</gml:coordinates></gml:LineString>');
+----
+LINESTRING (0 0, 1 1)
+```
+
+----
+
 ### ST_GeomFromHEXEWKB
 
 
@@ -2079,6 +2163,31 @@ GEOMETRY ST_GeomFromHEXWKB (hexwkb VARCHAR)
 Deserialize a GEOMETRY from a HEX(E)WKB encoded string
 
 DuckDB spatial doesn't currently differentiate between `WKB` and `EWKB`, so `ST_GeomFromHEXWKB` and `ST_GeomFromHEXEWKB` are just aliases of each other.
+
+----
+
+### ST_GeomFromKML
+
+
+#### Signature
+
+```sql
+GEOMETRY ST_GeomFromKML (kml VARCHAR)
+```
+
+#### Description
+
+Creates a geometry from a KML (Keyhole Markup Language) geometry element.
+
+Accepts a single `Point`, `LineString`, `LinearRing`, `Polygon` or `MultiGeometry` element, not a whole KML document (use `ST_Read` to read KML files). A `MultiGeometry` is returned as a geometry collection.
+
+#### Example
+
+```sql
+SELECT ST_GeomFromKML('<Point><coordinates>4.35,50.85</coordinates></Point>');
+----
+POINT (4.35 50.85)
+```
 
 ----
 

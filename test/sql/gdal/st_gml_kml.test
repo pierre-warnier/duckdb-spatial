@@ -1,0 +1,211 @@
+# name: test/sql/gdal/st_gml_kml.test
+# description: ST_AsGML, ST_GeomFromGML, ST_AsKML, ST_GeomFromKML
+# group: [gdal]
+
+require spatial
+
+# GML export
+query I
+SELECT ST_AsGML(ST_Point(1, 2));
+----
+<gml:Point><gml:coordinates>1,2</gml:coordinates></gml:Point>
+
+query I
+SELECT ST_AsGML(2, ST_Point(1, 2));
+----
+<gml:Point><gml:coordinates>1,2</gml:coordinates></gml:Point>
+
+query I
+SELECT ST_AsGML(3, ST_Point(1, 2));
+----
+<gml:Point><gml:pos>1 2</gml:pos></gml:Point>
+
+query I
+SELECT ST_AsGML(3, 'POLYGON((0 0, 10 0, 10 10, 0 10, 0 0), (1 1, 2 1, 2 2, 1 1))'::GEOMETRY);
+----
+<gml:Polygon><gml:exterior><gml:LinearRing><gml:posList>0 0 10 0 10 10 0 10 0 0</gml:posList></gml:LinearRing></gml:exterior><gml:interior><gml:LinearRing><gml:posList>1 1 2 1 2 2 1 1</gml:posList></gml:LinearRing></gml:interior></gml:Polygon>
+
+query I
+SELECT ST_AsGML('MULTIPOINT(1 2, 3 4)'::GEOMETRY);
+----
+<gml:MultiPoint><gml:pointMember><gml:Point><gml:coordinates>1,2</gml:coordinates></gml:Point></gml:pointMember><gml:pointMember><gml:Point><gml:coordinates>3,4</gml:coordinates></gml:Point></gml:pointMember></gml:MultiPoint>
+
+# Z is kept, M is dropped
+query II
+SELECT ST_AsGML('POINT Z(1 2 3)'::GEOMETRY), ST_AsGML('POINT ZM(1 2 3 4)'::GEOMETRY);
+----
+<gml:Point><gml:coordinates>1,2,3</gml:coordinates></gml:Point>	<gml:Point><gml:coordinates>1,2,3</gml:coordinates></gml:Point>
+
+query I
+SELECT ST_AsGML('POINT M(1 2 4)'::GEOMETRY);
+----
+<gml:Point><gml:coordinates>1,2</gml:coordinates></gml:Point>
+
+# NULL and empty geometries
+query IIII
+SELECT ST_AsGML(NULL::GEOMETRY), ST_AsGML('POINT EMPTY'::GEOMETRY), ST_AsGML(3, 'POLYGON EMPTY'::GEOMETRY), ST_AsGML(NULL, ST_Point(1, 2));
+----
+NULL	NULL	NULL	NULL
+
+statement error
+SELECT ST_AsGML(4, ST_Point(1, 2));
+----
+version must be 2 or 3
+
+# GML import
+query I
+SELECT ST_AsText(ST_GeomFromGML('<gml:LineString><gml:coordinates>0,0 1,1</gml:coordinates></gml:LineString>'));
+----
+LINESTRING (0 0, 1 1)
+
+query I
+SELECT ST_AsText(ST_GeomFromGML('<Point srsName="EPSG:31370"><pos>152000 167000</pos></Point>'));
+----
+POINT (152000 167000)
+
+query I
+SELECT ST_AsText(ST_GeomFromGML('<gml:Curve><gml:segments><gml:LineStringSegment><gml:posList>0 0 1 1 2 0</gml:posList></gml:LineStringSegment></gml:segments></gml:Curve>'));
+----
+LINESTRING (0 0, 1 1, 2 0)
+
+query I
+SELECT ST_GeomFromGML(NULL);
+----
+NULL
+
+statement error
+SELECT ST_GeomFromGML('<gml:Nope/>');
+----
+Could not parse GML geometry
+
+statement error
+SELECT ST_GeomFromGML('not xml');
+----
+Could not parse GML geometry
+
+statement error
+SELECT ST_GeomFromGML('<gml:Point><gml:coordinates>a,b</gml:coordinates></gml:Point>');
+----
+invalid coordinates
+
+# GML round trip, both versions and all geometry types
+statement ok
+CREATE TABLE geoms AS SELECT geom::GEOMETRY AS geom FROM (VALUES
+	('POINT(1.5 -2.25)'),
+	('POINT Z(1 2 3)'),
+	('LINESTRING(0 0, 1 1, 2 0)'),
+	('POLYGON((0 0, 10 0, 10 10, 0 10, 0 0), (1 1, 2 1, 2 2, 1 1))'),
+	('MULTIPOINT(1 2, 3 4)'),
+	('MULTILINESTRING((0 0, 1 1), (2 2, 3 3))'),
+	('MULTIPOLYGON(((0 0, 10 0, 10 10, 0 0)), ((20 20, 30 20, 30 30, 20 20)))'),
+	('GEOMETRYCOLLECTION(POINT(1 2), LINESTRING(0 0, 1 1))')
+) t(geom);
+
+query I
+SELECT count(*) FROM geoms
+WHERE ST_AsText(ST_GeomFromGML(ST_AsGML(geom))) = ST_AsText(geom)
+  AND ST_AsText(ST_GeomFromGML(ST_AsGML(3, geom))) = ST_AsText(geom);
+----
+8
+
+query I
+SELECT max(ST_HausdorffDistance(g, ST_GeomFromGML(ST_AsGML(3, g)))) < 1e-9
+FROM (SELECT ST_Buffer(ST_Point(150000 + i, 160000 + i * 2), 1.5) AS g FROM range(2000) t(i));
+----
+true
+
+# KML export
+query I
+SELECT ST_AsKML(ST_Point(4.35, 50.85));
+----
+<Point><coordinates>4.35,50.85</coordinates></Point>
+
+query I
+SELECT ST_AsKML('POLYGON((0 0, 10 0, 10 10, 0 10, 0 0), (1 1, 2 1, 2 2, 1 1))'::GEOMETRY);
+----
+<Polygon><outerBoundaryIs><LinearRing><coordinates>0,0 10,0 10,10 0,10 0,0</coordinates></LinearRing></outerBoundaryIs><innerBoundaryIs><LinearRing><coordinates>1,1 2,1 2,2 1,1</coordinates></LinearRing></innerBoundaryIs></Polygon>
+
+query I
+SELECT ST_AsKML('MULTIPOINT(1 2, 3 4)'::GEOMETRY);
+----
+<MultiGeometry><Point><coordinates>1,2</coordinates></Point><Point><coordinates>3,4</coordinates></Point></MultiGeometry>
+
+query II
+SELECT ST_AsKML('POINT Z(1 2 3)'::GEOMETRY), ST_AsKML('POINT ZM(1 2 3 4)'::GEOMETRY);
+----
+<Point><coordinates>1,2,3</coordinates></Point>	<Point><coordinates>1,2,3</coordinates></Point>
+
+query II
+SELECT ST_AsKML(NULL::GEOMETRY), ST_AsKML('LINESTRING EMPTY'::GEOMETRY);
+----
+NULL	NULL
+
+# Projected coordinates are rejected instead of being wrapped into the longitude range
+statement error
+SELECT ST_AsKML(ST_Point(152000, 167000));
+----
+coordinates are not longitude/latitude
+
+statement error
+SELECT ST_AsKML(ST_Point(190, 50));
+----
+coordinates are not longitude/latitude
+
+# KML import
+query I
+SELECT ST_AsText(ST_GeomFromKML('<Point><coordinates>4.35,50.85</coordinates></Point>'));
+----
+POINT (4.35 50.85)
+
+query I
+SELECT ST_AsText(ST_GeomFromKML('<?xml version="1.0"?><kml:Point xmlns:kml="http://www.opengis.net/kml/2.2"><kml:coordinates>4.35,50.85,12</kml:coordinates></kml:Point>'));
+----
+POINT Z (4.35 50.85 12)
+
+query I
+SELECT ST_AsText(ST_GeomFromKML('<LineString>
+  <extrude>1</extrude><tessellate>1</tessellate>
+  <coordinates>
+    -122.36,37.82
+    -122.37,37.83
+  </coordinates></LineString>'));
+----
+LINESTRING (-122.36 37.82, -122.37 37.83)
+
+query I
+SELECT ST_AsText(ST_GeomFromKML('<MultiGeometry><Point><coordinates>1,2</coordinates></Point><LineString><coordinates>0,0 1,1</coordinates></LineString><MultiGeometry><Point><coordinates>5,6</coordinates></Point></MultiGeometry></MultiGeometry>'));
+----
+GEOMETRYCOLLECTION (POINT (1 2), LINESTRING (0 0, 1 1), GEOMETRYCOLLECTION (POINT (5 6)))
+
+query I
+SELECT ST_GeomFromKML(NULL);
+----
+NULL
+
+statement error
+SELECT ST_GeomFromKML('<Placemark><name>x</name></Placemark>');
+----
+Could not parse KML geometry
+
+statement error
+SELECT ST_GeomFromKML('');
+----
+Could not parse KML geometry
+
+statement error
+SELECT ST_GeomFromKML('<Point><coordinates>a,b</coordinates></Point>');
+----
+invalid coordinates
+
+# KML round trip
+query I
+SELECT count(*) FROM geoms
+WHERE ST_Equals(ST_GeomFromKML(ST_AsKML(geom)), geom);
+----
+8
+
+query I
+SELECT max(ST_HausdorffDistance(g, ST_GeomFromKML(ST_AsKML(g)))) < 1e-12
+FROM (SELECT ST_Buffer(ST_Point(i / 100, i / 200), 0.5) AS g FROM range(2000) t(i));
+----
+true

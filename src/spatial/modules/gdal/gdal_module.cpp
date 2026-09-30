@@ -26,6 +26,7 @@
 #include "ogr_srs_api.h"
 #include "ogrsf_frmts.h"
 #include "cpl_string.h"
+#include "cpl_minixml.h"
 #include "cpl_error.h"
 #include "cpl_vsi.h"
 #include "cpl_vsi_error.h"
@@ -1877,6 +1878,325 @@ void Register(ExtensionLoader &loader) {
 } // namespace
 
 //======================================================================================================================
+// GML / KML
+//======================================================================================================================
+namespace gdal_markup {
+
+struct OGRGeometryDeleter {
+	void operator()(OGRGeometryH geom) const {
+		OGR_G_DestroyGeometry(geom);
+	}
+};
+using OGRGeometryPtr = std::unique_ptr<std::remove_pointer<OGRGeometryH>::type, OGRGeometryDeleter>;
+
+struct CPLStringDeleter {
+	void operator()(char *str) const {
+		CPLFree(str);
+	}
+};
+using CPLStringPtr = std::unique_ptr<char, CPLStringDeleter>;
+
+[[noreturn]] static void ThrowMarkupError(const string &fallback) {
+	string msg = fallback;
+	if (CPLGetLastErrorType() >= CE_Failure) {
+		msg += ": " + CleanGDALMessage(CPLGetLastErrorMsg());
+	}
+	CPLErrorReset();
+	throw InvalidInputException(msg);
+}
+
+static OGRGeometryPtr GeometryFromWKB(const string_t &wkb) {
+	OGRGeometryH geom = nullptr;
+	CPLErrorReset();
+	const auto err = OGR_G_CreateFromWkb(wkb.GetData(), nullptr, &geom, static_cast<int>(wkb.GetSize()));
+	OGRGeometryPtr result(geom);
+	if (err != OGRERR_NONE || !result) {
+		ThrowMarkupError("Could not convert geometry");
+	}
+	// An empty point is stored with NaN coordinates, which OGR reads back as a regular point
+	if (wkbFlatten(OGR_G_GetGeometryType(geom)) == wkbPoint && std::isnan(OGR_G_GetX(geom, 0))) {
+		OGR_G_Empty(geom);
+	}
+	return result;
+}
+
+static string_t GeometryToBlob(OGRGeometryH geom, Vector &result, vector<data_t> &buffer) {
+	buffer.resize(OGR_G_WkbSizeEx(geom));
+	if (OGR_G_ExportToIsoWkb(geom, wkbNDR, buffer.data()) != OGRERR_NONE) {
+		ThrowMarkupError("Could not convert geometry");
+	}
+	const string_t wkb(const_char_ptr_cast(buffer.data()), NumericCast<uint32_t>(buffer.size()));
+	string_t blob;
+	Geometry::FromBinary(wkb, blob, result, true);
+	return blob;
+}
+
+struct CPLXMLTreeDeleter {
+	void operator()(CPLXMLNode *node) const {
+		CPLDestroyXMLNode(node);
+	}
+};
+
+// GDAL reads coordinates with atof and silently turns anything it cannot parse into 0
+static void VerifyCoordinates(const CPLXMLNode *node, const char *format) {
+	static const char *const COORDINATE_ELEMENTS[] = {"coordinates", "pos", "posList", "X", "Y", "Z"};
+
+	for (; node; node = node->psNext) {
+		if (node->eType != CXT_Element) {
+			continue;
+		}
+		auto is_coordinate_element = false;
+		for (const auto name : COORDINATE_ELEMENTS) {
+			is_coordinate_element = is_coordinate_element || EQUAL(node->pszValue, name);
+		}
+		if (!is_coordinate_element) {
+			VerifyCoordinates(node->psChild, format);
+			continue;
+		}
+		for (auto child = node->psChild; child; child = child->psNext) {
+			if (child->eType != CXT_Text) {
+				continue;
+			}
+			for (auto c = child->pszValue; *c; c++) {
+				if (!StringUtil::CharacterIsDigit(*c) && !StringUtil::CharacterIsSpace(*c) && !strchr("+-.,eE", *c)) {
+					throw InvalidInputException("Could not parse %s geometry: invalid coordinates '%s'", format,
+					                            child->pszValue);
+				}
+			}
+		}
+	}
+}
+
+// KML geometries use the element names and coordinate syntax of GML 2, which GDAL's GML parser handles, except for
+// MultiGeometry, whose members are direct children instead of being wrapped in member elements
+static OGRGeometryPtr ParseNode(const CPLXMLNode *node, bool is_kml) {
+	const auto fallback = is_kml ? "Could not parse KML geometry" : "Could not parse GML geometry";
+	if (!is_kml || !EQUAL(node->pszValue, "MultiGeometry")) {
+		OGRGeometryPtr geom(OGR_G_CreateFromGMLTree(node));
+		if (!geom) {
+			ThrowMarkupError(fallback);
+		}
+		return geom;
+	}
+	OGRGeometryPtr collection(OGR_G_CreateGeometry(wkbGeometryCollection));
+	for (auto child = node->psChild; child; child = child->psNext) {
+		if (child->eType != CXT_Element) {
+			continue;
+		}
+		auto member = ParseNode(child, is_kml);
+		if (OGR_G_AddGeometryDirectly(collection.get(), member.get()) != OGRERR_NONE) {
+			ThrowMarkupError(fallback);
+		}
+		member.release();
+	}
+	return collection;
+}
+
+template <bool IS_KML>
+static void ParseExecute(DataChunk &args, ExpressionState &state, Vector &result) {
+	const auto format = IS_KML ? "KML" : "GML";
+	const auto fallback = IS_KML ? "Could not parse KML geometry" : "Could not parse GML geometry";
+
+	vector<data_t> buffer;
+	UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &input) {
+		const auto text = input.GetString();
+		CPLErrorReset();
+		const std::unique_ptr<CPLXMLNode, CPLXMLTreeDeleter> tree(CPLParseXMLString(text.c_str()));
+		if (!tree) {
+			ThrowMarkupError(fallback);
+		}
+		CPLStripXMLNamespace(tree.get(), nullptr, TRUE);
+
+		// Skip the XML declaration and comments in front of the geometry element
+		const CPLXMLNode *root = tree.get();
+		while (root && root->eType != CXT_Element) {
+			root = root->psNext;
+		}
+		if (!root) {
+			ThrowMarkupError(fallback);
+		}
+		VerifyCoordinates(root->psChild, format);
+
+		const auto geom = ParseNode(root, IS_KML);
+		return GeometryToBlob(geom.get(), result, buffer);
+	});
+}
+
+// Neither format can represent an empty geometry or M values: empty geometries become NULL and M values are dropped
+static bool PrepareExport(OGRGeometryH geom, ValidityMask &mask, idx_t row_idx) {
+	if (OGR_G_IsEmpty(geom)) {
+		mask.SetInvalid(row_idx);
+		return false;
+	}
+	OGR_G_SetMeasured(geom, FALSE);
+	return true;
+}
+
+static string_t ExportGML(const string_t &wkb, int32_t version, Vector &result, ValidityMask &mask, idx_t row_idx) {
+	if (version != 2 && version != 3) {
+		throw InvalidInputException("ST_AsGML: version must be 2 or 3, got %d", version);
+	}
+	const auto geom = GeometryFromWKB(wkb);
+	if (!PrepareExport(geom.get(), mask, row_idx)) {
+		return string_t();
+	}
+	const char *const options[] = {version == 2 ? "FORMAT=GML2" : "FORMAT=GML3", nullptr};
+	CPLErrorReset();
+	const CPLStringPtr gml(OGR_G_ExportToGMLEx(geom.get(), const_cast<char **>(options)));
+	if (!gml) {
+		ThrowMarkupError("Could not export geometry to GML");
+	}
+	return StringVector::AddString(result, gml.get());
+}
+
+static void AsGMLExecute(DataChunk &args, ExpressionState &state, Vector &result) {
+	const auto count = args.size();
+	Vector wkb_vec(LogicalType::BLOB, count);
+	Geometry::ToBinary(args.data[0], wkb_vec, count);
+	UnaryExecutor::ExecuteWithNulls<string_t, string_t>(
+	    wkb_vec, result, count,
+	    [&](const string_t &wkb, ValidityMask &mask, idx_t row_idx) { return ExportGML(wkb, 2, result, mask, row_idx); });
+}
+
+static void AsGMLVersionExecute(DataChunk &args, ExpressionState &state, Vector &result) {
+	const auto count = args.size();
+	Vector wkb_vec(LogicalType::BLOB, count);
+	Geometry::ToBinary(args.data[1], wkb_vec, count);
+	BinaryExecutor::ExecuteWithNulls<int32_t, string_t, string_t>(
+	    args.data[0], wkb_vec, result, count,
+	    [&](int32_t version, const string_t &wkb, ValidityMask &mask, idx_t row_idx) {
+		    return ExportGML(wkb, version, result, mask, row_idx);
+	    });
+}
+
+static void AsKMLExecute(DataChunk &args, ExpressionState &state, Vector &result) {
+	const auto count = args.size();
+	Vector wkb_vec(LogicalType::BLOB, count);
+	Geometry::ToBinary(args.data[0], wkb_vec, count);
+	UnaryExecutor::ExecuteWithNulls<string_t, string_t>(
+	    wkb_vec, result, count, [&](const string_t &wkb, ValidityMask &mask, idx_t row_idx) {
+		    const auto geom = GeometryFromWKB(wkb);
+		    if (!PrepareExport(geom.get(), mask, row_idx)) {
+			    return string_t();
+		    }
+
+		    // GDAL silently wraps longitudes into [-180, 180], which would corrupt projected coordinates
+		    OGREnvelope envelope;
+		    OGR_G_GetEnvelope(geom.get(), &envelope);
+		    if (envelope.MinX < -180 || envelope.MaxX > 180 || envelope.MinY < -90 || envelope.MaxY > 90) {
+			    throw InvalidInputException(
+			        "ST_AsKML: coordinates are not longitude/latitude in degrees, transform the geometry to "
+			        "'EPSG:4326' (with always_xy := true) first");
+		    }
+
+		    CPLErrorReset();
+		    const CPLStringPtr kml(OGR_G_ExportToKML(geom.get(), nullptr));
+		    if (!kml) {
+			    ThrowMarkupError("Could not export geometry to KML");
+		    }
+		    return StringVector::AddString(result, kml.get());
+	    });
+}
+
+static void Register(ExtensionLoader &loader) {
+	FunctionBuilder::RegisterScalar(loader, "ST_AsGML", [](ScalarFunctionBuilder &func) {
+		func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+			variant.AddParameter("geom", LogicalType::GEOMETRY());
+			variant.SetReturnType(LogicalType::VARCHAR);
+			variant.SetFunction(AsGMLExecute);
+			variant.CanThrowErrors();
+		});
+		func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+			variant.AddParameter("version", LogicalType::INTEGER);
+			variant.AddParameter("geom", LogicalType::GEOMETRY());
+			variant.SetReturnType(LogicalType::VARCHAR);
+			variant.SetFunction(AsGMLVersionExecute);
+			variant.CanThrowErrors();
+		});
+		func.SetDescription(R"(
+			Returns the geometry as a GML (Geography Markup Language) element.
+
+			The `version` is 2 (GML 2.1.2, the default) or 3 (GML 3.1.1). Coordinates are written as they are, with 15 significant digits, and no `srsName` is emitted. M values are dropped, and an empty geometry returns `NULL`.
+		)");
+		func.SetExample(R"(
+			SELECT ST_AsGML(ST_Point(1, 2));
+			----
+			<gml:Point><gml:coordinates>1,2</gml:coordinates></gml:Point>
+
+			SELECT ST_AsGML(3, ST_Point(1, 2));
+			----
+			<gml:Point><gml:pos>1 2</gml:pos></gml:Point>
+		)");
+		func.SetTag("ext", "spatial");
+		func.SetTag("category", "conversion");
+	});
+
+	FunctionBuilder::RegisterScalar(loader, "ST_GeomFromGML", [](ScalarFunctionBuilder &func) {
+		func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+			variant.AddParameter("gml", LogicalType::VARCHAR);
+			variant.SetReturnType(LogicalType::GEOMETRY());
+			variant.SetFunction(ParseExecute<false>);
+			variant.CanThrowErrors();
+		});
+		func.SetDescription(R"(
+			Creates a geometry from a GML (Geography Markup Language) geometry element.
+
+			Accepts GML 2 and GML 3 geometry elements, with or without the `gml:` namespace prefix. The `srsName` attribute is ignored.
+		)");
+		func.SetExample(R"(
+			SELECT ST_GeomFromGML('<gml:LineString><gml:coordinates>0,0 1,1</gml:coordinates></gml:LineString>');
+			----
+			LINESTRING (0 0, 1 1)
+		)");
+		func.SetTag("ext", "spatial");
+		func.SetTag("category", "conversion");
+	});
+
+	FunctionBuilder::RegisterScalar(loader, "ST_AsKML", [](ScalarFunctionBuilder &func) {
+		func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+			variant.AddParameter("geom", LogicalType::GEOMETRY());
+			variant.SetReturnType(LogicalType::VARCHAR);
+			variant.SetFunction(AsKMLExecute);
+			variant.CanThrowErrors();
+		});
+		func.SetDescription(R"(
+			Returns the geometry as a KML (Keyhole Markup Language) geometry element.
+
+			KML coordinates are longitude, latitude in WGS84, written with 15 significant digits. The geometry is not reprojected: coordinates outside of the longitude/latitude range raise an error, so transform the geometry to `EPSG:4326` (with `always_xy := true`) first if it is in another coordinate system. M values are dropped, and an empty geometry returns `NULL`.
+		)");
+		func.SetExample(R"(
+			SELECT ST_AsKML(ST_Point(4.35, 50.85));
+			----
+			<Point><coordinates>4.35,50.85</coordinates></Point>
+		)");
+		func.SetTag("ext", "spatial");
+		func.SetTag("category", "conversion");
+	});
+
+	FunctionBuilder::RegisterScalar(loader, "ST_GeomFromKML", [](ScalarFunctionBuilder &func) {
+		func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
+			variant.AddParameter("kml", LogicalType::VARCHAR);
+			variant.SetReturnType(LogicalType::GEOMETRY());
+			variant.SetFunction(ParseExecute<true>);
+			variant.CanThrowErrors();
+		});
+		func.SetDescription(R"(
+			Creates a geometry from a KML (Keyhole Markup Language) geometry element.
+
+			Accepts a single `Point`, `LineString`, `LinearRing`, `Polygon` or `MultiGeometry` element, not a whole KML document (use `ST_Read` to read KML files). A `MultiGeometry` is returned as a geometry collection.
+		)");
+		func.SetExample(R"(
+			SELECT ST_GeomFromKML('<Point><coordinates>4.35,50.85</coordinates></Point>');
+			----
+			POINT (4.35 50.85)
+		)");
+		func.SetTag("ext", "spatial");
+		func.SetTag("category", "conversion");
+	});
+}
+
+} // namespace gdal_markup
+//======================================================================================================================
 // GDAL LIST
 //======================================================================================================================
 namespace gdal_list {
@@ -2270,5 +2590,6 @@ void RegisterGDALModule(ExtensionLoader &loader) {
 	gdal_copy::Register(loader);
 	gdal_list::Register(loader);
 	gdal_meta::Register(loader);
+	gdal_markup::Register(loader);
 }
 } // namespace duckdb

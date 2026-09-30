@@ -1,8 +1,8 @@
 # DuckDB Spatial Extension (Enhanced Fork)
 
-This fork of [duckdb/duckdb-spatial](https://github.com/duckdb/duckdb-spatial) extends the DuckDB spatial extension with **80 additional functions**, a **native KNN spatial join operator**, **DBSCAN/K-means clustering**, and significant **performance optimizations** to the spatial join pipeline. The goal is PostGIS parity and SedonaDB-competitive performance within DuckDB's analytical engine.
+This fork of [duckdb/duckdb-spatial](https://github.com/duckdb/duckdb-spatial) extends the DuckDB spatial extension with **84 additional functions**, a **native KNN spatial join operator**, **DBSCAN/K-means clustering**, and significant **performance optimizations** to the spatial join pipeline. The goal is PostGIS parity and SedonaDB-competitive performance within DuckDB's analytical engine.
 
-**245 documented functions** (vs. 165 upstream) | **181 tests / 2551 assertions** | Synced with upstream v1.5-variegata
+**249 documented functions** (vs. 165 upstream) | **182 tests / 2593 assertions** | Synced with upstream v1.5-variegata
 
 **Table of contents**
 - [What's new in this fork](#whats-new-in-this-fork)
@@ -56,11 +56,11 @@ Also includes `ST_ClusterIntersecting` and `ST_ClusterWithin` aggregate function
 - **Robust predicates**: Shewchuk adaptive-precision `orient2d` replaces the fast-but-wrong `orient2d_fast`, eliminating false positives in point-in-polygon and intersection tests near collinear edges
 - **Native ST_Intersects**: GEOMETRY-to-GEOMETRY intersection without GEOS fallback for the common bbox-miss and point-in-polygon cases
 
-## 80 New Functions (PostGIS parity)
+## 84 New Functions (PostGIS parity)
 
 | Category | Functions |
 |---|---|
-| **Serialization** (12) | `ST_AsEWKB`, `ST_AsEWKT`, `ST_AsTWKB`, `ST_GeomFromEWKB`, `ST_GeomFromEWKT`, `ST_GeomFromTWKB`, `ST_AsEncodedPolyline`, `ST_LineFromEncodedPolyline`, `ST_GeoHash`, `ST_GeomFromGeoHash`, `ST_Box2dFromGeoHash`, `ST_AsLatLonText` |
+| **Serialization** (16) | `ST_AsGML`, `ST_GeomFromGML`, `ST_AsKML`, `ST_GeomFromKML`, `ST_AsEWKB`, `ST_AsEWKT`, `ST_AsTWKB`, `ST_GeomFromEWKB`, `ST_GeomFromEWKT`, `ST_GeomFromTWKB`, `ST_AsEncodedPolyline`, `ST_LineFromEncodedPolyline`, `ST_GeoHash`, `ST_GeomFromGeoHash`, `ST_Box2dFromGeoHash`, `ST_AsLatLonText` |
 | **GEOS Construction** (13) | `ST_ClipByBox2D`, `ST_DelaunayTriangles`, `ST_GeometricMedian`, `ST_LargestEmptyCircle`, `ST_MinimumBoundingCircle`, `ST_MinimumClearance`, `ST_MinimumClearanceLine`, `ST_OffsetCurve`, `ST_SharedPaths`, `ST_SimplifyPolygonHull`, `ST_Split`, `ST_TriangulatePolygon`, `ST_UnaryUnion` |
 | **Geometry Editing** (15) | `ST_AddPoint`, `ST_SetPoint`, `ST_RemovePoint`, `ST_ChaikinSmoothing`, `ST_ForceCollection`, `ST_QuantizeCoordinates`, `ST_Scroll`, `ST_Segmentize`, `ST_SetSRID`, `ST_ShiftLongitude`, `ST_SimplifyVW`, `ST_SwapOrdinates`, `ST_ForcePolygonCCW`, `ST_ForcePolygonCW`, `ST_SnapToGrid` |
 | **Accessors** (11) | `ST_BoundingDiagonal`, `ST_GeometryN`, `ST_IsCollection`, `ST_IsPolygonCCW`, `ST_IsPolygonCW`, `ST_IsValidDetail`, `ST_IsValidReason`, `ST_MemSize`, `ST_NRings`, `ST_SRID`, `ST_Summary` |
