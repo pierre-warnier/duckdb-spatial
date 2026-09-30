@@ -13,6 +13,7 @@
 #include "spatial/modules/main/spatial_functions.hpp"
 #include "spatial/modules/osm/osm_module.hpp"
 #include "spatial/modules/proj/proj_module.hpp"
+#include "spatial/modules/raster/raster_module.hpp"
 #include "spatial/modules/shapefile/shapefile_module.hpp"
 #include "spatial/modules/wkb/wkb_module.hpp"
 #include "spatial/operators/spatial_operator_extension.hpp"
@@ -39,6 +40,7 @@ static void LoadInternal(ExtensionLoader &loader) {
 
 	RegisterProjModule(loader);
 	RegisterGDALModule(loader);
+	RegisterRasterModule(loader);
 #if SPATIAL_USE_GEOS
 	RegisterGEOSModule(loader);
 #endif
