@@ -582,6 +582,10 @@ GeoTransform::GeoTransform(GDALDataset &ds) : c {0, 1, 0, 0, 0, 1} {
 }
 
 void GeoTransform::Apply(GDALDataset &ds) const {
+	const auto det = c[1] * c[5] - c[2] * c[4];
+	if (det == 0 || !std::isfinite(det)) {
+		throw InvalidInputException("The raster georeference is not invertible (scale and skew are degenerate)");
+	}
 	CPLErrorReset();
 	CheckGDAL(ds.SetGeoTransform(const_cast<double *>(c)), "Could not set the georeference");
 }
@@ -898,7 +902,8 @@ Value Call::GetValue(const char *name) const {
 
 vector<double> Call::DoubleList(const char *name) const {
 	vector<double> result;
-	for (const auto &child : ListValue::GetChildren(GetValue(name))) {
+	const auto list = GetValue(name);
+	for (const auto &child : ListValue::GetChildren(list)) {
 		if (child.IsNull()) {
 			throw InvalidInputException("NULL is not allowed in the '%s' list", name);
 		}
@@ -909,7 +914,8 @@ vector<double> Call::DoubleList(const char *name) const {
 
 vector<int32_t> Call::IntList(const char *name) const {
 	vector<int32_t> result;
-	for (const auto &child : ListValue::GetChildren(GetValue(name))) {
+	const auto list = GetValue(name);
+	for (const auto &child : ListValue::GetChildren(list)) {
 		if (child.IsNull()) {
 			throw InvalidInputException("NULL is not allowed in the '%s' list", name);
 		}
@@ -920,7 +926,8 @@ vector<int32_t> Call::IntList(const char *name) const {
 
 vector<string> Call::StringList(const char *name) const {
 	vector<string> result;
-	for (const auto &child : ListValue::GetChildren(GetValue(name))) {
+	const auto list = GetValue(name);
+	for (const auto &child : ListValue::GetChildren(list)) {
 		if (child.IsNull()) {
 			throw InvalidInputException("NULL is not allowed in the '%s' list", name);
 		}

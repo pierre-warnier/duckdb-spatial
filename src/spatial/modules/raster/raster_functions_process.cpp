@@ -615,31 +615,15 @@ void AspectExecute(Call &c) {
 	const auto dem = RunDEMProcessing(src, band_number, "aspect", {"-compute_edges"});
 	auto values = ReadBand(*dem->GetRasterBand(1));
 
-	// GDAL reports both flat pixels and pixels next to NODATA as -9999. Tell them apart to return -1 for flat pixels
+	// GDAL reports both flat pixels and NODATA pixels as -9999. Tell them apart to return -1 for flat pixels
 	const BandValues source(GetBand(src, band_number), true);
-	const auto width = source.width;
-	const auto height = source.height;
-	for (int y = 0; y < height; y++) {
-		for (int x = 0; x < width; x++) {
-			auto &value = values[static_cast<idx_t>(y) * width + x];
-			if (value != DEM_NODATA) {
-				if (units == TerrainUnits::RADIANS) {
-					value = value * M_PI / 180.0;
-				}
-				continue;
+	for (idx_t i = 0; i < values.size(); i++) {
+		if (values[i] != DEM_NODATA) {
+			if (units == TerrainUnits::RADIANS) {
+				values[i] = values[i] * M_PI / 180.0;
 			}
-			auto window_valid = true;
-			for (int wy = MaxValue(0, y - 1); window_valid && wy <= MinValue(height - 1, y + 1); wy++) {
-				for (int wx = MaxValue(0, x - 1); wx <= MinValue(width - 1, x + 1); wx++) {
-					if (!source.IsValid(static_cast<idx_t>(wy) * width + wx)) {
-						window_valid = false;
-						break;
-					}
-				}
-			}
-			if (window_valid) {
-				value = -1;
-			}
+		} else if (source.IsValid(i)) {
+			values[i] = -1;
 		}
 	}
 	const auto result = MakeTerrainRaster(src, type, values, DEM_NODATA);
@@ -968,9 +952,9 @@ void ColorMapExecute(Call &c) {
 
 	// A single word is the name of a predefined colormap, which PostGIS always interpolates
 	vector<ColorEntry> entries;
-	const auto first_line = colormap.substr(0, colormap.find('\n'));
-	if (ColorMapTokens(first_line).size() <= 1) {
-		const auto named = NamedColorMap(first_line.empty() ? colormap : ColorMapTokens(colormap)[0]);
+	const auto first_line = ColorMapTokens(colormap.substr(0, colormap.find('\n')));
+	if (first_line.size() <= 1) {
+		const auto named = NamedColorMap(first_line.empty() ? string() : first_line[0]);
 		if (!named) {
 			throw InvalidInputException("ST_ColorMap: unknown colormap keyword '%s', expected grayscale, pseudocolor, "
 			                            "fire, bluered or a custom colormap",
@@ -1294,11 +1278,12 @@ void RegisterRasterProcessingFunctions(ExtensionLoader &loader) {
 	    .Register(loader);
 
 	const char *terrain_notes =
-	    "Computed by GDAL's DEM processing on the 3x3 neighbourhood of each pixel; pixels on the border are computed "
-	    "from an extrapolated neighbourhood. `nband` is 1-based (default 1) and `pixeltype` the pixel type of the "
-	    "result (default `32BF`). Pixels whose neighbourhood contains a NODATA pixel are NODATA in the result (-9999, "
-	    "or the largest value of the pixel type if it cannot hold -9999); PostGIS instead substitutes the centre "
-	    "value. `interpolate_nodata` must be false and the `customextent` variants are not available.";
+	    "Computed by GDAL's DEM processing on the 3x3 neighbourhood of each pixel. Pixels on the border and next to "
+	    "NODATA pixels are computed from a neighbourhood that GDAL extrapolates, where PostGIS substitutes the value "
+	    "of the centre pixel, so those pixels can differ from PostGIS. `nband` is 1-based (default 1) and `pixeltype` "
+	    "the pixel type of the result (default `32BF`). NODATA pixels are NODATA in the result (-9999, or the largest "
+	    "value of the pixel type if it cannot hold -9999). `interpolate_nodata` must be false and the `customextent` "
+	    "variants are not available.";
 
 	const auto slope_description = StringUtil::Format(R"(
 		Returns the slope of an elevation band, using Horn's formula.

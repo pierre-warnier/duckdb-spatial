@@ -343,7 +343,14 @@ void AsTIFFExecute(Call &c) {
 		options = c.StringList("options");
 	}
 	if (c.Has("compression")) {
-		options.push_back("COMPRESS=" + StringUtil::Upper(c.String("compression")));
+		// GDAL only warns about a compression it does not know and writes an uncompressed file
+		const auto compression = StringUtil::Upper(c.String("compression"));
+		const auto driver = GetGDALDriverManager()->GetDriverByName("GTiff");
+		const auto creation_options = driver ? driver->GetMetadataItem(GDAL_DMD_CREATIONOPTIONLIST) : nullptr;
+		if (!creation_options || !strstr(creation_options, ("<Value>" + compression + "</Value>").c_str())) {
+			throw InvalidInputException("ST_AsTIFF: unknown compression '%s'", c.String("compression"));
+		}
+		options.push_back("COMPRESS=" + compression);
 	}
 	c.ReturnString(SerializeDataset(c.Raster(), "GTiff", options));
 }

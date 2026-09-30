@@ -1,0 +1,238 @@
+# name: test/sql/raster/raster_io.test
+# group: [raster]
+
+require spatial
+
+#----------------------------------------------------------------------------------------------------------------------
+# ST_ReadRaster: dem.tif is 32 x 24 pixels of 10 m, value 100 + 2x + 3y (1-based x, y), pixel (5, 5) is NODATA
+#----------------------------------------------------------------------------------------------------------------------
+
+query IIII
+SELECT x, y, typeof(rast), ST_MetaData(rast)::VARCHAR FROM ST_ReadRaster('test/data/raster/dem.tif');
+----
+0	0	RASTER	{'upperleftx': 150000.0, 'upperlefty': 170000.0, 'width': 32, 'height': 24, 'scalex': 10.0, 'scaley': -10.0, 'skewx': 0.0, 'skewy': 0.0, 'srid': 31370, 'numbands': 1}
+
+query III
+SELECT ST_BandPixelType(rast), ST_BandNoDataValue(rast)::INTEGER, ST_CRS(rast) FROM ST_ReadRaster('test/data/raster/dem.tif');
+----
+32BF	-9999	EPSG:31370
+
+query II
+SELECT count(*), bool_and(abs(p.val - (100 + 2 * p.x + 3 * p.y)) < 1e-9) FROM (SELECT unnest(ST_PixelAsPoints(rast)) AS p FROM ST_ReadRaster('test/data/raster/dem.tif'));
+----
+767	true
+
+query II
+SELECT ST_Value(rast, 5, 5), ST_Value(rast, 5, 5, false)::INTEGER FROM ST_ReadRaster('test/data/raster/dem.tif');
+----
+NULL	-9999
+
+# Tiles: 16 x 16, the bottom row is 8 pixels high
+query IIIIII
+SELECT x, y, ST_Width(rast), ST_Height(rast), ST_UpperLeftX(rast)::INTEGER, ST_UpperLeftY(rast)::INTEGER FROM ST_ReadRaster('test/data/raster/dem.tif', 16, 16) ORDER BY y, x;
+----
+0	0	16	16	150000	170000
+1	0	16	16	150160	170000
+0	1	16	8	150000	169840
+1	1	16	8	150160	169840
+
+# Every tile holds the pixels of its window, with the coordinate system and NODATA value of the file
+query IIIII
+SELECT count(*), bool_and(abs(p.val - (100 + 2 * (p.x + 16 * tx) + 3 * (p.y + 16 * ty))) < 1e-9), min(srid), max(srid), max(nodata)::INTEGER
+FROM (SELECT x AS tx, y AS ty, ST_SRID(rast) AS srid, ST_BandNoDataValue(rast) AS nodata, unnest(ST_PixelAsPoints(rast)) AS p FROM ST_ReadRaster('test/data/raster/dem.tif', 16, 16));
+----
+767	true	31370	31370	-9999
+
+# A tile size larger than the raster, and one that does not divide it
+query III
+SELECT count(*), max(ST_Width(rast)), max(ST_Height(rast)) FROM ST_ReadRaster('test/data/raster/dem.tif', 100, 100);
+----
+1	32	24
+
+query IIII
+SELECT count(*), sum(ST_Width(rast) * ST_Height(rast)), min(ST_Width(rast)), min(ST_Height(rast)) FROM ST_ReadRaster('test/data/raster/dem.tif', 5, 7);
+----
+28	768	2	3
+
+# Several bands
+query IIIIII
+SELECT ST_NumBands(rast), ST_SRID(rast), ST_Value(rast, 1, 1, 1)::INTEGER, ST_Value(rast, 2, 1, 1)::INTEGER, ST_Value(rast, 3, 1, 1)::INTEGER, ST_Value(rast, 2, 3, 3)::INTEGER FROM ST_ReadRaster('test/data/raster/rgb.tif');
+----
+3	4326	10	20	30	99
+
+# Globs
+query II
+SELECT ST_NumBands(rast), count(*) FROM ST_ReadRaster('test/data/raster/*.tif', 16, 16) GROUP BY ALL ORDER BY ALL;
+----
+1	4
+3	1
+
+statement error
+SELECT * FROM ST_ReadRaster('test/data/raster/does_not_exist.tif');
+----
+does_not_exist.tif
+
+statement error
+SELECT * FROM ST_ReadRaster('test/data/raster/dem.tif', 0, 16);
+----
+the tile width and height must be positive
+
+# Not a raster file
+statement error
+SELECT * FROM ST_ReadRaster('test/data/world-administrative-boundaries.geojson');
+----
+world-administrative-boundaries.geojson
+
+# The result can be stored and read back
+statement ok
+CREATE TABLE tiles AS SELECT x, y, rast FROM ST_ReadRaster('test/data/raster/dem.tif', 8, 8);
+
+query III
+SELECT count(*), sum(ST_Width(rast) * ST_Height(rast)), bool_and(ST_SameAlignment(rast, (SELECT rast FROM tiles WHERE x = 0 AND y = 0))) FROM tiles;
+----
+12	768	true
+
+#----------------------------------------------------------------------------------------------------------------------
+# ST_GDALDrivers
+#----------------------------------------------------------------------------------------------------------------------
+
+query III
+SELECT short_name, can_read, can_write FROM ST_GDALDrivers() WHERE short_name IN ('GTiff', 'COG', 'MEM', 'VRT', 'HFA') ORDER BY short_name;
+----
+COG	false	true
+GTiff	true	true
+HFA	true	true
+MEM	true	true
+VRT	true	true
+
+query II
+SELECT typeof(idx), create_options LIKE '%COMPRESS%' FROM ST_GDALDrivers() WHERE short_name = 'GTiff';
+----
+INTEGER	true
+
+# The vector driver list is still the vector driver list
+query I
+SELECT count(*) FROM ST_Drivers() WHERE short_name IN ('GTiff', 'HFA', 'COG');
+----
+0
+
+#----------------------------------------------------------------------------------------------------------------------
+# ST_AsGDALRaster, ST_AsTIFF, ST_FromGDALRaster
+#----------------------------------------------------------------------------------------------------------------------
+
+statement ok
+CREATE TABLE dem AS SELECT rast FROM ST_ReadRaster('test/data/raster/dem.tif');
+
+query II
+SELECT typeof(ST_AsGDALRaster(rast, 'GTiff')), hex(ST_AsGDALRaster(rast, 'GTiff'))[1:8] FROM dem;
+----
+BLOB	49492A00
+
+# Round trips keep the pixels, the georeference, the coordinate system and the NODATA value
+query IIIII
+SELECT format, ST_GeoReference(r) = ST_GeoReference(rast), ST_DumpValues(r) = ST_DumpValues(rast), ST_BandNoDataValue(r)::INTEGER, ST_SRID(r)
+FROM (SELECT format, rast, ST_FromGDALRaster(ST_AsGDALRaster(rast, format)) AS r FROM dem, (VALUES ('GTiff'), ('HFA'), ('COG')) f(format))
+ORDER BY format;
+----
+COG	true	true	-9999	31370
+GTiff	true	true	-9999	31370
+HFA	true	true	-9999	0
+
+# Erdas Imagine files do not keep the EPSG code, only the definition of the coordinate system
+query I
+SELECT ST_CRS(ST_FromGDALRaster(ST_AsGDALRaster(rast, 'HFA'))) LIKE '%Belgian Lambert 72%' FROM dem;
+----
+true
+
+query III
+SELECT ST_MetaData(r) = ST_MetaData(rast), ST_DumpValues(r) = ST_DumpValues(rast), octet_length(tif) < octet_length(ST_AsTIFF(rast))
+FROM (SELECT rast, tif, ST_FromGDALRaster(tif) AS r FROM (SELECT rast, ST_AsGDALRaster(rast, 'GTiff', ['COMPRESS=DEFLATE', 'PREDICTOR=3', 'TILED=YES', 'BLOCKXSIZE=16', 'BLOCKYSIZE=16']) AS tif FROM dem));
+----
+true	true	true
+
+# The exported GeoTIFF is a standard one: it casts straight back
+query II
+SELECT ST_SRID(ST_AsTIFF(rast)::RASTER), ST_DumpValues(ST_AsTIFF(rast)::RASTER) = ST_DumpValues(rast) FROM dem;
+----
+31370	true
+
+query IIII
+SELECT compression, ST_DumpValues(ST_FromGDALRaster(ST_AsTIFF(rast, compression))) = ST_DumpValues(rast), compression = 'PACKBITS' OR octet_length(ST_AsTIFF(rast, compression)) < octet_length(ST_AsTIFF(rast, 'NONE')), ST_SRID(ST_FromGDALRaster(ST_AsTIFF(rast, compression)))
+FROM dem, (VALUES ('LZW'), ('DEFLATE'), ('deflate'), ('PACKBITS')) c(compression) ORDER BY compression;
+----
+DEFLATE	true	true	31370
+LZW	true	true	31370
+PACKBITS	true	true	31370
+deflate	true	true	31370
+
+query I
+SELECT ST_DumpValues(ST_FromGDALRaster(ST_AsTIFF(rast, ['COMPRESS=LZW', 'PREDICTOR=3']))) = ST_DumpValues(rast) FROM dem;
+----
+true
+
+# SRID overrides, without reprojection
+query III
+SELECT ST_SRID(ST_FromGDALRaster(ST_AsTIFF(rast), 4326)), ST_SRID(ST_FromGDALRaster(ST_AsGDALRaster(rast, 'GTiff', NULL, 3857))), ST_UpperLeftX(ST_FromGDALRaster(ST_AsTIFF(rast), 4326))::INTEGER FROM dem;
+----
+4326	3857	150000
+
+query II
+SELECT ST_SRID(ST_FromGDALRaster(ST_AsTIFF(rast), NULL)), ST_SRID(ST_FromGDALRaster(ST_AsGDALRaster(rast, 'GTiff', NULL, NULL))) FROM dem;
+----
+31370	31370
+
+# A file read as a blob
+query III
+SELECT ST_Width(ST_FromGDALRaster(content)), ST_SRID(ST_FromGDALRaster(content)), ST_Value(ST_FromGDALRaster(content), 3, 2)::INTEGER FROM read_blob('test/data/raster/dem.tif');
+----
+32	31370	112
+
+# Several bands with different NODATA values survive the internal format, and the first one the export
+statement ok
+CREATE TABLE multi AS SELECT ST_AddBand(ST_AddBand(ST_MakeEmptyRaster(3, 2, 0, 0, 1), '16BSI', 1, -1), '16BSI', 2) AS rast;
+
+query III
+SELECT ST_NumBands(r), ST_BandNoDataValue(r, 1)::INTEGER, ST_Value(r, 2, 1, 1)::INTEGER FROM (SELECT ST_FromGDALRaster(ST_AsTIFF(rast)) AS r FROM multi);
+----
+2	-1	2
+
+statement error
+SELECT ST_AsGDALRaster(rast, 'PNG') FROM dem;
+----
+Unknown GDAL raster driver 'PNG'
+
+statement error
+SELECT ST_AsGDALRaster(rast, 'GeoJSON') FROM dem;
+----
+Unknown GDAL raster driver 'GeoJSON'
+
+statement error
+SELECT ST_AsTIFF(rast, 'NOPE') FROM dem;
+----
+unknown compression 'NOPE'
+
+statement error
+SELECT ST_AsTIFF(rast, 'JPEG') FROM dem;
+----
+unknown compression 'JPEG'
+
+statement error
+SELECT ST_AsTIFF(ST_MakeEmptyRaster(2, 2, 0, 0, 1));
+----
+Cannot export a raster without bands
+
+statement error
+SELECT ST_FromGDALRaster('definitely not a raster'::BLOB);
+----
+not a raster in a supported format
+
+# A VRT refers to other files and is not accepted as bytes
+statement error
+SELECT ST_FromGDALRaster(ST_AsGDALRaster(rast, 'VRT')) FROM dem;
+----
+not a raster in a supported format
+
+query II
+SELECT ST_FromGDALRaster(NULL) IS NULL, ST_AsTIFF(NULL::RASTER) IS NULL;
+----
+true	true

@@ -1,0 +1,204 @@
+# name: test/sql/raster/raster_accessors.test
+# group: [raster]
+
+require spatial
+
+statement ok
+CREATE TABLE t AS SELECT ST_AddBand(ST_MakeEmptyRaster(4, 3, 100, 200, 2, -2, 0, 0, 31370), '16BSI', 7, -1) AS rast;
+
+# A skewed raster: pixel columns advance by (3, 4), pixel rows by (4, -3)
+statement ok
+CREATE TABLE s AS SELECT ST_MakeEmptyRaster(2, 2, 0, 0, 3, -3, 4, 4) AS rast;
+
+query IIIIIIIII
+SELECT ST_Width(rast), ST_Height(rast), ST_NumBands(rast), ST_UpperLeftX(rast)::VARCHAR, ST_UpperLeftY(rast)::VARCHAR, ST_ScaleX(rast)::VARCHAR, ST_ScaleY(rast)::VARCHAR, ST_SkewX(rast)::VARCHAR, ST_SkewY(rast)::VARCHAR FROM t;
+----
+4	3	1	100.0	200.0	2.0	-2.0	0.0	0.0
+
+query IIII
+SELECT ST_ScaleX(rast)::VARCHAR, ST_ScaleY(rast)::VARCHAR, ST_SkewX(rast)::VARCHAR, ST_SkewY(rast)::VARCHAR FROM s;
+----
+3.0	-3.0	4.0	4.0
+
+query III
+SELECT ST_PixelWidth(rast)::VARCHAR, ST_PixelHeight(rast)::VARCHAR, ST_Rotation(rast)::VARCHAR FROM t;
+----
+2.0	2.0	0.0
+
+query III
+SELECT abs(ST_PixelWidth(rast) - 5) < 1e-12, abs(ST_PixelHeight(rast) - 5) < 1e-12, abs(ST_Rotation(rast) + acos(0.6)) < 1e-12 FROM s;
+----
+true	true	true
+
+# ST_GeoReference
+query I
+SELECT ST_GeoReference(rast) = concat_ws(chr(10), '2.0000000000', '0.0000000000', '0.0000000000', '-2.0000000000', '100.0000000000', '200.0000000000', '') FROM t;
+----
+true
+
+query I
+SELECT ST_GeoReference(rast, 'GDAL') = ST_GeoReference(rast) FROM t;
+----
+true
+
+query I
+SELECT ST_GeoReference(rast, 'ESRI') = concat_ws(chr(10), '2.0000000000', '0.0000000000', '0.0000000000', '-2.0000000000', '101.0000000000', '199.0000000000', '') FROM t;
+----
+true
+
+statement error
+SELECT ST_GeoReference(rast, 'WORLD') FROM t;
+----
+Unknown georeference format 'WORLD'
+
+# ST_MetaData and ST_BandMetaData
+query I
+SELECT ST_MetaData(rast)::VARCHAR FROM t;
+----
+{'upperleftx': 100.0, 'upperlefty': 200.0, 'width': 4, 'height': 3, 'scalex': 2.0, 'scaley': -2.0, 'skewx': 0.0, 'skewy': 0.0, 'srid': 31370, 'numbands': 1}
+
+query II
+SELECT (ST_MetaData(rast)).width, (ST_MetaData(rast)).srid FROM t;
+----
+4	31370
+
+query I
+SELECT ST_BandMetaData(rast)::VARCHAR FROM t;
+----
+{'pixeltype': 16BSI, 'nodatavalue': -1.0, 'isoutdb': false, 'path': NULL}
+
+query I
+SELECT ST_BandMetaData(ST_AddBand(rast, '16BSI'), 2)::VARCHAR FROM t;
+----
+{'pixeltype': 16BSI, 'nodatavalue': NULL, 'isoutdb': false, 'path': NULL}
+
+statement error
+SELECT ST_BandMetaData(rast, 2) FROM t;
+----
+Band 2 is out of range: the raster has 1 band(s), numbered from 1
+
+query II
+SELECT ST_BandPixelType(rast), ST_BandPixelType(rast, 1) FROM t;
+----
+16BSI	16BSI
+
+statement error
+SELECT ST_BandPixelType(rast, 0) FROM t;
+----
+Band 0 is out of range
+
+query II
+SELECT ST_BandNoDataValue(rast)::INTEGER, ST_BandNoDataValue(rast, 1)::INTEGER FROM t;
+----
+-1	-1
+
+statement error
+SELECT ST_BandNoDataValue(rast) FROM s;
+----
+Band 1 is out of range: the raster has 0 band(s)
+
+# ST_HasNoBand
+query IIIII
+SELECT ST_HasNoBand(rast), ST_HasNoBand(rast, 1), ST_HasNoBand(rast, 2), ST_HasNoBand(rast, 0), (SELECT ST_HasNoBand(rast) FROM s) FROM t;
+----
+false	false	true	true	true
+
+# ST_BandIsNoData
+query IIII
+SELECT ST_BandIsNoData(rast), ST_BandIsNoData(ST_SetBandNoDataValue(rast, 7)), ST_BandIsNoData(ST_SetBandNoDataValue(rast, 7), 1, true), ST_BandIsNoData(ST_SetValue(ST_SetBandNoDataValue(rast, 7), 1, 1, 3), true) FROM t;
+----
+false	true	true	false
+
+query I
+SELECT ST_BandIsNoData(ST_SetBandNoDataValue(rast, NULL)) FROM t;
+----
+false
+
+# Coordinate system
+query II
+SELECT ST_SRID(rast), ST_CRS(rast) FROM t;
+----
+31370	EPSG:31370
+
+query II
+SELECT ST_SRID(rast), ST_CRS(rast) IS NULL FROM s;
+----
+0	true
+
+# A coordinate system without an EPSG code is kept as WKT and has SRID 0
+query III
+SELECT ST_SRID(r), ST_CRS(r) LIKE 'PROJCRS[%', ST_CRS(ST_SetValue(r, 1, 1, 1)) = ST_CRS(r)
+FROM (SELECT ST_SetCRS(rast, '+proj=tmerc +lat_0=50 +lon_0=4 +k=1 +x_0=1000 +y_0=2000 +ellps=GRS80 +units=m +no_defs') AS r FROM t);
+----
+0	true	true
+
+# Geometries of the extent
+query II
+SELECT ST_AsText(ST_Envelope(rast)), ST_AsText(ST_ConvexHull(rast)) FROM t;
+----
+POLYGON ((100 194, 108 194, 108 200, 100 200, 100 194))	POLYGON ((100 200, 108 200, 108 194, 100 194, 100 200))
+
+query II
+SELECT ST_AsText(ST_Envelope(rast)), ST_AsText(ST_ConvexHull(rast)) FROM s;
+----
+POLYGON ((0 -6, 14 -6, 14 8, 0 8, 0 -6))	POLYGON ((0 0, 6 8, 14 2, 8 -6, 0 0))
+
+query I
+SELECT abs(ST_Area(ST_ConvexHull(rast)) - 100) < 1e-9 FROM s;
+----
+true
+
+# ST_MinConvexHull: all pixels are valid, then only a window is
+query I
+SELECT ST_AsText(ST_MinConvexHull(rast)) FROM t;
+----
+POLYGON ((100 200, 108 200, 108 194, 100 194, 100 200))
+
+statement ok
+CREATE TABLE sparse AS SELECT ST_SetValue(ST_SetValue(ST_SetBandNoDataValue(rast, 7), 2, 2, 1), 3, 3, 1) AS rast FROM t;
+
+query III
+SELECT ST_AsText(ST_MinConvexHull(rast)), ST_AsText(ST_MinConvexHull(rast, 1)), ST_AsText(ST_MinConvexHull(rast, NULL)) FROM sparse;
+----
+POLYGON ((102 198, 106 198, 106 194, 102 194, 102 198))	POLYGON ((102 198, 106 198, 106 194, 102 194, 102 198))	POLYGON ((102 198, 106 198, 106 194, 102 194, 102 198))
+
+query I
+SELECT ST_MinConvexHull(ST_SetBandNoDataValue(rast, 7)) IS NULL FROM t;
+----
+true
+
+statement error
+SELECT ST_MinConvexHull(rast, 2) FROM t;
+----
+Band 2 is out of range
+
+# ST_SameAlignment
+query IIIII
+SELECT ST_SameAlignment(a, a),
+       ST_SameAlignment(a, ST_MakeEmptyRaster(7, 9, 4, -6, 1)),
+       ST_SameAlignment(a, ST_MakeEmptyRaster(2, 2, 0.5, 0, 1)),
+       ST_SameAlignment(a, ST_MakeEmptyRaster(2, 2, 0, 0, 2)),
+       ST_SameAlignment(a, ST_SetSRID(a, 4326))
+FROM (SELECT ST_MakeEmptyRaster(2, 2, 0, 0, 1) AS a);
+----
+true	true	false	false	false
+
+query I
+SELECT ST_NotSameAlignmentReason(a, b)
+FROM (SELECT ST_MakeEmptyRaster(2, 2, 0, 0, 1, -1, 0, 0) AS a), (VALUES
+	(1, ST_MakeEmptyRaster(3, 3, 5, 7, 1, -1, 0, 0)),
+	(2, ST_MakeEmptyRaster(2, 2, 0.5, 0, 1, -1, 0, 0)),
+	(3, ST_MakeEmptyRaster(2, 2, 0, 0, 2, -1, 0, 0)),
+	(4, ST_MakeEmptyRaster(2, 2, 0, 0, 1, -2, 0, 0)),
+	(5, ST_MakeEmptyRaster(2, 2, 0, 0, 1, -1, 0.5, 0)),
+	(6, ST_MakeEmptyRaster(2, 2, 0, 0, 1, -1, 0, 0.5)),
+	(7, ST_MakeEmptyRaster(2, 2, 0, 0, 1, -1, 0, 0, 4326))) t(i, b)
+ORDER BY i;
+----
+The rasters are aligned
+The rasters (pixel corner coordinates) are not aligned
+The rasters have different scales on the X axis
+The rasters have different scales on the Y axis
+The rasters have different skews on the X axis
+The rasters have different skews on the Y axis
+The rasters have different SRIDs
