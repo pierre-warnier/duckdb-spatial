@@ -1,0 +1,122 @@
+# name: test/sql/raster/raster_parallel.test
+# group: [raster]
+
+require spatial
+
+statement ok
+SET threads = 8;
+
+# Small row groups, so that a table of a few thousand rasters is scanned by several threads
+statement ok
+ATTACH '__TEST_DIR__/raster_parallel.db' AS par (ROW_GROUP_SIZE 2048);
+
+statement ok
+USE par;
+
+# 12000 small rasters: raster i is 8 x 8 pixels at (8 * i, 0) with value i % 251, and pixel (1, 1) set to i % 7
+statement ok
+CREATE TABLE rasters AS
+SELECT i, ST_SetValue(ST_AddBand(ST_MakeEmptyRaster(8, 8, 8 * i, 0, 1, -1, 0, 0, 3857), '16BSI', i % 251, -1), 1, 1, (i % 7)::DOUBLE) AS rast
+FROM range(12000) t(i);
+
+# Accessors and pixel reads
+query IIII
+SELECT count(*), sum(ST_Width(rast)), bool_and(ST_UpperLeftX(rast) = 8 * i), bool_and(ST_SRID(rast) = 3857) FROM rasters;
+----
+12000	96000	true	true
+
+query II
+SELECT bool_and(ST_Value(rast, 1, 1) = i % 7), bool_and(ST_Value(rast, 5, 5) = i % 251) FROM rasters;
+----
+true	true
+
+# Statistics
+query II
+SELECT bool_and(ST_Count(rast) = 64), bool_and((ST_SummaryStats(rast)).sum = 63 * (i % 251) + i % 7) FROM rasters;
+----
+true	true
+
+query I
+SELECT (ST_SummaryStatsAgg(rast)).count FROM rasters;
+----
+768000
+
+query II
+SELECT count(*), bool_and(s.sum = total) FROM (SELECT i % 100 AS g, ST_SummaryStatsAgg(rast) AS s, sum(63 * (i % 251) + i % 7) AS total FROM rasters GROUP BY g);
+----
+100	true
+
+# Functions that write rasters
+query II
+SELECT count(*), bool_and(ST_Value(ST_SetValue(rast, 2, 2, 99), 2, 2) = 99 AND ST_Value(ST_SetValue(rast, 2, 2, 99), 5, 5) = i % 251) FROM rasters;
+----
+12000	true
+
+# Map algebra: one bound expression, evaluated by every thread
+query I
+SELECT bool_and(ST_Value(m, 5, 5) = 2 * (i % 251) + 5 AND ST_Value(m, 1, 1) = 2 * (i % 7) + 1)
+FROM (SELECT i, ST_MapAlgebra(rast, '32BSI', '[rast] * 2 + [rast.x]') AS m FROM rasters);
+----
+true
+
+query I
+SELECT bool_and(ST_Value(ST_MapAlgebra(rast, ST_SetUpperLeft(rast, 8 * i + 1, 0), '[rast1] + [rast2]'), 3, 3) = 2 * (i % 251)) FROM rasters;
+----
+true
+
+# GDAL algorithms
+query III
+SELECT bool_and(ST_Width(ST_Resample(rast, 2.0, 2.0)) = 4), bool_and(ST_Value(ST_Slope(rast), 5, 5) = 0), bool_and(ST_Count(ST_Clip(rast, ST_MakeEnvelope(8 * i + 2, -6, 8 * i + 6, -2))) = 16)
+FROM rasters;
+----
+true	true	true
+
+query II
+SELECT bool_and(ST_SRID(ST_Transform(ST_SetSRID(rast, 3857), 4326)) = 4326), count(*) FROM rasters WHERE i < 4000;
+----
+true	4000
+
+# Vector conversions
+query II
+SELECT bool_and(len(ST_DumpAsPolygons(rast)) = CASE WHEN i % 251 = i % 7 THEN 1 ELSE 2 END), bool_and(ST_Area(ST_Polygon(rast)) = 64) FROM rasters;
+----
+true	true
+
+query I
+SELECT bool_and(ST_Intersects(rast, 1, ST_Point(8 * i + 0.5, -0.5))) FROM rasters;
+----
+true
+
+# Errors raised on worker threads are reported and leave everything usable
+statement error
+SELECT sum(ST_Value(rast, CASE WHEN i = 7333 THEN 9 ELSE 1 END, 1, 1)) FROM rasters;
+----
+Band 9 is out of range
+
+statement error
+SELECT count(ST_SetValue(rast, CASE WHEN i % 1000 = 999 THEN 100 ELSE 1 END, 1, 5.0)) FROM rasters;
+----
+is outside of the 8 x 8 raster
+
+query I
+SELECT count(ST_SetValue(rast, 1, 1, 5.0)) FROM rasters;
+----
+12000
+
+# The union of a row of rasters, built by parallel aggregation
+query IIII
+SELECT ST_Width(u), ST_Height(u), ST_Count(u), (ST_SummaryStats(u)).sum = (SELECT sum(63 * (i % 251) + i % 7) FROM rasters WHERE i < 3000)
+FROM (SELECT ST_Union_Agg(rast) AS u FROM rasters WHERE i < 3000);
+----
+24000	8	192000	true
+
+query II
+SELECT count(*), bool_and(ST_Width(u) = 8 * 240) FROM (SELECT i // 240 AS g, ST_Union_Agg(rast) AS u FROM rasters GROUP BY g);
+----
+50	true
+
+# Tiles of a file read and processed in parallel
+query II
+SELECT count(*), sum(ST_Count(ST_MapAlgebra(rast, NULL, '[rast] + 1'))) FROM ST_ReadRaster('test/data/raster/dem.tif', 2, 2);
+----
+192	767

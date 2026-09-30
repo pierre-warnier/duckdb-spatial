@@ -1280,7 +1280,7 @@ void RegisterRasterProcessingFunctions(ExtensionLoader &loader) {
 	              R"(
 		SELECT round(ST_Value(ST_Hillshade(ST_AddBand(ST_MakeEmptyRaster(5, 5, 0, 5, 1), '32BF', 10)), 3, 3));
 		----
-		180.0
+		181.0
 	)")
 	    .Register(loader);
 

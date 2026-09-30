@@ -23,20 +23,6 @@ struct SummaryStats {
 	double min = 0;
 	double max = 0;
 
-	void Add(double value) {
-		if (count == 0 || value < min) {
-			min = value;
-		}
-		if (count == 0 || value > max) {
-			max = value;
-		}
-		count++;
-		sum += value;
-		const auto delta = value - mean;
-		mean += delta / static_cast<double>(count);
-		deviation += delta * (value - mean);
-	}
-
 	void Merge(const SummaryStats &other) {
 		if (other.count == 0) {
 			return;
@@ -47,7 +33,8 @@ struct SummaryStats {
 		}
 		const auto total = static_cast<double>(count + other.count);
 		const auto delta = other.mean - mean;
-		deviation += other.deviation + delta * delta * static_cast<double>(count) * static_cast<double>(other.count) / total;
+		const auto weight = static_cast<double>(count) * static_cast<double>(other.count) / total;
+		deviation += other.deviation + delta * delta * weight;
 		mean += delta * static_cast<double>(other.count) / total;
 		sum += other.sum;
 		min = MinValue(min, other.min);
@@ -80,13 +67,35 @@ LogicalType SummaryStatsType() {
 	return LogicalType::STRUCT(std::move(children));
 }
 
+// Two plain passes over the band are much cheaper than updating a running mean for every pixel
 void AddBandStats(GDALRasterBand &band, bool exclude_nodata, SummaryStats &stats) {
 	const BandValues values(band, exclude_nodata);
+	SummaryStats block;
+	for (idx_t i = 0; i < values.values.size(); i++) {
+		if (!values.IsValid(i)) {
+			continue;
+		}
+		const auto value = values.values[i];
+		if (block.count == 0 || value < block.min) {
+			block.min = value;
+		}
+		if (block.count == 0 || value > block.max) {
+			block.max = value;
+		}
+		block.count++;
+		block.sum += value;
+	}
+	if (block.count == 0) {
+		return;
+	}
+	block.mean = block.sum / static_cast<double>(block.count);
 	for (idx_t i = 0; i < values.values.size(); i++) {
 		if (values.IsValid(i)) {
-			stats.Add(values.values[i]);
+			const auto delta = values.values[i] - block.mean;
+			block.deviation += delta * delta;
 		}
 	}
+	stats.Merge(block);
 }
 
 // The values of the band of the call that are not NODATA

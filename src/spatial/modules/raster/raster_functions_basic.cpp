@@ -951,19 +951,14 @@ void RegisterRasterBasicFunctions(ExtensionLoader &loader) {
 	RasterFunction("ST_GeoReference")
 	    .AddOptional({RastP()}, {TextP("format")}, TEXT, GeoReferenceExecute)
 	    .Describe(R"(
-		Returns the georeference as the six lines of a world file: `scalex`, `skewy`, `skewx`, `scaley`, `upperleftx`, `upperlefty`, each with 10 decimals.
+		Returns the georeference as the six lines of a world file: `scalex`, `skewy`, `skewx`, `scaley`, `upperleftx`, `upperlefty`, each with 10 decimals and followed by a newline.
 
 		`format` is `GDAL` (the default, upper-left corner of the upper-left pixel) or `ESRI` (centre of the upper-left pixel).
 	)",
 	              R"(
-		SELECT ST_GeoReference(ST_MakeEmptyRaster(10, 5, 100, 200, 2, -2, 0, 0));
+		SELECT string_split(rtrim(ST_GeoReference(ST_MakeEmptyRaster(10, 5, 100, 200, 2, -2, 0, 0)), chr(10)), chr(10));
 		----
-		2.0000000000
-		0.0000000000
-		0.0000000000
-		-2.0000000000
-		100.0000000000
-		200.0000000000
+		[2.0000000000, 0.0000000000, 0.0000000000, -2.0000000000, 100.0000000000, 200.0000000000]
 	)")
 	    .Register(loader);
 

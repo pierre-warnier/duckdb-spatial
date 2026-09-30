@@ -581,8 +581,9 @@ void RegisterRasterVectorFunctions(ExtensionLoader &loader) {
 	const auto geomvals = LogicalType::LIST(GeomValType());
 
 	RasterFunction("ST_AsRaster")
-	    .AddOptional({GeomP(), RastP("ref")}, {TextP("pixeltype"), DblP("value"), DblP("nodataval", true), BoolP("touched")},
-	                 RASTER, AsRasterExecute)
+	    .AddOptional({GeomP(), RastP("ref")},
+	                 {TextP("pixeltype"), DblP("value"), DblP("nodataval", true), BoolP("touched")}, RASTER,
+	                 AsRasterExecute)
 	    .AddOptional({GeomP(), DblP("scalex"), DblP("scaley"), TextP("pixeltype")},
 	                 {DblP("value"), DblP("nodataval", true), DblP("upperleftx", true), DblP("upperlefty", true),
 	                  DblP("skewx"), DblP("skewy"), BoolP("touched")},

@@ -385,6 +385,9 @@ static std::unique_ptr<GByte, CPLBufferDeleter> StealMemFile(MemFile &file, vsi_
 	return buffer;
 }
 
+// RASTER values are written uncompressed. Measured on 256 x 256 tiles of terrain: DEFLATE makes 16-bit integer tiles
+// 68% smaller and 32-bit float tiles 15% smaller, but writing a tile takes 24 to 34 times longer and reading it back 2
+// to 3.5 times longer; LZW is 11 to 16 times slower to write and makes float tiles larger
 static std::unique_ptr<GByte, CPLBufferDeleter> SerializeToBuffer(GDALDataset &ds, vsi_l_offset &size) {
 	MemFile file(MemFile::NewPath(".tif"));
 	CPLStringList options;

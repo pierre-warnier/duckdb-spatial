@@ -407,7 +407,9 @@ void RegisterRasterIOFunctions(ExtensionLoader &loader) {
 	    .Describe(R"(
 		Returns the raster as the bytes of a GeoTIFF file.
 
-		`compression` is a GeoTIFF compression name such as `NONE`, `LZW`, `DEFLATE`, `PACKBITS` or `ZSTD`; `options` is a list of `NAME=VALUE` GeoTIFF creation options. JPEG compression is not available in the bundled GDAL. The result can be written to a file with `COPY (SELECT ST_AsTIFF(rast)) TO 'file.tif' (FORMAT BLOB)`-style tooling or cast back with `ST_FromGDALRaster`.
+		`compression` is a GeoTIFF compression name: `NONE`, `LZW`, `DEFLATE` or `PACKBITS` (JPEG and ZSTD are not available in the bundled GDAL); `options` is a list of `NAME=VALUE` GeoTIFF creation options. The file carries the coordinate system as regular GeoTIFF keys.
+
+		`RASTER` values are stored uncompressed, because compressing makes writing a raster 10 to 50 times slower. The result of this function is itself a valid `RASTER`: `ST_AsTIFF(rast, 'DEFLATE')::RASTER` is a compressed raster that every function reads transparently, at the price of slower reads.
 	)",
 	              R"(
 		SELECT octet_length(ST_AsTIFF(ST_AddBand(ST_MakeEmptyRaster(3, 2, 0, 0, 1), '8BUI'), 'LZW')) > 0;
