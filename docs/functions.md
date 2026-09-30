@@ -246,6 +246,7 @@
 | [`ST_Intersection_Agg`](#st_intersection_agg) | Computes the intersection of a set of geometries |
 | [`ST_MemUnion_Agg`](#st_memunion_agg) | Computes the union of a set of input geometries. |
 | [`ST_Union_Agg`](#st_union_agg) | Computes the union of a set of input geometries |
+| [`TopoElementArray_Agg`](#topoelementarray_agg) | Collects TopoElements into a TopoElementArray. |
 
 **[Macro Functions](#Macro-functions)**
 
@@ -263,17 +264,46 @@
 
 | Function | Summary |
 | --- | --- |
+| [`CreateTopology`](#createtopology) | Creates a new, empty topology and returns its id. |
+| [`DropTopology`](#droptopology) | Drops a topology: its schema with everything in it, and its row in `topology.topology`. Returns the text `Topology 'name' dropped`. |
+| [`GetEdgeByPoint`](#getedgebypoint) | Returns the id of the edge within `tolerance` of a point, or 0 if there is none. |
+| [`GetFaceByPoint`](#getfacebypoint) | Returns the id of the face containing a point, or 0 if the point is in the universal face. |
+| [`GetNodeByPoint`](#getnodebypoint) | Returns the id of the node within `tolerance` of a point, or 0 if there is none. |
+| [`GetNodeEdges`](#getnodeedges) | Returns the edges incident to a node, as rows of `(sequence, edge)` ordered clockwise starting from north. |
+| [`GetRingEdges`](#getringedges) | Returns the ordered set of signed edges met by walking along one side of an edge, as rows of `(sequence, edge)`. |
+| [`GetTopologyID`](#gettopologyid) | Returns the id of the topology with the given name, or NULL if there is none. |
+| [`GetTopologyName`](#gettopologyname) | Returns the name of the topology with the given id, or NULL if there is none. |
+| [`GetTopologySRID`](#gettopologysrid) | Returns the SRID the topology with the given name was created with, or NULL if there is no such topology. |
+| [`ST_AddEdgeModFace`](#st_addedgemodface) | Adds an edge between two existing nodes and returns its id. If the edge splits a face, the face is kept for one side and a new face is added for the other. |
+| [`ST_AddEdgeNewFaces`](#st_addedgenewfaces) | Adds an edge between two existing nodes and returns its id. If the edge splits a face, the face is deleted and replaced by two new faces. |
+| [`ST_AddIsoEdge`](#st_addisoedge) | Adds an isolated edge between two isolated nodes of the same face and returns its id. |
+| [`ST_AddIsoNode`](#st_addisonode) | Adds an isolated node to a face of a topology and returns its id. |
+| [`ST_ChangeEdgeGeom`](#st_changeedgegeom) | Changes the shape of an edge without changing the structure of the topology. Returns the text `Edge N changed`. |
+| [`ST_CreateTopoGeo`](#st_createtopogeo) | Populates an empty topology from a geometry collection and returns the text `Topology name populated`. |
 | [`ST_Drivers`](#st_drivers) | Returns the list of supported GDAL drivers and file formats |
 | [`ST_DumpPoints`](#st_dumppoints) | Extracts all vertices from a geometry as individual point geometries. |
 | [`ST_DumpRings`](#st_dumprings) | Extracts the rings of a polygon geometry. |
 | [`ST_DumpSegments`](#st_dumpsegments) | Extracts consecutive vertex pairs from a geometry as 2-point linestring segments. |
 | [`ST_GeneratePoints`](#st_generatepoints) | Generates a set of random points within the specified bounding box. |
+| [`ST_GetFaceEdges`](#st_getfaceedges) | Returns the ordered set of signed edges bounding a face, as rows of `(sequence, edge)`. |
+| [`ST_GetFaceGeometry`](#st_getfacegeometry) | Returns the polygon of a face, built from the edges that have the face on exactly one side. |
 | [`ST_HexagonGrid`](#st_hexagongrid) | Generates a regular hexagonal grid covering the bounding box of the input geometry. |
+| [`ST_ModEdgeHeal`](#st_modedgeheal) | Heals two edges by deleting the node connecting them, modifying the first edge and deleting the second. Returns the id of the deleted node. |
+| [`ST_ModEdgeSplit`](#st_modedgesplit) | Splits an edge by creating a node on it, modifying the original edge and adding a new one. Returns the id of the new node. |
+| [`ST_MoveIsoNode`](#st_moveisonode) | Moves an isolated node to another location within its face. Returns the text `Isolated Node N moved to location x,y`. |
+| [`ST_NewEdgeHeal`](#st_newedgeheal) | Heals two edges by deleting the node connecting them and replacing both edges with a new one, which has the direction of the first edge. Returns the id of the new edge. |
+| [`ST_NewEdgesSplit`](#st_newedgessplit) | Splits an edge by creating a node on it, deleting the original edge and replacing it with two new edges. Returns the id of the new node. |
 | [`ST_Read`](#st_read) | Read and import a variety of geospatial file formats using the GDAL library. |
 | [`ST_Read_Meta`](#st_read_meta) | Read the metadata from a variety of geospatial file formats using the GDAL library. |
 | [`ST_ReadOSM`](#st_readosm) | The `ST_ReadOsm()` table function enables reading compressed OpenStreetMap data directly from a `.osm.pbf` file. |
 | [`ST_ReadSHP`](#st_readshp) | Read a Shapefile without relying on the GDAL library |
+| [`ST_RemEdgeModFace`](#st_remedgemodface) | Removes an edge. If it separates two faces, one is deleted and the other is modified to cover both. |
+| [`ST_RemEdgeNewFace`](#st_remedgenewface) | Removes an edge. If it separates two faces, both are deleted and replaced by a new face covering them. |
+| [`ST_RemoveIsoEdge`](#st_removeisoedge) | Removes an isolated edge. Its end nodes become isolated nodes of the face the edge was in. Returns the text `Isolated edge N removed`. |
+| [`ST_RemoveIsoNode`](#st_removeisonode) | Removes an isolated node. Returns the text `Isolated node N removed`. |
 | [`ST_SquareGrid`](#st_squaregrid) | Generates a regular grid of square polygons covering the bounding box of the input geometry. |
+| [`TopologySummary`](#topologysummary) | Returns a two-line text summary of a topology: its id, SRID and precision, then the number of nodes, edges and faces (the universal face is not counted). |
+| [`ValidateTopology`](#validatetopology) | Checks a topology and returns one `(error, id1, id2)` row per problem found; a valid topology yields no rows. |
 
 ----
 
@@ -5151,6 +5181,37 @@ Computes the union of a set of input geometries
 
 ----
 
+### TopoElementArray_Agg
+
+
+#### Signature
+
+```sql
+INTEGER[2][] TopoElementArray_Agg (col0 INTEGER[2])
+```
+
+#### Description
+
+Collects TopoElements into a TopoElementArray.
+
+A TopoElement is an `INTEGER[2]` holding `[element_id, element_type]`, where the type is 1 for a node,
+2 for an edge and 3 for a face. An `INTEGER[]` list such as `[face_id, 3]` is cast implicitly and must
+hold exactly two values. The result is an `INTEGER[2][]` with one entry per input row, in input order
+(use `ORDER BY` inside the call to control it). NULL rows are skipped and the result is NULL when no
+row is aggregated. An element holding a NULL raises an error.
+
+Unlike PostGIS there are no `TopoElement` and `TopoElementArray` domain types: plain integer arrays are
+used and the element type is not range-checked.
+
+#### Example
+
+```sql
+SELECT TopoElementArray_Agg([face_id, 3] ORDER BY face_id) FROM (VALUES (1), (2), (3)) t(face_id);
+-- [[1, 3], [2, 3], [3, 3]]
+```
+
+----
+
 ## Macro Functions
 
 ### ST_Rotate
@@ -5290,6 +5351,471 @@ POINT (4 9)
 
 ## Table Functions
 
+### CreateTopology
+
+#### Signature
+
+```sql
+CreateTopology (col0 VARCHAR)
+CreateTopology (col0 VARCHAR, col1 INTEGER)
+CreateTopology (col0 VARCHAR, col1 INTEGER, col2 DOUBLE)
+CreateTopology (col0 VARCHAR, col1 INTEGER, col2 DOUBLE, col3 BOOLEAN)
+```
+
+#### Description
+
+Creates a new, empty topology and returns its id.
+
+`CreateTopology(name, srid := 0, precision := 0, hasz := false)` creates a schema called `name` in the current database, holding the PostGIS topology tables `node(node_id, containing_face, geom)`, `edge_data(edge_id, start_node, end_node, next_left_edge, abs_next_left_edge, next_right_edge, abs_next_right_edge, left_face, right_face, geom)` and `face(face_id, mbr)` with the universal face `0`, the view `edge`, and the sequences `node_node_id_seq`, `edge_data_edge_id_seq` and `face_face_id_seq`. The topology is recorded in `topology.topology(id, name, srid, precision, hasz)`, which is created on first use. When `srid` is positive the geometry columns are typed `GEOMETRY('EPSG:<srid>')`.
+
+Errors: the name is not a plain identifier (letters, digits and underscores, not starting with a digit), or a topology or schema with that name already exists; negative `srid` or `precision`; `hasz = true`.
+
+Differences from PostGIS: the function is not schema-qualified (`CreateTopology`, not `topology.CreateTopology`), topologies are two-dimensional only, there are no foreign keys between the topology tables, and the `topology.layer` table and the `relation` table of the TopoGeometry layer are not created.
+
+The function runs in its own transaction, on a separate connection to the same database. The change is committed as soon as the call returns, independently of the transaction of the caller: a later `ROLLBACK` does not undo it. If the call fails nothing is changed. It cannot see uncommitted changes either. Calling it inside an explicit transaction (`BEGIN`) that already holds uncommitted changes to the database therefore raises an error asking to commit or roll back first; the check covers any change to the database, not only changes to the tables of the topology, because DuckDB does not expose which tables a transaction has updated or deleted from. A conflict with a concurrent transaction that modified the same topology rows is reported as an error too. Inside an explicit transaction the caller may not see the change in the topology tables until it starts a new transaction. Concurrent edits of one database are executed one after the other.
+
+Arguments must be constants or expressions that can be folded at bind time, such as `getvariable('x')`; subqueries and column references are not allowed. Geometry arguments take a `GEOMETRY` (or its WKT text); a geometry whose type carries a coordinate system must match the SRID of the topology.
+
+#### Example
+
+```sql
+CALL CreateTopology('city', 31370);
+SELECT * FROM topology.topology;
+```
+
+----
+
+### DropTopology
+
+#### Signature
+
+```sql
+DropTopology (col0 VARCHAR)
+```
+
+#### Description
+
+Drops a topology: its schema with everything in it, and its row in `topology.topology`. Returns the text `Topology 'name' dropped`.
+
+Errors: `SQL/MM Spatial exception - invalid topology name` if the topology is not registered. Unlike PostGIS, a schema that is not a registered topology is never dropped.
+
+The function runs in its own transaction, on a separate connection to the same database. The change is committed as soon as the call returns, independently of the transaction of the caller: a later `ROLLBACK` does not undo it. If the call fails nothing is changed. It cannot see uncommitted changes either. Calling it inside an explicit transaction (`BEGIN`) that already holds uncommitted changes to the database therefore raises an error asking to commit or roll back first; the check covers any change to the database, not only changes to the tables of the topology, because DuckDB does not expose which tables a transaction has updated or deleted from. A conflict with a concurrent transaction that modified the same topology rows is reported as an error too. Inside an explicit transaction the caller may not see the change in the topology tables until it starts a new transaction. Concurrent edits of one database are executed one after the other.
+
+Arguments must be constants or expressions that can be folded at bind time, such as `getvariable('x')`; subqueries and column references are not allowed. Geometry arguments take a `GEOMETRY` (or its WKT text); a geometry whose type carries a coordinate system must match the SRID of the topology.
+
+#### Example
+
+```sql
+CALL CreateTopology('city');
+CALL DropTopology('city');
+```
+
+----
+
+### GetEdgeByPoint
+
+#### Signature
+
+```sql
+GetEdgeByPoint (col0 VARCHAR, col1 ANY, col2 DOUBLE)
+```
+
+#### Description
+
+Returns the id of the edge within `tolerance` of a point, or 0 if there is none.
+
+`GetEdgeByPoint(toponame, point, tolerance)`. Errors: `SQL/MM Spatial exception - null argument`, `- invalid topology name`, `- invalid point`, `Two or more edges found`.
+
+The function reads through a separate connection and sees committed data only. Arguments must be constants or expressions that can be folded at bind time, such as `getvariable('x')`.
+
+#### Example
+
+```sql
+CALL CreateTopology('city');
+SELECT * FROM ST_CreateTopoGeo('city', ST_GeomFromText('LINESTRING(0 0, 10 0)'));
+SELECT * FROM GetEdgeByPoint('city', ST_Point(5, 0.5), 1);
+-- 1
+```
+
+----
+
+### GetFaceByPoint
+
+#### Signature
+
+```sql
+GetFaceByPoint (col0 VARCHAR, col1 ANY, col2 DOUBLE)
+```
+
+#### Description
+
+Returns the id of the face containing a point, or 0 if the point is in the universal face.
+
+`GetFaceByPoint(toponame, point, tolerance)`: a point strictly inside a face yields that face whatever the tolerance. Otherwise the faces bounded by the edges within `tolerance` of the point are considered; a point in the universal face close to the boundary of a single face yields that face.
+
+Errors: `SQL/MM Spatial exception - null argument`, `- invalid topology name`, `- invalid point`, `Two or more faces found` (in particular for a point lying on an edge shared by two faces).
+
+The function reads through a separate connection and sees committed data only. Arguments must be constants or expressions that can be folded at bind time, such as `getvariable('x')`.
+
+#### Example
+
+```sql
+CALL CreateTopology('city');
+SELECT * FROM ST_CreateTopoGeo('city', ST_GeomFromText('POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))'));
+SELECT * FROM GetFaceByPoint('city', ST_Point(5, 5), 0);
+-- 1
+```
+
+----
+
+### GetNodeByPoint
+
+#### Signature
+
+```sql
+GetNodeByPoint (col0 VARCHAR, col1 ANY, col2 DOUBLE)
+```
+
+#### Description
+
+Returns the id of the node within `tolerance` of a point, or 0 if there is none.
+
+`GetNodeByPoint(toponame, point, tolerance)`. Errors: `SQL/MM Spatial exception - null argument`, `- invalid topology name`, `- invalid point`, `Two or more nodes found`.
+
+The function reads through a separate connection and sees committed data only. Arguments must be constants or expressions that can be folded at bind time, such as `getvariable('x')`.
+
+#### Example
+
+```sql
+CALL CreateTopology('city');
+SELECT * FROM ST_AddIsoNode('city', NULL, ST_Point(1, 1));
+SELECT * FROM GetNodeByPoint('city', ST_Point(1, 1.5), 1);
+-- 1
+```
+
+----
+
+### GetNodeEdges
+
+#### Signature
+
+```sql
+GetNodeEdges (col0 VARCHAR, col1 INTEGER)
+```
+
+#### Description
+
+Returns the edges incident to a node, as rows of `(sequence, edge)` ordered clockwise starting from north.
+
+An edge is positive when it starts at the node and negative when it ends there; a closed edge is reported twice. Errors: `SQL/MM Spatial exception - null argument`, `- invalid topology name`.
+
+The function reads through a separate connection and sees committed data only. Arguments must be constants or expressions that can be folded at bind time, such as `getvariable('x')`.
+
+#### Example
+
+```sql
+CALL CreateTopology('city');
+SELECT * FROM ST_CreateTopoGeo('city', ST_GeomFromText('MULTILINESTRING((0 0, 10 0), (0 0, 0 10))'));
+SELECT * FROM GetNodeEdges('city', 1);
+```
+
+----
+
+### GetRingEdges
+
+#### Signature
+
+```sql
+GetRingEdges (col0 VARCHAR, col1 INTEGER)
+GetRingEdges (col0 VARCHAR, col1 INTEGER, col2 INTEGER)
+```
+
+#### Description
+
+Returns the ordered set of signed edges met by walking along one side of an edge, as rows of `(sequence, edge)`.
+
+`GetRingEdges(toponame, edge, max_edges := NULL)`: a positive `edge` starts the walk on the left side of the edge in its own direction, a negative one on the right side in the opposite direction. The walk follows `next_left_edge` after a positive edge and `next_right_edge` after a negative one until it is back at the start. An unknown edge yields no rows.
+
+Errors: `SQL/MM Spatial exception - null argument`, `- invalid topology name`, `Max traversing limit hit: N` when the ring has more than `max_edges` edges.
+
+The function reads through a separate connection and sees committed data only. Arguments must be constants or expressions that can be folded at bind time, such as `getvariable('x')`.
+
+#### Example
+
+```sql
+CALL CreateTopology('city');
+SELECT * FROM ST_CreateTopoGeo('city', ST_GeomFromText('POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))'));
+SELECT * FROM GetRingEdges('city', 1);
+```
+
+----
+
+### GetTopologyID
+
+#### Signature
+
+```sql
+GetTopologyID (col0 VARCHAR)
+```
+
+#### Description
+
+Returns the id of the topology with the given name, or NULL if there is none.
+
+The function reads through a separate connection and sees committed data only. Arguments must be constants or expressions that can be folded at bind time, such as `getvariable('x')`.
+
+#### Example
+
+```sql
+CALL CreateTopology('city');
+SELECT * FROM GetTopologyID('city');
+```
+
+----
+
+### GetTopologyName
+
+#### Signature
+
+```sql
+GetTopologyName (col0 INTEGER)
+```
+
+#### Description
+
+Returns the name of the topology with the given id, or NULL if there is none.
+
+The function reads through a separate connection and sees committed data only. Arguments must be constants or expressions that can be folded at bind time, such as `getvariable('x')`.
+
+#### Example
+
+```sql
+CALL CreateTopology('city');
+SET VARIABLE id = (SELECT * FROM GetTopologyID('city'));
+SELECT * FROM GetTopologyName(getvariable('id'));
+-- city
+```
+
+----
+
+### GetTopologySRID
+
+#### Signature
+
+```sql
+GetTopologySRID (col0 VARCHAR)
+```
+
+#### Description
+
+Returns the SRID the topology with the given name was created with, or NULL if there is no such topology.
+
+The function reads through a separate connection and sees committed data only. Arguments must be constants or expressions that can be folded at bind time, such as `getvariable('x')`.
+
+#### Example
+
+```sql
+CALL CreateTopology('city', 31370);
+SELECT * FROM GetTopologySRID('city');
+```
+
+----
+
+### ST_AddEdgeModFace
+
+#### Signature
+
+```sql
+ST_AddEdgeModFace (col0 VARCHAR, col1 INTEGER, col2 INTEGER, col3 ANY)
+```
+
+#### Description
+
+Adds an edge between two existing nodes and returns its id. If the edge splits a face, the face is kept for one side and a new face is added for the other.
+
+`ST_AddEdgeModFace(toponame, start_node, end_node, line)`. The new face is created on the left of the new edge whenever that side is bounded, and on the right otherwise. The links of the adjacent edges are updated, as are the `left_face` / `right_face` of the edges, the `containing_face` of the isolated nodes that end up in the new face, and the bounding box of the modified face.
+
+Errors: `SQL/MM Spatial exception - null argument`, `- invalid topology name`, `- invalid curve`, `- curve not simple`, `- non-existent node`, `- start node not geometry start point.`, `- end node not geometry end point.`, `- geometry crosses a node`, `- geometry crosses edge N`, `- coincident edge N`, `Spatial exception - geometry intersects edge N`, `Geometry SRID (...) does not match topology SRID (...)`.
+
+The function runs in its own transaction, on a separate connection to the same database. The change is committed as soon as the call returns, independently of the transaction of the caller: a later `ROLLBACK` does not undo it. If the call fails nothing is changed. It cannot see uncommitted changes either. Calling it inside an explicit transaction (`BEGIN`) that already holds uncommitted changes to the database therefore raises an error asking to commit or roll back first; the check covers any change to the database, not only changes to the tables of the topology, because DuckDB does not expose which tables a transaction has updated or deleted from. A conflict with a concurrent transaction that modified the same topology rows is reported as an error too. Inside an explicit transaction the caller may not see the change in the topology tables until it starts a new transaction. Concurrent edits of one database are executed one after the other.
+
+Arguments must be constants or expressions that can be folded at bind time, such as `getvariable('x')`; subqueries and column references are not allowed. Geometry arguments take a `GEOMETRY` (or its WKT text); a geometry whose type carries a coordinate system must match the SRID of the topology.
+
+#### Example
+
+```sql
+CALL CreateTopology('city');
+SELECT * FROM ST_CreateTopoGeo('city', ST_GeomFromText(
+    'GEOMETRYCOLLECTION(POLYGON((0 0, 10 0, 10 10, 0 10, 0 0)), POINT(5 0), POINT(5 10))'));
+SET VARIABLE a = (SELECT node_id FROM city.node WHERE ST_Equals(geom, ST_Point(5, 0)));
+SET VARIABLE b = (SELECT node_id FROM city.node WHERE ST_Equals(geom, ST_Point(5, 10)));
+SELECT * FROM ST_AddEdgeModFace('city', getvariable('a'), getvariable('b'),
+    ST_GeomFromText('LINESTRING(5 0, 5 10)'));
+SELECT count(*) FROM city.face WHERE face_id <> 0;
+-- 2
+```
+
+----
+
+### ST_AddEdgeNewFaces
+
+#### Signature
+
+```sql
+ST_AddEdgeNewFaces (col0 VARCHAR, col1 INTEGER, col2 INTEGER, col3 ANY)
+```
+
+#### Description
+
+Adds an edge between two existing nodes and returns its id. If the edge splits a face, the face is deleted and replaced by two new faces.
+
+`ST_AddEdgeNewFaces(toponame, start_node, end_node, line)`. The links of the adjacent edges are updated, as are the `left_face` / `right_face` of every edge and the `containing_face` of every isolated node of the split face. When the universal face is split only the bounded side gets a new face.
+
+Errors: `SQL/MM Spatial exception - null argument`, `- invalid topology name`, `- invalid curve`, `- curve not simple`, `- non-existent node`, `- start node not geometry start point.`, `- end node not geometry end point.`, `- geometry crosses a node`, `- geometry crosses edge N`, `- coincident edge N`, `Spatial exception - geometry intersects edge N`, `Geometry SRID (...) does not match topology SRID (...)`.
+
+The function runs in its own transaction, on a separate connection to the same database. The change is committed as soon as the call returns, independently of the transaction of the caller: a later `ROLLBACK` does not undo it. If the call fails nothing is changed. It cannot see uncommitted changes either. Calling it inside an explicit transaction (`BEGIN`) that already holds uncommitted changes to the database therefore raises an error asking to commit or roll back first; the check covers any change to the database, not only changes to the tables of the topology, because DuckDB does not expose which tables a transaction has updated or deleted from. A conflict with a concurrent transaction that modified the same topology rows is reported as an error too. Inside an explicit transaction the caller may not see the change in the topology tables until it starts a new transaction. Concurrent edits of one database are executed one after the other.
+
+Arguments must be constants or expressions that can be folded at bind time, such as `getvariable('x')`; subqueries and column references are not allowed. Geometry arguments take a `GEOMETRY` (or its WKT text); a geometry whose type carries a coordinate system must match the SRID of the topology.
+
+#### Example
+
+```sql
+CALL CreateTopology('city');
+SELECT * FROM ST_AddIsoNode('city', NULL, ST_Point(0, 0));
+SELECT * FROM ST_AddEdgeNewFaces('city', 1, 1, ST_GeomFromText('LINESTRING(0 0, 10 0, 10 10, 0 10, 0 0)'));
+SELECT face_id FROM city.face;
+-- 0 and 1
+```
+
+----
+
+### ST_AddIsoEdge
+
+#### Signature
+
+```sql
+ST_AddIsoEdge (col0 VARCHAR, col1 INTEGER, col2 INTEGER, col3 ANY)
+```
+
+#### Description
+
+Adds an isolated edge between two isolated nodes of the same face and returns its id.
+
+`ST_AddIsoEdge(toponame, start_node, end_node, line)`. Both nodes stop being isolated (`containing_face` becomes NULL).
+
+Errors: `SQL/MM Spatial exception - null argument`, `- invalid topology name`, `- invalid curve`, `- curve not simple`, `- non-existent node`, `- not isolated node`, `- nodes in different faces`, `- start node not geometry start point.`, `- end node not geometry end point.`, `- geometry crosses a node`, `- geometry crosses edge N`, `- coincident edge N`, `Spatial exception - geometry intersects edge N`, and `Closed edges would not be isolated, try ST_AddEdgeNewFaces` when both nodes are the same.
+
+The function runs in its own transaction, on a separate connection to the same database. The change is committed as soon as the call returns, independently of the transaction of the caller: a later `ROLLBACK` does not undo it. If the call fails nothing is changed. It cannot see uncommitted changes either. Calling it inside an explicit transaction (`BEGIN`) that already holds uncommitted changes to the database therefore raises an error asking to commit or roll back first; the check covers any change to the database, not only changes to the tables of the topology, because DuckDB does not expose which tables a transaction has updated or deleted from. A conflict with a concurrent transaction that modified the same topology rows is reported as an error too. Inside an explicit transaction the caller may not see the change in the topology tables until it starts a new transaction. Concurrent edits of one database are executed one after the other.
+
+Arguments must be constants or expressions that can be folded at bind time, such as `getvariable('x')`; subqueries and column references are not allowed. Geometry arguments take a `GEOMETRY` (or its WKT text); a geometry whose type carries a coordinate system must match the SRID of the topology.
+
+#### Example
+
+```sql
+CALL CreateTopology('city');
+SELECT * FROM ST_AddIsoNode('city', NULL, ST_Point(0, 0));
+SELECT * FROM ST_AddIsoNode('city', NULL, ST_Point(5, 0));
+SELECT * FROM ST_AddIsoEdge('city', 1, 2, ST_GeomFromText('LINESTRING(0 0, 5 0)'));
+-- 1
+```
+
+----
+
+### ST_AddIsoNode
+
+#### Signature
+
+```sql
+ST_AddIsoNode (col0 VARCHAR, col1 INTEGER, col2 ANY)
+```
+
+#### Description
+
+Adds an isolated node to a face of a topology and returns its id.
+
+`ST_AddIsoNode(toponame, face, point)`: if `face` is NULL the face containing the point is computed, otherwise the point must lie in that face.
+
+Errors: `SQL/MM Spatial exception - null argument`, `- invalid topology name`, `- invalid point`, `- coincident node` (a node already exists at that location), `- edge crosses node.` (the point lies on an edge), `- not within face` (the point is not in the given face), `Geometry SRID (...) does not match topology SRID (...)`.
+
+The function runs in its own transaction, on a separate connection to the same database. The change is committed as soon as the call returns, independently of the transaction of the caller: a later `ROLLBACK` does not undo it. If the call fails nothing is changed. It cannot see uncommitted changes either. Calling it inside an explicit transaction (`BEGIN`) that already holds uncommitted changes to the database therefore raises an error asking to commit or roll back first; the check covers any change to the database, not only changes to the tables of the topology, because DuckDB does not expose which tables a transaction has updated or deleted from. A conflict with a concurrent transaction that modified the same topology rows is reported as an error too. Inside an explicit transaction the caller may not see the change in the topology tables until it starts a new transaction. Concurrent edits of one database are executed one after the other.
+
+Arguments must be constants or expressions that can be folded at bind time, such as `getvariable('x')`; subqueries and column references are not allowed. Geometry arguments take a `GEOMETRY` (or its WKT text); a geometry whose type carries a coordinate system must match the SRID of the topology.
+
+#### Example
+
+```sql
+CALL CreateTopology('city');
+SELECT * FROM ST_AddIsoNode('city', NULL, ST_Point(1, 1));
+-- 1
+```
+
+----
+
+### ST_ChangeEdgeGeom
+
+#### Signature
+
+```sql
+ST_ChangeEdgeGeom (col0 VARCHAR, col1 INTEGER, col2 ANY)
+```
+
+#### Description
+
+Changes the shape of an edge without changing the structure of the topology. Returns the text `Edge N changed`.
+
+`ST_ChangeEdgeGeom(toponame, edge, line)`: the new line must keep the end points of the edge, must not meet any other edge or node, and must not sweep over a node or change the order of the edges around its end nodes. The bounding boxes of the faces on both sides are updated.
+
+Errors: `SQL/MM Spatial exception - null argument`, `- invalid topology name`, `- invalid curve`, `- curve not simple`, `- non-existent edge N`, `- start node not geometry start point.`, `- end node not geometry end point.`, `- geometry crosses a node`, `- geometry crosses edge N`, `- coincident edge N`, `Spatial exception - geometry intersects edge N`, `Edge twist at node POINT(x y)`, `Edge motion collision at POINT(x y)`, `Edge changed disposition around start node N`, `Edge changed disposition around end node N`, `Edge ring changes winding`.
+
+The function runs in its own transaction, on a separate connection to the same database. The change is committed as soon as the call returns, independently of the transaction of the caller: a later `ROLLBACK` does not undo it. If the call fails nothing is changed. It cannot see uncommitted changes either. Calling it inside an explicit transaction (`BEGIN`) that already holds uncommitted changes to the database therefore raises an error asking to commit or roll back first; the check covers any change to the database, not only changes to the tables of the topology, because DuckDB does not expose which tables a transaction has updated or deleted from. A conflict with a concurrent transaction that modified the same topology rows is reported as an error too. Inside an explicit transaction the caller may not see the change in the topology tables until it starts a new transaction. Concurrent edits of one database are executed one after the other.
+
+Arguments must be constants or expressions that can be folded at bind time, such as `getvariable('x')`; subqueries and column references are not allowed. Geometry arguments take a `GEOMETRY` (or its WKT text); a geometry whose type carries a coordinate system must match the SRID of the topology.
+
+#### Example
+
+```sql
+CALL CreateTopology('city');
+SELECT * FROM ST_CreateTopoGeo('city', ST_GeomFromText('LINESTRING(0 0, 10 0)'));
+SELECT * FROM ST_ChangeEdgeGeom('city', 1, ST_GeomFromText('LINESTRING(0 0, 5 2, 10 0)'));
+-- Edge 1 changed
+```
+
+----
+
+### ST_CreateTopoGeo
+
+#### Signature
+
+```sql
+ST_CreateTopoGeo (col0 VARCHAR, col1 ANY)
+```
+
+#### Description
+
+Populates an empty topology from a geometry collection and returns the text `Topology name populated`.
+
+`ST_CreateTopoGeo(toponame, collection)` takes the lines and polygon boundaries of the collection, nodes them against each other, merges the result into maximal edges and cuts these at the input points and at the end points of the input lines. It then stores the nodes (input points that are on no edge become isolated nodes), the edges with their `next_left_edge` / `next_right_edge` links, and one face per bounded region with its `left_face` / `right_face` labels and bounding box. Z and M coordinates are dropped.
+
+Errors: `SQL/MM Spatial exception - null argument`, `SQL/MM Spatial exception - invalid topology name`, `SQL/MM Spatial exception - non-empty view` (the topology already holds nodes or edges), `SQL/MM Spatial exception - non-empty face view`, `Geometry SRID (...) does not match topology SRID (...)`.
+
+Differences from PostGIS: the whole topology is computed in memory and written at once instead of edge by edge, so identifiers are assigned in a different order (edges are sorted by their coordinates); a closed ring keeps a single node, placed on an input point if one lies on it.
+
+The function runs in its own transaction, on a separate connection to the same database. The change is committed as soon as the call returns, independently of the transaction of the caller: a later `ROLLBACK` does not undo it. If the call fails nothing is changed. It cannot see uncommitted changes either. Calling it inside an explicit transaction (`BEGIN`) that already holds uncommitted changes to the database therefore raises an error asking to commit or roll back first; the check covers any change to the database, not only changes to the tables of the topology, because DuckDB does not expose which tables a transaction has updated or deleted from. A conflict with a concurrent transaction that modified the same topology rows is reported as an error too. Inside an explicit transaction the caller may not see the change in the topology tables until it starts a new transaction. Concurrent edits of one database are executed one after the other.
+
+Arguments must be constants or expressions that can be folded at bind time, such as `getvariable('x')`; subqueries and column references are not allowed. Geometry arguments take a `GEOMETRY` (or its WKT text); a geometry whose type carries a coordinate system must match the SRID of the topology.
+
+#### Example
+
+```sql
+CALL CreateTopology('city');
+SELECT * FROM ST_CreateTopoGeo('city', ST_GeomFromText(
+    'GEOMETRYCOLLECTION(POLYGON((0 0, 10 0, 10 10, 0 10, 0 0)), LINESTRING(5 0, 5 10), POINT(2 2))'));
+SELECT count(*) FROM city.face WHERE face_id <> 0;
+-- 2
+```
+
+----
+
 ### ST_Drivers
 
 #### Signature
@@ -5408,6 +5934,61 @@ SELECT * FROM ST_GeneratePoints({min_x: 0, min_y:0, max_x:10, max_y:10}::BOX_2D,
 
 ----
 
+### ST_GetFaceEdges
+
+#### Signature
+
+```sql
+ST_GetFaceEdges (col0 VARCHAR, col1 INTEGER)
+```
+
+#### Description
+
+Returns the ordered set of signed edges bounding a face, as rows of `(sequence, edge)`.
+
+Each ring is walked with the face on its left: an edge is positive when it is followed in its own direction, negative otherwise. The enumeration of a ring starts from its edge with the smallest identifier; the outer ring comes first, then the holes ordered by their smallest edge. Edges that have the face on both sides are not part of its boundary and are not returned. An unknown face yields no rows.
+
+Errors: `SQL/MM Spatial exception - null argument`, `- invalid topology name`.
+
+The function reads through a separate connection and sees committed data only. Arguments must be constants or expressions that can be folded at bind time, such as `getvariable('x')`.
+
+#### Example
+
+```sql
+CALL CreateTopology('city');
+SELECT * FROM ST_CreateTopoGeo('city', ST_GeomFromText('POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))'));
+SELECT * FROM ST_GetFaceEdges('city', 1);
+```
+
+----
+
+### ST_GetFaceGeometry
+
+#### Signature
+
+```sql
+ST_GetFaceGeometry (col0 VARCHAR, col1 INTEGER)
+```
+
+#### Description
+
+Returns the polygon of a face, built from the edges that have the face on exactly one side.
+
+Errors: `SQL/MM Spatial exception - null argument`, `- invalid topology name`, `- universal face has no geometry`, `- non-existent face.`. The result is an untyped `GEOMETRY` even when the topology has a SRID.
+
+The function reads through a separate connection and sees committed data only. Arguments must be constants or expressions that can be folded at bind time, such as `getvariable('x')`.
+
+#### Example
+
+```sql
+CALL CreateTopology('city');
+SELECT * FROM ST_CreateTopoGeo('city', ST_GeomFromText('POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))'));
+SELECT ST_AsText(st_getfacegeometry) FROM ST_GetFaceGeometry('city', 1);
+-- POLYGON ((0 0, 0 10, 10 10, 10 0, 0 0))
+```
+
+----
+
 ### ST_HexagonGrid
 
 #### Signature
@@ -5429,6 +6010,157 @@ Odd columns are offset vertically by half the row spacing.
 
 ```sql
 SELECT * FROM ST_HexagonGrid(1.0, ST_MakeEnvelope(0, 0, 3, 3));
+```
+
+----
+
+### ST_ModEdgeHeal
+
+#### Signature
+
+```sql
+ST_ModEdgeHeal (col0 VARCHAR, col1 INTEGER, col2 INTEGER)
+```
+
+#### Description
+
+Heals two edges by deleting the node connecting them, modifying the first edge and deleting the second. Returns the id of the deleted node.
+
+`ST_ModEdgeHeal(toponame, edge, other_edge)`: the first edge keeps its id and direction and takes over the geometry of both.
+
+Errors: `SQL/MM Spatial exception - null argument`, `- invalid topology name`, `- non-existent edge N`, `- non-connected edges`, `- other edges connected (ids)` when the shared node has other edges, `Cannot heal edge N with itself, try with another`, `Edge N is closed, cannot heal to edge M`.
+
+The function runs in its own transaction, on a separate connection to the same database. The change is committed as soon as the call returns, independently of the transaction of the caller: a later `ROLLBACK` does not undo it. If the call fails nothing is changed. It cannot see uncommitted changes either. Calling it inside an explicit transaction (`BEGIN`) that already holds uncommitted changes to the database therefore raises an error asking to commit or roll back first; the check covers any change to the database, not only changes to the tables of the topology, because DuckDB does not expose which tables a transaction has updated or deleted from. A conflict with a concurrent transaction that modified the same topology rows is reported as an error too. Inside an explicit transaction the caller may not see the change in the topology tables until it starts a new transaction. Concurrent edits of one database are executed one after the other.
+
+Arguments must be constants or expressions that can be folded at bind time, such as `getvariable('x')`; subqueries and column references are not allowed. Geometry arguments take a `GEOMETRY` (or its WKT text); a geometry whose type carries a coordinate system must match the SRID of the topology.
+
+#### Example
+
+```sql
+CALL CreateTopology('city');
+SELECT * FROM ST_CreateTopoGeo('city', ST_GeomFromText('GEOMETRYCOLLECTION(LINESTRING(0 0, 10 0), POINT(4 0))'));
+SELECT * FROM ST_ModEdgeHeal('city', 1, 2);
+```
+
+----
+
+### ST_ModEdgeSplit
+
+#### Signature
+
+```sql
+ST_ModEdgeSplit (col0 VARCHAR, col1 INTEGER, col2 ANY)
+```
+
+#### Description
+
+Splits an edge by creating a node on it, modifying the original edge and adding a new one. Returns the id of the new node.
+
+`ST_ModEdgeSplit(toponame, edge, point)`: the original edge keeps its id and now ends at the new node; the new edge runs from the new node to the old end node.
+
+Errors: `SQL/MM Spatial exception - null argument`, `- invalid topology name`, `- invalid point`, `- non-existent edge`, `- coincident node`, `- point not on edge`.
+
+The function runs in its own transaction, on a separate connection to the same database. The change is committed as soon as the call returns, independently of the transaction of the caller: a later `ROLLBACK` does not undo it. If the call fails nothing is changed. It cannot see uncommitted changes either. Calling it inside an explicit transaction (`BEGIN`) that already holds uncommitted changes to the database therefore raises an error asking to commit or roll back first; the check covers any change to the database, not only changes to the tables of the topology, because DuckDB does not expose which tables a transaction has updated or deleted from. A conflict with a concurrent transaction that modified the same topology rows is reported as an error too. Inside an explicit transaction the caller may not see the change in the topology tables until it starts a new transaction. Concurrent edits of one database are executed one after the other.
+
+Arguments must be constants or expressions that can be folded at bind time, such as `getvariable('x')`; subqueries and column references are not allowed. Geometry arguments take a `GEOMETRY` (or its WKT text); a geometry whose type carries a coordinate system must match the SRID of the topology.
+
+#### Example
+
+```sql
+CALL CreateTopology('city');
+SELECT * FROM ST_CreateTopoGeo('city', ST_GeomFromText('LINESTRING(0 0, 10 0)'));
+SELECT * FROM ST_ModEdgeSplit('city', 1, ST_Point(4, 0));
+-- 3
+```
+
+----
+
+### ST_MoveIsoNode
+
+#### Signature
+
+```sql
+ST_MoveIsoNode (col0 VARCHAR, col1 INTEGER, col2 ANY)
+```
+
+#### Description
+
+Moves an isolated node to another location within its face. Returns the text `Isolated Node N moved to location x,y`.
+
+Errors: `SQL/MM Spatial exception - null argument`, `- invalid topology name`, `- invalid point`, `- non-existent node`, `- not isolated node`, `- coincident node`, `- edge crosses node.`, `Cannot move isolated node across faces`.
+
+The function runs in its own transaction, on a separate connection to the same database. The change is committed as soon as the call returns, independently of the transaction of the caller: a later `ROLLBACK` does not undo it. If the call fails nothing is changed. It cannot see uncommitted changes either. Calling it inside an explicit transaction (`BEGIN`) that already holds uncommitted changes to the database therefore raises an error asking to commit or roll back first; the check covers any change to the database, not only changes to the tables of the topology, because DuckDB does not expose which tables a transaction has updated or deleted from. A conflict with a concurrent transaction that modified the same topology rows is reported as an error too. Inside an explicit transaction the caller may not see the change in the topology tables until it starts a new transaction. Concurrent edits of one database are executed one after the other.
+
+Arguments must be constants or expressions that can be folded at bind time, such as `getvariable('x')`; subqueries and column references are not allowed. Geometry arguments take a `GEOMETRY` (or its WKT text); a geometry whose type carries a coordinate system must match the SRID of the topology.
+
+#### Example
+
+```sql
+CALL CreateTopology('city');
+SELECT * FROM ST_AddIsoNode('city', NULL, ST_Point(1, 1));
+SELECT * FROM ST_MoveIsoNode('city', 1, ST_Point(2, 3));
+-- Isolated Node 1 moved to location 2,3
+```
+
+----
+
+### ST_NewEdgeHeal
+
+#### Signature
+
+```sql
+ST_NewEdgeHeal (col0 VARCHAR, col1 INTEGER, col2 INTEGER)
+```
+
+#### Description
+
+Heals two edges by deleting the node connecting them and replacing both edges with a new one, which has the direction of the first edge. Returns the id of the new edge.
+
+Errors: `SQL/MM Spatial exception - null argument`, `- invalid topology name`, `- non-existent edge N`, `- non-connected edges`, `- other edges connected (ids)` when the shared node has other edges, `Cannot heal edge N with itself, try with another`, `Edge N is closed, cannot heal to edge M`.
+
+The function runs in its own transaction, on a separate connection to the same database. The change is committed as soon as the call returns, independently of the transaction of the caller: a later `ROLLBACK` does not undo it. If the call fails nothing is changed. It cannot see uncommitted changes either. Calling it inside an explicit transaction (`BEGIN`) that already holds uncommitted changes to the database therefore raises an error asking to commit or roll back first; the check covers any change to the database, not only changes to the tables of the topology, because DuckDB does not expose which tables a transaction has updated or deleted from. A conflict with a concurrent transaction that modified the same topology rows is reported as an error too. Inside an explicit transaction the caller may not see the change in the topology tables until it starts a new transaction. Concurrent edits of one database are executed one after the other.
+
+Arguments must be constants or expressions that can be folded at bind time, such as `getvariable('x')`; subqueries and column references are not allowed. Geometry arguments take a `GEOMETRY` (or its WKT text); a geometry whose type carries a coordinate system must match the SRID of the topology.
+
+#### Example
+
+```sql
+CALL CreateTopology('city');
+SELECT * FROM ST_CreateTopoGeo('city', ST_GeomFromText('GEOMETRYCOLLECTION(LINESTRING(0 0, 10 0), POINT(4 0))'));
+SELECT * FROM ST_NewEdgeHeal('city', 1, 2);
+-- 3
+```
+
+----
+
+### ST_NewEdgesSplit
+
+#### Signature
+
+```sql
+ST_NewEdgesSplit (col0 VARCHAR, col1 INTEGER, col2 ANY)
+```
+
+#### Description
+
+Splits an edge by creating a node on it, deleting the original edge and replacing it with two new edges. Returns the id of the new node.
+
+`ST_NewEdgesSplit(toponame, edge, point)`: the first new edge runs from the old start node to the new node, the second from the new node to the old end node.
+
+Errors: `SQL/MM Spatial exception - null argument`, `- invalid topology name`, `- invalid point`, `- non-existent edge`, `- coincident node`, `- point not on edge`.
+
+The function runs in its own transaction, on a separate connection to the same database. The change is committed as soon as the call returns, independently of the transaction of the caller: a later `ROLLBACK` does not undo it. If the call fails nothing is changed. It cannot see uncommitted changes either. Calling it inside an explicit transaction (`BEGIN`) that already holds uncommitted changes to the database therefore raises an error asking to commit or roll back first; the check covers any change to the database, not only changes to the tables of the topology, because DuckDB does not expose which tables a transaction has updated or deleted from. A conflict with a concurrent transaction that modified the same topology rows is reported as an error too. Inside an explicit transaction the caller may not see the change in the topology tables until it starts a new transaction. Concurrent edits of one database are executed one after the other.
+
+Arguments must be constants or expressions that can be folded at bind time, such as `getvariable('x')`; subqueries and column references are not allowed. Geometry arguments take a `GEOMETRY` (or its WKT text); a geometry whose type carries a coordinate system must match the SRID of the topology.
+
+#### Example
+
+```sql
+CALL CreateTopology('city');
+SELECT * FROM ST_CreateTopoGeo('city', ST_GeomFromText('LINESTRING(0 0, 10 0)'));
+SELECT * FROM ST_NewEdgesSplit('city', 1, ST_Point(4, 0));
+SELECT edge_id FROM city.edge ORDER BY edge_id;
+-- 2 and 3
 ```
 
 ----
@@ -5576,6 +6308,132 @@ Read a Shapefile without relying on the GDAL library
 
 ----
 
+### ST_RemEdgeModFace
+
+#### Signature
+
+```sql
+ST_RemEdgeModFace (col0 VARCHAR, col1 INTEGER)
+```
+
+#### Description
+
+Removes an edge. If it separates two faces, one is deleted and the other is modified to cover both.
+
+`ST_RemEdgeModFace(toponame, edge)` returns the id of the face that remains in place of the edge. The face on the right of the edge is kept, unless one side is the universal face, which then absorbs the other. End nodes left without edges become isolated nodes of that face.
+
+Errors: `SQL/MM Spatial exception - null argument`, `- invalid topology name`, `- non-existent edge N`.
+
+The function runs in its own transaction, on a separate connection to the same database. The change is committed as soon as the call returns, independently of the transaction of the caller: a later `ROLLBACK` does not undo it. If the call fails nothing is changed. It cannot see uncommitted changes either. Calling it inside an explicit transaction (`BEGIN`) that already holds uncommitted changes to the database therefore raises an error asking to commit or roll back first; the check covers any change to the database, not only changes to the tables of the topology, because DuckDB does not expose which tables a transaction has updated or deleted from. A conflict with a concurrent transaction that modified the same topology rows is reported as an error too. Inside an explicit transaction the caller may not see the change in the topology tables until it starts a new transaction. Concurrent edits of one database are executed one after the other.
+
+Arguments must be constants or expressions that can be folded at bind time, such as `getvariable('x')`; subqueries and column references are not allowed. Geometry arguments take a `GEOMETRY` (or its WKT text); a geometry whose type carries a coordinate system must match the SRID of the topology.
+
+#### Example
+
+```sql
+CALL CreateTopology('city');
+SELECT * FROM ST_CreateTopoGeo('city', ST_GeomFromText(
+    'GEOMETRYCOLLECTION(POLYGON((0 0, 10 0, 10 10, 0 10, 0 0)), LINESTRING(5 0, 5 10))'));
+SET VARIABLE middle = (SELECT edge_id FROM city.edge WHERE ST_Intersects(geom, ST_Point(5, 5)));
+SELECT * FROM ST_RemEdgeModFace('city', getvariable('middle'));
+SELECT count(*) FROM city.face WHERE face_id <> 0;
+-- 1
+```
+
+----
+
+### ST_RemEdgeNewFace
+
+#### Signature
+
+```sql
+ST_RemEdgeNewFace (col0 VARCHAR, col1 INTEGER)
+```
+
+#### Description
+
+Removes an edge. If it separates two faces, both are deleted and replaced by a new face covering them.
+
+`ST_RemEdgeNewFace(toponame, edge)` returns the id of the new face, or NULL when no face is created: the edge had the same face on both sides, or one of its sides was the universal face (which then absorbs the other). End nodes left without edges become isolated nodes of the resulting face.
+
+Errors: `SQL/MM Spatial exception - null argument`, `- invalid topology name`, `- non-existent edge N`.
+
+The function runs in its own transaction, on a separate connection to the same database. The change is committed as soon as the call returns, independently of the transaction of the caller: a later `ROLLBACK` does not undo it. If the call fails nothing is changed. It cannot see uncommitted changes either. Calling it inside an explicit transaction (`BEGIN`) that already holds uncommitted changes to the database therefore raises an error asking to commit or roll back first; the check covers any change to the database, not only changes to the tables of the topology, because DuckDB does not expose which tables a transaction has updated or deleted from. A conflict with a concurrent transaction that modified the same topology rows is reported as an error too. Inside an explicit transaction the caller may not see the change in the topology tables until it starts a new transaction. Concurrent edits of one database are executed one after the other.
+
+Arguments must be constants or expressions that can be folded at bind time, such as `getvariable('x')`; subqueries and column references are not allowed. Geometry arguments take a `GEOMETRY` (or its WKT text); a geometry whose type carries a coordinate system must match the SRID of the topology.
+
+#### Example
+
+```sql
+CALL CreateTopology('city');
+SELECT * FROM ST_CreateTopoGeo('city', ST_GeomFromText(
+    'GEOMETRYCOLLECTION(POLYGON((0 0, 10 0, 10 10, 0 10, 0 0)), LINESTRING(5 0, 5 10))'));
+SET VARIABLE middle = (SELECT edge_id FROM city.edge WHERE ST_Intersects(geom, ST_Point(5, 5)));
+SELECT * FROM ST_RemEdgeNewFace('city', getvariable('middle'));
+SELECT count(*) FROM city.face WHERE face_id <> 0;
+-- 1
+```
+
+----
+
+### ST_RemoveIsoEdge
+
+#### Signature
+
+```sql
+ST_RemoveIsoEdge (col0 VARCHAR, col1 INTEGER)
+```
+
+#### Description
+
+Removes an isolated edge. Its end nodes become isolated nodes of the face the edge was in. Returns the text `Isolated edge N removed`.
+
+Errors: `SQL/MM Spatial exception - null argument`, `- invalid topology name`, `- non-existent edge`, `- not isolated edge` (the edge is closed, bounds a face, or shares a node with another edge).
+
+The function runs in its own transaction, on a separate connection to the same database. The change is committed as soon as the call returns, independently of the transaction of the caller: a later `ROLLBACK` does not undo it. If the call fails nothing is changed. It cannot see uncommitted changes either. Calling it inside an explicit transaction (`BEGIN`) that already holds uncommitted changes to the database therefore raises an error asking to commit or roll back first; the check covers any change to the database, not only changes to the tables of the topology, because DuckDB does not expose which tables a transaction has updated or deleted from. A conflict with a concurrent transaction that modified the same topology rows is reported as an error too. Inside an explicit transaction the caller may not see the change in the topology tables until it starts a new transaction. Concurrent edits of one database are executed one after the other.
+
+Arguments must be constants or expressions that can be folded at bind time, such as `getvariable('x')`; subqueries and column references are not allowed. Geometry arguments take a `GEOMETRY` (or its WKT text); a geometry whose type carries a coordinate system must match the SRID of the topology.
+
+#### Example
+
+```sql
+CALL CreateTopology('city');
+SELECT * FROM ST_CreateTopoGeo('city', ST_GeomFromText('LINESTRING(0 0, 10 0)'));
+SELECT * FROM ST_RemoveIsoEdge('city', 1);
+-- Isolated edge 1 removed
+```
+
+----
+
+### ST_RemoveIsoNode
+
+#### Signature
+
+```sql
+ST_RemoveIsoNode (col0 VARCHAR, col1 INTEGER)
+```
+
+#### Description
+
+Removes an isolated node. Returns the text `Isolated node N removed`.
+
+Errors: `SQL/MM Spatial exception - null argument`, `- invalid topology name`, `- non-existent node`, `- not isolated node`.
+
+The function runs in its own transaction, on a separate connection to the same database. The change is committed as soon as the call returns, independently of the transaction of the caller: a later `ROLLBACK` does not undo it. If the call fails nothing is changed. It cannot see uncommitted changes either. Calling it inside an explicit transaction (`BEGIN`) that already holds uncommitted changes to the database therefore raises an error asking to commit or roll back first; the check covers any change to the database, not only changes to the tables of the topology, because DuckDB does not expose which tables a transaction has updated or deleted from. A conflict with a concurrent transaction that modified the same topology rows is reported as an error too. Inside an explicit transaction the caller may not see the change in the topology tables until it starts a new transaction. Concurrent edits of one database are executed one after the other.
+
+Arguments must be constants or expressions that can be folded at bind time, such as `getvariable('x')`; subqueries and column references are not allowed. Geometry arguments take a `GEOMETRY` (or its WKT text); a geometry whose type carries a coordinate system must match the SRID of the topology.
+
+#### Example
+
+```sql
+CALL CreateTopology('city');
+SELECT * FROM ST_AddIsoNode('city', NULL, ST_Point(1, 1));
+SELECT * FROM ST_RemoveIsoNode('city', 1);
+-- Isolated node 1 removed
+```
+
+----
+
 ### ST_SquareGrid
 
 #### Signature
@@ -5596,6 +6454,86 @@ Returns rows of (geom, i, j) where geom is the square polygon and (i, j) are the
 
 ```sql
 SELECT * FROM ST_SquareGrid(1.0, ST_MakeEnvelope(0, 0, 2, 2));
+```
+
+----
+
+### TopologySummary
+
+#### Signature
+
+```sql
+TopologySummary (col0 VARCHAR)
+```
+
+#### Description
+
+Returns a two-line text summary of a topology: its id, SRID and precision, then the number of nodes, edges and faces (the universal face is not counted).
+
+Errors: `SQL/MM Spatial exception - invalid topology name`. The TopoGeometry layer is not implemented, so the summary always reports `0 topogeoms in 0 layers`.
+
+The function reads through a separate connection and sees committed data only. Arguments must be constants or expressions that can be folded at bind time, such as `getvariable('x')`.
+
+#### Example
+
+```sql
+CALL CreateTopology('city');
+SELECT * FROM TopologySummary('city');
+-- Topology city (id 1, SRID 0, precision 0)
+-- 0 nodes, 0 edges, 0 faces, 0 topogeoms in 0 layers
+```
+
+----
+
+### ValidateTopology
+
+#### Signature
+
+```sql
+ValidateTopology (col0 VARCHAR)
+```
+
+#### Description
+
+Checks a topology and returns one `(error, id1, id2)` row per problem found; a valid topology yields no rows.
+
+| error | id1 | id2 |
+| --- | --- | --- |
+| coincident nodes | node | node |
+| edge crosses node | edge | node |
+| invalid edge | edge | |
+| edge not simple | edge | |
+| edge crosses edge | edge | edge |
+| edge start node geometry mismatch | edge | node |
+| edge end node geometry mismatch | edge | node |
+| face without edges | face | |
+| invalid next_right_edge | edge | expected value |
+| invalid next_left_edge | edge | expected value |
+| mixed face labeling in ring | signed edge of the ring | |
+| universal face has shell rings | 0 | signed edge of the ring |
+| face has multiple shells | face | signed edge of the ring |
+| face has no rings | face | |
+| face has wrong mbr | face | |
+| hole not in advertised face | signed edge of the ring | |
+| not-isolated node has not-null containing_face | node | |
+| isolated node has null containing_face | node | |
+| isolated node has wrong containing_face | node | |
+| face within face | inner face | outer face |
+| face overlaps face | face | face |
+
+The expected links and rings are derived from the geometry of the edges. The ring, face and isolated-node checks are skipped when one of the first seven kinds of error is reported, since they need sound linework.
+
+Errors: `SQL/MM Spatial exception - null argument`, `- invalid topology name`. Unlike PostGIS there is no bounding-box argument: the whole topology is loaded and checked.
+
+The function reads through a separate connection and sees committed data only. Arguments must be constants or expressions that can be folded at bind time, such as `getvariable('x')`.
+
+#### Example
+
+```sql
+CALL CreateTopology('city');
+SELECT * FROM ST_CreateTopoGeo('city', ST_GeomFromText('POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))'));
+SELECT * FROM ValidateTopology('city');
+-- no rows
 ```
 
 ----

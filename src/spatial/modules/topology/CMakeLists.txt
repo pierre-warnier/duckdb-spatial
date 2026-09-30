@@ -1,0 +1,9 @@
+set(EXTENSION_SOURCES
+    ${EXTENSION_SOURCES}
+    ${CMAKE_CURRENT_SOURCE_DIR}/topology_build.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/topology_edit.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/topology_graph.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/topology_module.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/topology_query.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/topology_session.cpp
+    PARENT_SCOPE)

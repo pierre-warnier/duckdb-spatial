@@ -1,0 +1,395 @@
+# name: test/sql/topology/topology_rem_edge.test
+# description: ST_RemEdgeModFace and ST_RemEdgeNewFace
+# group: [topology]
+
+require spatial
+
+statement ok
+CREATE MACRO edges(topo) AS TABLE
+SELECT edge_id, start_node, end_node, next_left_edge, next_right_edge, left_face, right_face, ST_AsText(geom)
+FROM query_table(topo || '.edge') ORDER BY edge_id;
+
+statement ok
+CREATE MACRO faces(topo) AS TABLE
+SELECT face_id, ST_AsText(mbr) FROM query_table(topo || '.face') ORDER BY face_id;
+
+statement ok
+CREATE MACRO nodes(topo) AS TABLE
+SELECT node_id, containing_face, ST_AsText(geom) FROM query_table(topo || '.node') ORDER BY node_id;
+
+# The same topology twice: a square split by a diagonal, with an isolated node in each triangle, a hole in the lower
+# triangle and a dangling edge in the upper one
+#
+#   n2 (10,10): edges e1 (0 0 -> 10 0 -> 10 10), e2 (10 10 -> 0 10 -> 0 0), e3 the diagonal (0 0 -> 10 10)
+#   face 1: lower-right triangle (right of e3), face 2: upper-left triangle (left of e3)
+foreach topo m n
+
+statement ok
+CALL CreateTopology('${topo}');
+
+statement ok
+SELECT * FROM ST_AddIsoNode('${topo}', NULL, ST_Point(0, 0));
+
+statement ok
+SELECT * FROM ST_AddIsoNode('${topo}', NULL, ST_Point(10, 10));
+
+statement ok
+SELECT * FROM ST_AddEdgeModFace('${topo}', 1, 2, ST_GeomFromText('LINESTRING(0 0, 10 0, 10 10)'));
+
+statement ok
+SELECT * FROM ST_AddEdgeModFace('${topo}', 2, 1, ST_GeomFromText('LINESTRING(10 10, 0 10, 0 0)'));
+
+statement ok
+SELECT * FROM ST_AddEdgeModFace('${topo}', 1, 2, ST_GeomFromText('LINESTRING(0 0, 10 10)'));
+
+statement ok
+SELECT * FROM ST_AddIsoNode('${topo}', NULL, ST_Point(9, 5));
+
+statement ok
+SELECT * FROM ST_AddIsoNode('${topo}', NULL, ST_Point(1, 5));
+
+statement ok
+SELECT * FROM ST_AddIsoNode('${topo}', NULL, ST_Point(6, 1));
+
+statement ok
+SELECT * FROM ST_AddEdgeModFace('${topo}', 5, 5, ST_GeomFromText('LINESTRING(6 1, 8 1, 8 3, 6 1)'));
+
+statement ok
+SELECT * FROM ST_AddIsoNode('${topo}', NULL, ST_Point(2, 9));
+
+statement ok
+SELECT * FROM ST_AddEdgeModFace('${topo}', 2, 6, ST_GeomFromText('LINESTRING(10 10, 2 9)'));
+
+query TII
+SELECT * FROM ValidateTopology('${topo}');
+----
+
+endloop
+
+query IIIIIIIT
+FROM edges('m');
+----
+1	1	2	-3	-2	1	0	LINESTRING (0 0, 10 0, 10 10)
+2	2	1	3	-1	2	0	LINESTRING (10 10, 0 10, 0 0)
+3	1	2	5	1	2	1	LINESTRING (0 0, 10 10)
+4	5	5	4	-4	3	1	LINESTRING (6 1, 8 1, 8 3, 6 1)
+5	2	6	-5	2	2	2	LINESTRING (10 10, 2 9)
+
+query IT
+FROM faces('m');
+----
+0	NULL
+1	POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))
+2	POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))
+3	POLYGON ((6 1, 8 1, 8 3, 6 3, 6 1))
+
+query IIT
+FROM nodes('m');
+----
+1	NULL	POINT (0 0)
+2	NULL	POINT (10 10)
+3	1	POINT (9 5)
+4	2	POINT (1 5)
+5	NULL	POINT (6 1)
+6	NULL	POINT (2 9)
+
+# ----------------------------------------------------------------------------------------------------------------------
+# ST_RemEdgeModFace: the face on the right of the removed edge survives
+# ----------------------------------------------------------------------------------------------------------------------
+query I
+SELECT * FROM ST_RemEdgeModFace('m', 3);
+----
+1
+
+query IIIIIIIT
+FROM edges('m');
+----
+1	1	2	5	-2	1	0	LINESTRING (0 0, 10 0, 10 10)
+2	2	1	1	-1	1	0	LINESTRING (10 10, 0 10, 0 0)
+4	5	5	4	-4	3	1	LINESTRING (6 1, 8 1, 8 3, 6 1)
+5	2	6	-5	2	1	1	LINESTRING (10 10, 2 9)
+
+query IT
+FROM faces('m');
+----
+0	NULL
+1	POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))
+3	POLYGON ((6 1, 8 1, 8 3, 6 3, 6 1))
+
+# The isolated node of the deleted face 2 is now in face 1
+query IIT
+FROM nodes('m');
+----
+1	NULL	POINT (0 0)
+2	NULL	POINT (10 10)
+3	1	POINT (9 5)
+4	1	POINT (1 5)
+5	NULL	POINT (6 1)
+6	NULL	POINT (2 9)
+
+query TII
+SELECT * FROM ValidateTopology('m');
+----
+
+query I
+SELECT ST_Equals(st_getfacegeometry, ST_GeomFromText('POLYGON((0 0, 10 0, 10 10, 0 10, 0 0), (6 1, 8 1, 8 3, 6 1))')) FROM ST_GetFaceGeometry('m', 1);
+----
+true
+
+# Removing the hole: its inside (face 3, left of the counter-clockwise ring) is deleted, face 1 on its right floods it
+query I
+SELECT * FROM ST_RemEdgeModFace('m', 4);
+----
+1
+
+query IIT
+SELECT node_id, containing_face, ST_AsText(geom) FROM m.node WHERE node_id = 5;
+----
+5	1	POINT (6 1)
+
+query TII
+SELECT * FROM ValidateTopology('m');
+----
+
+# Removing a dangling edge changes no face and returns the face it was in
+query I
+SELECT * FROM ST_RemEdgeModFace('m', 5);
+----
+1
+
+query IIT
+SELECT node_id, containing_face, ST_AsText(geom) FROM m.node WHERE node_id = 6;
+----
+6	1	POINT (2 9)
+
+query TII
+SELECT * FROM ValidateTopology('m');
+----
+
+# Removing an edge that bounds the universal face: the universal face floods the other one
+query I
+SELECT * FROM ST_RemEdgeModFace('m', 1);
+----
+0
+
+query IIIIIIIT
+FROM edges('m');
+----
+2	2	1	-2	2	0	0	LINESTRING (10 10, 0 10, 0 0)
+
+query IT
+FROM faces('m');
+----
+0	NULL
+
+query IIT
+FROM nodes('m');
+----
+1	NULL	POINT (0 0)
+2	NULL	POINT (10 10)
+3	0	POINT (9 5)
+4	0	POINT (1 5)
+5	0	POINT (6 1)
+6	0	POINT (2 9)
+
+query TII
+SELECT * FROM ValidateTopology('m');
+----
+
+query I
+SELECT * FROM ST_RemEdgeModFace('m', 2);
+----
+0
+
+query II
+SELECT node_id, containing_face FROM m.node ORDER BY node_id;
+----
+1	0
+2	0
+3	0
+4	0
+5	0
+6	0
+
+query TII
+SELECT * FROM ValidateTopology('m');
+----
+
+# ----------------------------------------------------------------------------------------------------------------------
+# ST_RemEdgeNewFace: both faces are replaced by a new one
+# ----------------------------------------------------------------------------------------------------------------------
+query I
+SELECT * FROM ST_RemEdgeNewFace('n', 3);
+----
+4
+
+query IIIIIIIT
+FROM edges('n');
+----
+1	1	2	5	-2	4	0	LINESTRING (0 0, 10 0, 10 10)
+2	2	1	1	-1	4	0	LINESTRING (10 10, 0 10, 0 0)
+4	5	5	4	-4	3	4	LINESTRING (6 1, 8 1, 8 3, 6 1)
+5	2	6	-5	2	4	4	LINESTRING (10 10, 2 9)
+
+query IT
+FROM faces('n');
+----
+0	NULL
+3	POLYGON ((6 1, 8 1, 8 3, 6 3, 6 1))
+4	POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))
+
+query IIT
+FROM nodes('n');
+----
+1	NULL	POINT (0 0)
+2	NULL	POINT (10 10)
+3	4	POINT (9 5)
+4	4	POINT (1 5)
+5	NULL	POINT (6 1)
+6	NULL	POINT (2 9)
+
+query TII
+SELECT * FROM ValidateTopology('n');
+----
+
+query I
+SELECT ST_Equals(st_getfacegeometry, ST_GeomFromText('POLYGON((0 0, 10 0, 10 10, 0 10, 0 0), (6 1, 8 1, 8 3, 6 1))')) FROM ST_GetFaceGeometry('n', 4);
+----
+true
+
+# The hole again: faces 3 and 4 are replaced by face 5
+query I
+SELECT * FROM ST_RemEdgeNewFace('n', 4);
+----
+5
+
+query IT
+FROM faces('n');
+----
+0	NULL
+5	POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0))
+
+query TII
+SELECT * FROM ValidateTopology('n');
+----
+
+# No face is created when the edge has the same face on both sides, or bounds the universal face
+query I
+SELECT * FROM ST_RemEdgeNewFace('n', 5);
+----
+NULL
+
+query I
+SELECT * FROM ST_RemEdgeNewFace('n', 1);
+----
+NULL
+
+query IT
+FROM faces('n');
+----
+0	NULL
+
+query TII
+SELECT * FROM ValidateTopology('n');
+----
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Adding an edge and removing it again restores the faces, with both variants
+# ----------------------------------------------------------------------------------------------------------------------
+statement ok
+CALL CreateTopology('r');
+
+statement ok
+SELECT * FROM ST_CreateTopoGeo('r', ST_GeomFromText('GEOMETRYCOLLECTION(POLYGON((0 0, 10 0, 10 10, 0 10, 0 0)), POINT(0 0), POINT(10 10))'));
+
+query IIIIIIIT
+FROM edges('r');
+----
+1	1	2	2	-2	1	0	LINESTRING (0 0, 10 0, 10 10)
+2	2	1	1	-1	1	0	LINESTRING (10 10, 0 10, 0 0)
+
+statement ok
+SET VARIABLE a = (SELECT node_id FROM r.node WHERE ST_Equals(geom, ST_Point(0, 0)));
+
+statement ok
+SET VARIABLE b = (SELECT node_id FROM r.node WHERE ST_Equals(geom, ST_Point(10, 10)));
+
+loop i 0 3
+
+statement ok
+SET VARIABLE e = (SELECT st_addedgemodface FROM ST_AddEdgeModFace('r', getvariable('a'), getvariable('b'), ST_GeomFromText('LINESTRING(0 0, 10 10)')));
+
+query TII
+SELECT * FROM ValidateTopology('r');
+----
+
+query I
+SELECT count(*) FROM r.face;
+----
+3
+
+statement ok
+SELECT * FROM ST_RemEdgeModFace('r', getvariable('e'));
+
+query TII
+SELECT * FROM ValidateTopology('r');
+----
+
+query I
+SELECT ST_Equals(st_getfacegeometry, ST_GeomFromText('POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))')) FROM ST_GetFaceGeometry('r', 1);
+----
+true
+
+endloop
+
+statement ok
+SET VARIABLE e = (SELECT st_addedgenewfaces FROM ST_AddEdgeNewFaces('r', getvariable('a'), getvariable('b'), ST_GeomFromText('LINESTRING(0 0, 10 10)')));
+
+query TII
+SELECT * FROM ValidateTopology('r');
+----
+
+query I
+SELECT list(face_id ORDER BY face_id) FROM r.face;
+----
+[0, 5, 6]
+
+statement ok
+SET VARIABLE f = (SELECT st_remedgenewface FROM ST_RemEdgeNewFace('r', getvariable('e')));
+
+query I
+SELECT list(face_id ORDER BY face_id) = [0, getvariable('f')] FROM r.face;
+----
+true
+
+query TII
+SELECT * FROM ValidateTopology('r');
+----
+
+query I
+SELECT ST_AsText(ST_Normalize(ST_BuildArea(ST_Collect(list(geom))))) FROM r.edge;
+----
+POLYGON ((0 0, 0 10, 10 10, 10 0, 0 0))
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Error conditions
+# ----------------------------------------------------------------------------------------------------------------------
+statement error
+SELECT * FROM ST_RemEdgeModFace('r', 99);
+----
+SQL/MM Spatial exception - non-existent edge 99
+
+statement error
+SELECT * FROM ST_RemEdgeNewFace('r', 99);
+----
+SQL/MM Spatial exception - non-existent edge 99
+
+statement error
+SELECT * FROM ST_RemEdgeNewFace('r', NULL);
+----
+SQL/MM Spatial exception - null argument
+
+statement error
+SELECT * FROM ST_RemEdgeModFace('nope', 1);
+----
+SQL/MM Spatial exception - invalid topology name

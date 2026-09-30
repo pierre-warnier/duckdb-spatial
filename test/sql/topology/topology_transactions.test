@@ -1,0 +1,276 @@
+# name: test/sql/topology/topology_transactions.test
+# description: Transactional behaviour of the topology functions: they run in their own transaction
+# group: [topology]
+
+require spatial
+
+statement ok
+CALL CreateTopology('t');
+
+statement ok
+SELECT * FROM ST_AddIsoNode('t', NULL, ST_Point(0, 0));
+
+# ----------------------------------------------------------------------------------------------------------------------
+# An edit is committed on its own: rolling back the calling transaction does not undo it
+# ----------------------------------------------------------------------------------------------------------------------
+statement ok
+BEGIN;
+
+query I
+SELECT * FROM ST_AddIsoNode('t', NULL, ST_Point(1, 0));
+----
+2
+
+# The calling transaction started before the edit and still sees its own snapshot
+query I
+SELECT count(*) FROM t.node;
+----
+1
+
+# ... but the topology functions always work on the committed state, so edits can be chained
+query I
+SELECT * FROM GetNodeByPoint('t', ST_Point(1, 0), 0);
+----
+2
+
+query I
+SELECT * FROM ST_AddIsoEdge('t', 1, 2, ST_GeomFromText('LINESTRING(0 0, 1 0)'));
+----
+1
+
+query TII
+SELECT * FROM ValidateTopology('t');
+----
+
+statement ok
+ROLLBACK;
+
+query II
+SELECT (SELECT count(*) FROM t.node), (SELECT count(*) FROM t.edge);
+----
+2	1
+
+# A whole topology can be created and populated from inside a transaction
+statement ok
+BEGIN;
+
+statement ok
+CALL CreateTopology('u');
+
+statement ok
+SELECT * FROM ST_CreateTopoGeo('u', ST_GeomFromText('POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))'));
+
+query T
+SELECT ST_AsText(ST_Normalize(st_getfacegeometry)) FROM ST_GetFaceGeometry('u', 1);
+----
+POLYGON ((0 0, 0 10, 10 10, 10 0, 0 0))
+
+statement ok
+COMMIT;
+
+query I
+SELECT count(*) FROM u.edge;
+----
+1
+
+# ----------------------------------------------------------------------------------------------------------------------
+# An edit is refused when the calling transaction holds uncommitted changes, which the edit could not see
+# ----------------------------------------------------------------------------------------------------------------------
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO t.node VALUES (50, 0, ST_Point(5, 5));
+
+statement error
+SELECT * FROM ST_AddIsoNode('t', NULL, ST_Point(5, 5));
+----
+Topology editing functions run in their own transaction and cannot see the uncommitted changes of the current transaction: COMMIT or ROLLBACK it before editing a topology
+
+statement ok
+ROLLBACK;
+
+statement ok
+BEGIN;
+
+statement ok
+CREATE TABLE unrelated AS SELECT 1 AS x;
+
+statement error
+CALL DropTopology('u');
+----
+COMMIT or ROLLBACK it before editing a topology
+
+statement ok
+ROLLBACK;
+
+# Nothing happened
+query III
+SELECT (SELECT count(*) FROM t.node), (SELECT count(*) FROM t.edge), (SELECT count(*) FROM u.edge);
+----
+2	1	1
+
+# In autocommit mode the result of an edit can feed the statement that calls it
+statement ok
+CREATE TABLE new_nodes AS SELECT * FROM ST_AddIsoNode('t', NULL, ST_Point(2, 2));
+
+statement ok
+INSERT INTO new_nodes SELECT * FROM ST_AddIsoNode('t', NULL, ST_Point(3, 3));
+
+query I
+SELECT st_addisonode FROM new_nodes ORDER BY 1;
+----
+3
+4
+
+query I
+SELECT count(*) FROM t.node;
+----
+4
+
+# Binding alone does not run the function
+statement ok
+EXPLAIN SELECT * FROM ST_AddIsoNode('t', NULL, ST_Point(9, 9));
+
+statement ok
+PREPARE add_node AS SELECT * FROM ST_AddIsoNode('t', NULL, ST_Point($1, 9));
+
+query I
+SELECT count(*) FROM t.node;
+----
+4
+
+query I
+EXECUTE add_node(8);
+----
+5
+
+query I
+EXECUTE add_node(9);
+----
+6
+
+# ----------------------------------------------------------------------------------------------------------------------
+# A conflict with the uncommitted changes of another connection is reported, not waited for
+# ----------------------------------------------------------------------------------------------------------------------
+statement ok con1
+BEGIN;
+
+statement ok con1
+UPDATE t.node SET geom = ST_Point(2.5, 2) WHERE node_id = 3;
+
+statement error
+SELECT * FROM ST_MoveIsoNode('t', 3, ST_Point(2, 2.5));
+----
+Topology tables are being modified by another transaction
+
+statement ok con1
+ROLLBACK;
+
+query T
+SELECT * FROM ST_MoveIsoNode('t', 3, ST_Point(2, 2.5));
+----
+Isolated Node 3 moved to location 2,2.5
+
+# ----------------------------------------------------------------------------------------------------------------------
+# A failing edit leaves nothing behind, even when it fails after its first writes. Face 1 of topology u is
+# unregistered by hand; splitting it then fails once the new edge and one of the new faces have been written
+# ----------------------------------------------------------------------------------------------------------------------
+statement ok
+SELECT * FROM ST_AddIsoNode('u', NULL, ST_Point(2, 2));
+
+statement ok
+DELETE FROM u.face WHERE face_id = 1;
+
+statement error
+SELECT * FROM ST_AddEdgeNewFaces('u', 2, 2, ST_GeomFromText('LINESTRING(2 2, 2 8, 8 8, 8 2, 2 2)'));
+----
+Corrupted topology: face 1 is not registered
+
+query IIIIIIIT
+SELECT edge_id, start_node, end_node, next_left_edge, next_right_edge, left_face, right_face, ST_AsText(geom) FROM u.edge ORDER BY edge_id;
+----
+1	1	1	1	-1	1	0	LINESTRING (0 0, 10 0, 10 10, 0 10, 0 0)
+
+query IIT
+SELECT node_id, containing_face, ST_AsText(geom) FROM u.node ORDER BY node_id;
+----
+1	NULL	POINT (0 0)
+2	1	POINT (2 2)
+
+query I
+SELECT list(face_id) FROM u.face;
+----
+[0]
+
+# Once the face is back the same call succeeds
+statement ok
+INSERT INTO u.face VALUES (1, ST_MakeEnvelope(0, 0, 10, 10));
+
+statement ok
+SELECT * FROM ST_AddEdgeNewFaces('u', 2, 2, ST_GeomFromText('LINESTRING(2 2, 2 8, 8 8, 8 2, 2 2)'));
+
+query TII
+SELECT * FROM ValidateTopology('u');
+----
+
+# A failed check changes nothing either
+statement error
+SELECT * FROM ST_AddEdgeModFace('u', 1, 2, ST_GeomFromText('LINESTRING(0 0, 5 -5, 5 5, 2 2)'));
+----
+SQL/MM Spatial exception - geometry crosses edge
+
+query II
+SELECT (SELECT count(*) FROM u.edge), (SELECT count(*) FROM u.face);
+----
+2	3
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Edits issued concurrently from several connections are applied one after the other
+# ----------------------------------------------------------------------------------------------------------------------
+statement ok
+CALL CreateTopology('w');
+
+statement ok
+SELECT * FROM ST_AddIsoNode('w', NULL, ST_Point(0, 0));
+
+concurrentloop i 1 9
+
+statement ok
+SELECT * FROM ST_AddIsoNode('w', NULL, ST_Point(${i} * 10, 0));
+
+statement ok
+SELECT * FROM ST_AddIsoNode('w', NULL, ST_Point(${i} * 10, 5));
+
+statement ok
+SELECT * FROM ST_AddIsoNode('w', NULL, ST_Point(${i} * 10 + 1, 1));
+
+endloop
+
+query II
+SELECT count(*), count(DISTINCT node_id) FROM w.node;
+----
+25	25
+
+query TII
+SELECT * FROM ValidateTopology('w');
+----
+
+# All of them trying to add the same node: exactly one succeeds
+concurrentloop i 0 8
+
+statement maybe
+SELECT * FROM ST_AddIsoNode('w', NULL, ST_Point(500, 500));
+----
+SQL/MM Spatial exception - coincident node
+
+endloop
+
+query I
+SELECT count(*) FROM w.node WHERE ST_Equals(geom, ST_Point(500, 500));
+----
+1
+
+query TII
+SELECT * FROM ValidateTopology('w');
+----

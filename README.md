@@ -1,8 +1,8 @@
 # DuckDB Spatial Extension (Enhanced Fork)
 
-This fork of [duckdb/duckdb-spatial](https://github.com/duckdb/duckdb-spatial) extends the DuckDB spatial extension with **89 additional functions**, a **native KNN spatial join operator**, a **GEOGRAPHY type**, **DBSCAN/K-means clustering**, and significant **performance optimizations** to the spatial join pipeline. The goal is PostGIS parity and SedonaDB-competitive performance within DuckDB's analytical engine.
+This fork of [duckdb/duckdb-spatial](https://github.com/duckdb/duckdb-spatial) extends the DuckDB spatial extension with **119 additional functions**, a **native KNN spatial join operator**, a **GEOGRAPHY type**, **PostGIS-style topologies**, **DBSCAN/K-means clustering**, and significant **performance optimizations** to the spatial join pipeline. The goal is PostGIS parity and SedonaDB-competitive performance within DuckDB's analytical engine.
 
-**254 documented functions** (vs. 165 upstream) | **184 tests / 2736 assertions** | Synced with upstream v1.5-variegata
+**284 documented functions** (vs. 165 upstream) | **196 tests / 6710 assertions** | Synced with upstream v1.5-variegata
 
 **Table of contents**
 - [What's new in this fork](#whats-new-in-this-fork)
@@ -49,6 +49,23 @@ SELECT ST_Buffer(geog, 500), ST_DWithin(geog, ST_GeogPoint(4.3517, 50.8503), 100
 - Joins on geography predicates run as regular joins, and R-tree indexes cannot be created on geography columns.
 - A geography is stored as WKB under its own type name, so the column keeps its type in databases of any storage version. Other formats see a plain `BLOB`: cast to `GEOMETRY` before exporting to GeoParquet or through GDAL, and cast the WKB back with `::GEOGRAPHY` when reading.
 
+## Topology
+
+The PostGIS / ISO SQL-MM topology model: a topology is a schema holding `node`, `edge_data` (and the `edge` view) and `face` tables, registered in `topology.topology`, in which shared boundaries are stored once.
+
+```sql
+CALL CreateTopology('parcels', 31370);
+SET VARIABLE linework = (SELECT ST_Collect(list(geom)) FROM parcels);
+SELECT * FROM ST_CreateTopoGeo('parcels', getvariable('linework'));
+SELECT * FROM ST_GetFaceGeometry('parcels', 1);
+SELECT * FROM ValidateTopology('parcels');
+```
+
+- 30 functions: management (`CreateTopology`, `DropTopology`, `GetTopologyID`, `GetTopologySRID`, `GetTopologyName`, `TopologySummary`), population (`ST_CreateTopoGeo`), ISO editing (`ST_AddIsoNode`, `ST_AddIsoEdge`, `ST_AddEdgeNewFaces`, `ST_AddEdgeModFace`, `ST_RemEdgeNewFace`, `ST_RemEdgeModFace`, `ST_ChangeEdgeGeom`, `ST_ModEdgeSplit`, `ST_NewEdgesSplit`, `ST_ModEdgeHeal`, `ST_NewEdgeHeal`, `ST_MoveIsoNode`, `ST_RemoveIsoNode`, `ST_RemoveIsoEdge`), accessors (`ST_GetFaceGeometry`, `ST_GetFaceEdges`, `GetNodeByPoint`, `GetEdgeByPoint`, `GetFaceByPoint`, `GetNodeEdges`, `GetRingEdges`), `ValidateTopology` and the `TopoElementArray_Agg` aggregate. The TopoGeometry layer (`CreateTopoGeom`, `toTopoGeom`, ...) is not implemented.
+- Every function except the aggregate is a table function: call it with `CALL f(...)` or `SELECT * FROM f(...)`, not as a scalar. Its arguments must be constants; to pass a value computed by a query, store it first with `SET VARIABLE v = (SELECT ...)` and pass `getvariable('v')`.
+- An edit runs in its own transaction on a separate connection and is committed when the call returns: a later `ROLLBACK` of the caller does not undo it, and a failed edit changes nothing. An edit is refused while the caller has uncommitted changes in an explicit transaction.
+- Topologies are two-dimensional, the topology tables have no spatial index (the cost of an edit grows with the size of the topology), and the functions need GEOS.
+
 ## Spatial Clustering
 
 PostGIS-compatible window functions for density-based and partition-based clustering.
@@ -73,7 +90,7 @@ Also includes `ST_ClusterIntersecting` and `ST_ClusterWithin` aggregate function
 - **Robust predicates**: Shewchuk adaptive-precision `orient2d` replaces the fast-but-wrong `orient2d_fast`, eliminating false positives in point-in-polygon and intersection tests near collinear edges
 - **Native ST_Intersects**: GEOMETRY-to-GEOMETRY intersection without GEOS fallback for the common bbox-miss and point-in-polygon cases
 
-## 89 New Functions (PostGIS parity)
+## 119 New Functions (PostGIS parity)
 
 | Category | Functions |
 |---|---|
@@ -88,6 +105,7 @@ Also includes `ST_ClusterIntersecting` and `ST_ClusterWithin` aggregate function
 | **Decomposition** (3) | `ST_DumpPoints`, `ST_DumpRings`, `ST_DumpSegments` |
 | **Constructors** (2) | `ST_LineFromMultiPoint`, `ST_Polygon` |
 | **Grids** (2) | `ST_HexagonGrid`, `ST_SquareGrid` |
+| **Topology** (30) | see [Topology](#topology) |
 | **Geography** (5) | `ST_GeogPoint`, `ST_GeogFromText`, `ST_GeogFromWKT`, `ST_GeographyFromText`, `ST_GeogFromWKB` |
 | **Geodesic** (1) | `ST_Project` |
 | **Join** (1) | `ST_KNN` |
