@@ -1,4 +1,6 @@
-# Project Rules
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## AUTHORSHIP — ABSOLUTE RULE
 
@@ -15,6 +17,8 @@
 
 All work is authored by **Pierre Warnier <pierre@warnier.net>**. No exceptions.
 
+This file and `.ci/` are the only paths exempt from the rule. `.ci/pre-commit` and `.ci/commit-msg` reject staged diffs and commit messages matching the forbidden keywords; `.ci/` is gitignored, so on a fresh clone the hooks must be copied into `.git/hooks/` by hand (`.ci/install-hooks.sh` only installs `pre-commit`).
+
 ## Code Standards
 
 - Follow existing DuckDB coding conventions (clang-format, clang-tidy)
@@ -22,19 +26,112 @@ All work is authored by **Pierre Warnier <pierre@warnier.net>**. No exceptions.
 - No unnecessary comments — the code should be self-documenting
 - No "TODO: AI" or similar markers
 
+## Repository context
+
+This is a fork of `duckdb/duckdb-spatial` (`origin` = `pierre-warnier/duckdb-spatial`, `upstream` = `duckdb/duckdb-spatial`). The working branch is `v1.5-variegata`, which tracks the upstream branch of the same name and is also the PR base. Branch names follow DuckDB release lines; the `duckdb` submodule must stay on the matching DuckDB release.
+
+DuckDB core is the `duckdb/` **git submodule** (not a sibling directory), and the build helpers come from the `extension-ci-tools/` submodule. After switching branches or syncing upstream, run `git submodule update --init --recursive`.
+
 ## Build
 
+The top-level `Makefile` includes `extension-ci-tools/makefiles/duckdb_extension.Makefile`, which configures CMake with `duckdb/` as the source dir and loads this extension through `extension_config.cmake`. The output is a full DuckDB build with `spatial` (and `json`) statically linked.
+
 ```bash
-# Build the spatial extension
-GEN=ninja make release
-# Run tests
-make test
+# Third-party dependencies (GDAL, GEOS, PROJ, sqlite3, curl, openssl) come from vcpkg (vcpkg.json + vcpkg_ports/ overlays)
+export VCPKG_TOOLCHAIN_PATH=~/vcpkg/scripts/buildsystems/vcpkg.cmake
+
+GEN=ninja make release     # build/release
+GEN=ninja make debug       # build/debug
+GEN=ninja make relassert   # RelWithDebInfo + assertions (FORCE_ASSERT)
 ```
 
-## Architecture Notes
+Build products:
 
-- The spatial extension lives in `src/spatial/`
-- SGL (Spatial Geometry Library) is the internal geometry engine in `src/sgl/`
-- R-tree index code is in `src/spatial/index/rtree/`
-- SPATIAL_JOIN operator is in `src/spatial/operators/`
-- The extension is built against DuckDB core (sibling directory `../duckdb/`)
+- `build/release/duckdb` — shell with the extension linked in
+- `build/release/test/unittest` — sqllogictest runner
+- `build/release/extension/spatial/spatial.duckdb_extension` — loadable extension
+
+Formatting and lint:
+
+```bash
+make format        # clang-format over src/spatial + cmake-format on CMakeLists.txt (overridden locally)
+make tidy-check    # clang-tidy using duckdb/.clang-tidy
+```
+
+## Tests
+
+Tests are DuckDB sqllogictests under `test/sql/` (`.test`, and `.test_slow` for long-running ones). Each file starts with `require spatial`. Fixtures are in `test/data/`.
+
+```bash
+make test                                                          # everything matching test/* on the release build
+make test_debug                                                    # same, debug build
+./build/release/test/unittest "test/sql/join/spatial_join_cte.test"  # single file
+./build/release/test/unittest "test/sql/join/*"                     # a directory
+./build/release/test/unittest "[join]"                              # by group tag
+```
+
+The runner must be started from the repository root (test paths and data paths are relative to it).
+
+Other test entry points:
+
+- `src/sgl/Makefile` builds a standalone `sgl_test` with ASan/UBSan and llvm-cov coverage (`make -C src/sgl report`). It is macOS/Homebrew-oriented (`brew --prefix llvm`).
+- `test/python/` holds pytest suites (GeoArrow, R-tree fuzzing) that need a DuckDB Python package built from the same submodule commit; see `test/python/README.md`.
+- `benchmark/*.benchmark` are DuckDB benchmark-runner files; build with `BUILD_BENCHMARK=1`.
+
+## Generated documentation
+
+`docs/functions.md` is generated, not hand-edited. `generate_function_reference.py` runs `./build/debug/duckdb` and reads descriptions, examples and tags out of `duckdb_functions()`, so it needs a **debug** build and picks up whatever was passed to `SetDescription` / `SetExample` / `SetTag` at registration time. Regenerate it whenever a function is added or its signature changes, and keep the function counts in `README.md` in line.
+
+## Architecture
+
+### Load sequence
+
+`src/spatial/spatial_extension.cpp` is the single entry point. `LoadInternal` registers, in order: types (`GeoTypes`), settings, the core function families (cast, scalar, aggregate, table, window), the spatial join optimizer, then each module (PROJ, GDAL, GEOS, OSM, shapefile, MVT, WKB), then the R-tree index, then the operator extension. A new module or function family is wired in here.
+
+### Geometry representation
+
+- `GEOMETRY` is DuckDB core's native type as of v1.5 (`LogicalType::GEOMETRY()`), not an extension-defined blob alias. Pre-1.5 databases stored it as `BLOB` aliased `GEOMETRY`; `spatial_functions_cast.cpp` registers an implicit cast that rewrites the legacy layout.
+- `GeoTypes` (`spatial_types.cpp`) defines the columnar alias types built on `STRUCT`/`LIST`: `POINT_2D/3D/4D`, `LINESTRING_2D/3D`, `POLYGON_2D/3D`, `BOX_2D`, `BOX_2DF`, plus `WKB_BLOB`. Many functions have a separate overload per type.
+- **SGL** (`src/sgl/`) is the dependency-free in-memory geometry library (`sgl::geometry`, `sgl::ops::*`, prepared geometries, Shewchuk robust predicates in `robust_predicates.cpp`). It is built as part of the extension and knows nothing about DuckDB.
+- `src/spatial/geometry/geometry_serialization.*` (`Serde`) converts between the stored blob and `sgl::geometry`. Deserialized geometries are arena-allocated; nothing is individually freed.
+
+### How a function is implemented
+
+Nearly all native functions live in one file per kind under `src/spatial/modules/main/` (`spatial_functions_scalar.cpp` is ~12k lines). The pattern:
+
+- One `struct ST_Foo` per SQL function, holding static `Execute*` functions (one per overload) and a static `Register(ExtensionLoader &)`.
+- `Register` uses `FunctionBuilder::RegisterScalar` / `RegisterAggregate` / `RegisterMacro` (`src/spatial/util/function_builder.hpp`): `AddVariant` per overload with `AddParameter` / `SetReturnType` / `SetFunction`, then `SetDescription`, `SetExample`, `SetTag("ext", "spatial")` and a `category` tag. The description and tags feed the generated docs; a function without the `ext` tag is left out of `docs/functions.md`.
+- Variants that touch `GEOMETRY` set `SetInit(LocalState::Init)` and call `LocalState::ResetAndGet(state)` at the top of `Execute`. The local state owns a per-thread `ArenaAllocator` that is reset once per chunk; `lstate.Deserialize` / `lstate.Serialize` go through it.
+- Functions returning geometry set `SetBind(GeoTypes::PropagateCRS)` so the CRS of the input type carries to the result type.
+- The struct's `Register` must be called from the matching `RegisterSpatial*Functions` list at the bottom of the file.
+
+Functions that need GEOS follow the same builder pattern in `modules/geos/geos_module.cpp`, with `geos_serde.*` converting directly between the stored blob and GEOS handles. GEOS is optional (`SPATIAL_USE_GEOS`), so anything in `modules/main` must not depend on it. Prefer a native SGL implementation and fall back to GEOS only for operations SGL lacks.
+
+### Spatial joins
+
+There is no SQL syntax for the join operators; they are injected by an optimizer extension.
+
+1. `operators/spatial_join_optimizer.cpp` walks the logical plan and rewrites a `LogicalAnyJoin` / comparison join whose condition is a recognised predicate into a `LogicalSpatialJoin`. The set of recognised predicates is the `spatial_predicate_map` table in that file, with `spatial_predicate_inverse_map` used to swap sides. A new predicate that implies bbox intersection has to be added to both tables to get the join.
+2. `ST_DWithin` is handled through `ST_DWithinHelper::TryGetConstDistance` (`util/distance_extract.hpp`), which pulls the constant distance out of the function's bind data to inflate the probe bbox.
+3. `ST_KNN(a, b, k)` is a marker function: executing it throws ("cannot be used outside of a JOIN ON clause"). The optimizer recognises it, reads `k` via `ST_KNNHelper::TryGetConstK` (`util/knn_extract.hpp`), and produces a `LogicalSpatialKNNJoin`.
+4. The physical operators (`spatial_join_physical.cpp`, `spatial_knn_join_physical.cpp`) materialise the build side, bulk-load an in-memory `FlatRTree` (`operators/flat_rtree.hpp`, Hilbert-sorted), and probe it per input chunk. The KNN operator does a priority-queue traversal with over-fetch and exact distance refinement.
+5. `spatial_operator_extension.cpp` registers an `OperatorExtension` whose `Deserialize` dispatches on `OPERATOR_TYPE_NAME`. Every custom logical operator (`LogicalSpatialJoin`, `LogicalSpatialKNNJoin`, `LogicalCreateRTreeIndex`) must be listed there or plan serialization fails.
+
+`FlatRTree` (transient, join-only) and the persistent R-tree index are separate implementations.
+
+### Persistent R-tree index
+
+`src/spatial/index/rtree/` implements `CREATE INDEX ... USING RTREE` as a DuckDB `BoundIndex`:
+
+- `rtree.cpp` / `rtree_node.hpp` — the tree, stored in DuckDB's fixed-size block allocator
+- `rtree_index_create_logical.cpp` / `_physical.cpp` — index build, with STR bulk loading
+- `rtree_index_plan_scan.cpp` — optimizer rule that replaces a sequential scan + spatial filter with `rtree_index_scan`
+- `rtree_index_pragmas.cpp` — `rtree_index_dump` and info pragmas
+
+### I/O modules
+
+Each directory under `src/spatial/modules/` is self-contained and exposes one `Register*Module` function. `gdal` provides `ST_Read` and `COPY ... (FORMAT GDAL)` and bridges GDAL's VSI to DuckDB's file system; `proj` embeds `proj.db` in the binary (`proj_db.c`, served through the in-memory SQLite VFS in `memvfs.c`); `shapefile`, `osm`, `mvt` and `wkb` are native readers/writers that do not go through GDAL.
+
+### Fork-specific surface
+
+Relative to upstream, this fork adds the KNN join operator, the clustering window/aggregate functions (`spatial_functions_window.cpp`, `ST_ClusterDBSCAN` / `ST_ClusterKMeans` / `ST_ClusterIntersecting` / `ST_ClusterWithin`), robust predicates in SGL, STR bulk loading for the R-tree index, and ~87 PostGIS-parity functions (listed in `README.md`). Upstream merges conflict most often in `spatial_functions_scalar.cpp`, `geos_module.cpp`, `spatial_join_optimizer.cpp` and `spatial_join_physical.cpp`.
