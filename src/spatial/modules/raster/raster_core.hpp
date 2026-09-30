@@ -135,6 +135,7 @@ void AddBand(GDALDataset &ds, GDALDataType type);
 void CopyBand(GDALRasterBand &src, GDALRasterBand &dst);
 
 string SerializeRaster(GDALDataset &ds);
+Value RasterValue(GDALDataset &ds);
 string_t SerializeRaster(GDALDataset &ds, Vector &result);
 // Writes the dataset with any creation-capable driver and returns the file's bytes
 string SerializeDataset(GDALDataset &ds, const string &driver, const vector<string> &options);

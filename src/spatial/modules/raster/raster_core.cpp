@@ -382,6 +382,12 @@ string SerializeRaster(GDALDataset &ds) {
 	return string(const_char_ptr_cast(buffer.get()), static_cast<size_t>(size));
 }
 
+Value RasterValue(GDALDataset &ds) {
+	auto value = Value::BLOB_RAW(SerializeRaster(ds));
+	value.Reinterpret(RasterType());
+	return value;
+}
+
 string_t SerializeRaster(GDALDataset &ds, Vector &result) {
 	vsi_l_offset size = 0;
 	const auto buffer = SerializeToBuffer(ds, size);
