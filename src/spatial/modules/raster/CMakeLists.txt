@@ -7,4 +7,5 @@ set(EXTENSION_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/raster_functions_process.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/raster_functions_stats.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/raster_functions_mapalgebra.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/raster_functions_vector.cpp
     PARENT_SCOPE)

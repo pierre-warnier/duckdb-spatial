@@ -200,6 +200,19 @@ struct GeoTransform {
 // 0-based integer cell containing a fractional pixel coordinate, tolerant of rounding noise on cell edges
 int64_t PixelFloor(double value);
 
+struct Grid {
+	GeoTransform gt;
+	int width;
+	int height;
+};
+
+OGREnvelope RasterEnvelope(GDALDataset &ds);
+void CheckGridSize(double width, double height);
+// The smallest grid with the given pixel vectors that covers the envelope and whose pixel corners lie on the lattice
+// through the anchor point
+Grid CoverEnvelope(const OGREnvelope &envelope, double scalex, double scaley, double skewx, double skewy,
+                   double anchor_x, double anchor_y);
+
 // The coordinate system of a raster is text: AUTHORITY:CODE when it has an authority code, WKT otherwise
 string SpatialRefToText(const OGRSpatialReference &srs);
 string GetCRS(GDALDataset &ds);

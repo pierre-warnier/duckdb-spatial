@@ -614,6 +614,71 @@ void GeoTransform::ToPixel(double x, double y, double &col, double &row) const {
 	row = (dy * c[1] - dx * c[4]) / det;
 }
 
+OGREnvelope RasterEnvelope(GDALDataset &ds) {
+	const GeoTransform gt(ds);
+	OGREnvelope envelope;
+	const double cols[2] = {0, static_cast<double>(ds.GetRasterXSize())};
+	const double rows[2] = {0, static_cast<double>(ds.GetRasterYSize())};
+	for (const auto col : cols) {
+		for (const auto row : rows) {
+			double x;
+			double y;
+			gt.ToWorld(col, row, x, y);
+			envelope.Merge(x, y);
+		}
+	}
+	return envelope;
+}
+
+void CheckGridSize(double width, double height) {
+	if (!(width >= 1) || !(height >= 1) || width > 1e6 || height > 1e6 || width * height > 4e9) {
+		throw InvalidInputException("The resulting raster would be %.0f x %.0f pixels, which is outside of the "
+		                            "supported range",
+		                            width, height);
+	}
+}
+
+// The smallest grid with the given pixel vectors that covers the envelope and whose pixel corners lie on the lattice
+// through the anchor point
+Grid CoverEnvelope(const OGREnvelope &envelope, double scalex, double scaley, double skewx, double skewy,
+                   double anchor_x, double anchor_y) {
+	Grid grid;
+	grid.gt.c[0] = anchor_x;
+	grid.gt.c[1] = scalex;
+	grid.gt.c[2] = skewx;
+	grid.gt.c[3] = anchor_y;
+	grid.gt.c[4] = skewy;
+	grid.gt.c[5] = scaley;
+
+	auto min_col = std::numeric_limits<double>::infinity();
+	auto min_row = std::numeric_limits<double>::infinity();
+	auto max_col = -std::numeric_limits<double>::infinity();
+	auto max_row = -std::numeric_limits<double>::infinity();
+	const double xs[2] = {envelope.MinX, envelope.MaxX};
+	const double ys[2] = {envelope.MinY, envelope.MaxY};
+	for (const auto x : xs) {
+		for (const auto y : ys) {
+			double col;
+			double row;
+			grid.gt.ToPixel(x, y, col, row);
+			min_col = MinValue(min_col, col);
+			max_col = MaxValue(max_col, col);
+			min_row = MinValue(min_row, row);
+			max_row = MaxValue(max_row, row);
+		}
+	}
+	const auto first_col = static_cast<double>(PixelFloor(min_col));
+	const auto first_row = static_cast<double>(PixelFloor(min_row));
+	const auto width = MaxValue(1.0, std::ceil(max_col - 1e-7) - first_col);
+	const auto height = MaxValue(1.0, std::ceil(max_row - 1e-7) - first_row);
+	CheckGridSize(width, height);
+
+	grid.gt.ToWorld(first_col, first_row, grid.gt.c[0], grid.gt.c[3]);
+	grid.width = static_cast<int>(width);
+	grid.height = static_cast<int>(height);
+	return grid;
+}
+
 int64_t PixelFloor(double value) {
 	const auto rounded = std::round(value);
 	if (std::fabs(value - rounded) < 1e-7) {

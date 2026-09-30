@@ -26,6 +26,7 @@ void RegisterRasterModule(ExtensionLoader &loader) {
 	raster::RegisterRasterProcessingFunctions(loader);
 	raster::RegisterRasterStatisticsFunctions(loader);
 	raster::RegisterRasterMapAlgebraFunctions(loader);
+	raster::RegisterRasterVectorFunctions(loader);
 }
 
 } // namespace duckdb
