@@ -1,0 +1,276 @@
+# name: test/sql/routing/pgr_flow.test
+# description: Test pgr_maxFlow, pgr_pushRelabel, pgr_edmondsKarp, pgr_boykovKolmogorov and pgr_maxFlowMinCost
+# group: [routing]
+
+require spatial
+
+# The pgRouting sample graph
+statement ok
+CREATE TABLE edges AS SELECT * FROM (VALUES
+	(1, 5, 6, 1, 1, 80, 130), (2, 6, 10, -1, 1, -1, 100), (3, 10, 15, -1, 1, -1, 130), (4, 6, 7, 1, 1, 100, 50),
+	(5, 10, 11, 1, -1, 130, -1), (6, 1, 3, 1, 1, 50, 100), (7, 3, 7, 1, 1, 50, 130), (8, 7, 11, 1, 1, 100, 130),
+	(9, 11, 16, 1, 1, 130, 80), (10, 7, 8, 1, 1, 130, 50), (11, 11, 12, 1, -1, 130, -1), (12, 8, 12, 1, -1, 100, -1),
+	(13, 12, 17, 1, -1, 100, -1), (14, 8, 9, 1, 1, 80, 130), (15, 16, 17, 1, 1, 80, 50), (16, 15, 16, 1, 1, 80, 80),
+	(17, 2, 4, 1, 1, 130, 100), (18, 13, 14, 1, 1, 50, 130)
+) t(id, source, target, cost, reverse_cost, capacity, reverse_capacity);
+
+# Same values as the pgRouting documentation
+query I
+SELECT * FROM pgr_maxFlow((SELECT id, source, target, capacity, reverse_capacity FROM edges), 11, 12);
+----
+230
+
+query I
+SELECT * FROM pgr_maxFlow((SELECT id, source, target, capacity, reverse_capacity FROM edges), 11, [5, 10, 12]);
+----
+340
+
+query I
+SELECT * FROM pgr_maxFlow((SELECT id, source, target, capacity, reverse_capacity FROM edges), [11, 3, 17], 12);
+----
+230
+
+query I
+SELECT * FROM pgr_maxFlow((SELECT id, source, target, capacity, reverse_capacity FROM edges), [11, 3, 17], [5, 10, 12]);
+----
+360
+
+# Without reverse capacities only the edge from 11 to 12 is left
+query I
+SELECT pgr_maxflow FROM pgr_maxFlow((SELECT id, source, target, capacity FROM edges), 11, 12);
+----
+130
+
+# The flow of every edge; this one is the only maximum flow from 11 to 12
+query IIIIII
+SELECT * FROM pgr_pushRelabel((SELECT id, source, target, capacity, reverse_capacity FROM edges), 11, 12);
+----
+1	10	7	8	100	30
+2	12	8	12	100	0
+3	8	11	7	100	30
+4	11	11	12	130	0
+
+query IIIIII
+SELECT * FROM pgr_edmondsKarp((SELECT id, source, target, capacity, reverse_capacity FROM edges), 11, 12);
+----
+1	10	7	8	100	30
+2	12	8	12	100	0
+3	8	11	7	100	30
+4	11	11	12	130	0
+
+query IIIIII
+SELECT * FROM pgr_boykovKolmogorov((SELECT id, source, target, capacity, reverse_capacity FROM edges), 11, 12);
+----
+1	10	7	8	100	30
+2	12	8	12	100	0
+3	8	11	7	100	30
+4	11	11	12	130	0
+
+# Minimum cost: same totals as the pgRouting documentation (430 and 760)
+query IIIIIIRR
+SELECT * FROM pgr_maxFlowMinCost((SELECT id, source, target, capacity, reverse_capacity, cost, reverse_cost FROM edges), 11, 12);
+----
+1	10	7	8	100	30	100.0	100.0
+2	12	8	12	100	0	100.0	200.0
+3	8	11	7	100	30	100.0	300.0
+4	11	11	12	130	0	130.0	430.0
+
+query IR
+SELECT sum(flow) FILTER (target IN (5, 10, 12)) - coalesce(sum(flow) FILTER (source IN (5, 10, 12)), 0), max(agg_cost)
+FROM pgr_minCostMaxFlow((SELECT id, source, target, capacity, reverse_capacity, cost, reverse_cost FROM edges), 11, [5, 10, 12]);
+----
+340	760.0
+
+# The classic textbook network: maximum flow 23
+statement ok
+CREATE TABLE network AS SELECT * FROM (VALUES
+	(1, 1, 2, 16), (2, 1, 3, 13), (3, 2, 3, 10), (4, 3, 2, 4), (5, 2, 4, 12), (6, 4, 3, 9), (7, 3, 5, 14), (8, 5, 4, 7), (9, 4, 6, 20), (10, 5, 6, 4)
+) t(id, source, target, capacity);
+
+query I
+SELECT * FROM pgr_maxFlow((SELECT * FROM network), 1, 6);
+----
+23
+
+query II
+SELECT sum(flow) FILTER (start_vid = 1), sum(flow) FILTER (end_vid = 6) FROM pgr_pushRelabel((SELECT * FROM network), 1, 6);
+----
+23	23
+
+# Two routes with different costs and a bottleneck: the cheap route is used
+query IIIIIIRR
+SELECT * FROM pgr_maxFlowMinCost((SELECT * FROM (VALUES
+	(1, 1, 2, 1, 5.0), (2, 2, 4, 1, 5.0), (3, 1, 3, 1, 1.0), (4, 3, 4, 1, 1.0), (5, 4, 5, 1, 0.5)
+) t(id, source, target, capacity, cost)), 1, 5);
+----
+1	3	1	3	1	0	1.0	1.0
+2	4	3	4	1	0	1.0	2.0
+3	5	4	5	1	0	0.5	2.5
+
+# A cheap path that is a dead end for the second unit of flow has to be partly undone
+query IIIIIIRR
+SELECT * FROM pgr_maxFlowMinCost((SELECT * FROM (VALUES
+	(1, 1, 2, 1, 1.0), (2, 1, 3, 1, 4.0), (3, 2, 3, 1, 1.0), (4, 2, 4, 1, 6.0), (5, 3, 4, 1, 1.0)
+) t(id, source, target, capacity, cost)), 1, 4);
+----
+1	1	1	2	1	0	1.0	1.0
+2	2	1	3	1	0	4.0	5.0
+3	4	2	4	1	0	6.0	11.0
+4	5	3	4	1	0	1.0	12.0
+
+# No flow
+query I
+SELECT * FROM pgr_maxFlow((SELECT * FROM network), 6, 1);
+----
+0
+
+query I
+SELECT * FROM pgr_maxFlow((SELECT * FROM network), 99, 6);
+----
+0
+
+query I
+SELECT * FROM pgr_maxFlow((SELECT * FROM network WHERE capacity > 1000), 1, 6);
+----
+0
+
+query I
+SELECT count(*) FROM pgr_pushRelabel((SELECT * FROM network), 6, 1);
+----
+0
+
+query I
+SELECT count(*) FROM pgr_maxFlow((SELECT * FROM network), NULL, 6);
+----
+0
+
+# Errors
+statement error
+SELECT * FROM pgr_maxFlow((SELECT * FROM network), [1, 2], [6, 2]);
+----
+vertex 2 is both a source and a sink
+
+statement error
+SELECT * FROM pgr_maxFlow((SELECT id, source, target FROM network), 1, 6);
+----
+missing the required column "capacity"
+
+statement error
+SELECT * FROM pgr_maxFlow((SELECT id, source, target, capacity::DOUBLE AS capacity FROM network), 1, 6);
+----
+column "capacity" of the edges input must be of an integer type
+
+statement error
+SELECT * FROM pgr_maxFlowMinCost((SELECT * FROM network), 1, 6);
+----
+missing the required column "cost"
+
+statement error
+SELECT * FROM pgr_maxFlowMinCost((SELECT *, -1.0 AS cost FROM network), 1, 6);
+----
+has a negative cost
+
+statement error
+SELECT * FROM pgr_maxFlowMinCost((SELECT *, 1.0 AS cost, 5 AS reverse_capacity FROM network), 1, 6);
+----
+"reverse_cost" is required
+
+statement error
+SELECT * FROM pgr_maxFlow((SELECT id, source, target, 9223372036854775807 AS capacity FROM network), 1, 6);
+----
+overflows
+
+# Randomized cross-check: the maximum flow is the capacity of the minimum cut, found by trying every cut
+statement ok
+CREATE TABLE random_edges AS SELECT
+	i AS id,
+	(hash(i + 1000) % 10)::BIGINT AS source,
+	(hash(i + 2000) % 10)::BIGINT AS target,
+	(hash(i + 3000) % 30)::BIGINT AS capacity,
+	(hash(i + 4000) % 40)::BIGINT - 10 AS reverse_capacity,
+	(1 + hash(i + 5000) % 9)::DOUBLE AS cost,
+	(1 + hash(i + 6000) % 9)::DOUBLE AS reverse_cost
+FROM range(1, 41) t(i);
+
+statement ok
+CREATE TABLE arcs AS
+	SELECT id, source AS u, target AS v, capacity AS capacity, cost FROM random_edges WHERE capacity > 0
+	UNION ALL
+	SELECT id, target, source, reverse_capacity, reverse_cost FROM random_edges WHERE reverse_capacity > 0;
+
+# Vertex 0 is on the source side, vertex 9 on the sink side, bit i - 1 of the mask tells the side of vertex i
+statement ok
+CREATE TABLE cuts AS
+	SELECT mask, coalesce(sum(a.capacity), 0) AS capacity
+	FROM range(256) m(mask) LEFT JOIN arcs a
+	  ON (a.u = 0 OR (a.u < 9 AND (mask >> (a.u - 1)::INTEGER) & 1 = 1)) AND (a.v = 9 OR (a.v > 0 AND a.v < 9 AND (mask >> (a.v - 1)::INTEGER) & 1 = 0)) AND a.u <> 9 AND a.v <> 0
+	GROUP BY mask;
+
+query I
+SELECT (SELECT min(capacity) FROM cuts) > 0;
+----
+true
+
+query I
+SELECT (SELECT * FROM pgr_maxFlow((SELECT * FROM random_edges), 0, 9)) = (SELECT min(capacity) FROM cuts);
+----
+true
+
+foreach function pgr_pushRelabel pgr_edmondsKarp pgr_boykovKolmogorov pgr_maxFlowMinCost
+
+statement ok
+CREATE OR REPLACE TABLE flows AS SELECT edge, #3 AS u, #4 AS v, flow, residual_capacity FROM ${function}((SELECT * FROM random_edges), 0, 9);
+
+# The flow respects the capacities
+query I
+SELECT count(*) FROM flows f
+WHERE flow <= 0 OR residual_capacity < 0 OR NOT EXISTS (
+	SELECT 1 FROM arcs a WHERE a.id = f.edge AND a.u = f.u AND a.v = f.v AND a.capacity = f.flow + f.residual_capacity);
+----
+0
+
+# What enters a vertex leaves it, except at the source and the sink
+query I
+SELECT count(*) FROM (
+	SELECT vertex, sum(amount) AS balance FROM (SELECT v AS vertex, flow AS amount FROM flows UNION ALL SELECT u, -flow FROM flows)
+	GROUP BY vertex) WHERE vertex NOT IN (0, 9) AND balance <> 0;
+----
+0
+
+# The value of the flow is the capacity of the minimum cut
+query I
+SELECT (SELECT coalesce(sum(flow) FILTER (v = 9), 0) - coalesce(sum(flow) FILTER (u = 9), 0) FROM flows) = (SELECT min(capacity) FROM cuts);
+----
+true
+
+endloop
+
+# Minimum cost: a cheaper maximum flow would show as a negative cycle in the residual network.
+# Bellman-Ford over the residual arcs, from every vertex at once, does not find one.
+statement ok
+CREATE TABLE residual AS
+	SELECT a.u, a.v, a.cost FROM arcs a LEFT JOIN flows f ON f.edge = a.id AND f.u = a.u AND f.v = a.v WHERE coalesce(f.residual_capacity, a.capacity) > 0
+	UNION ALL
+	SELECT f.v, f.u, -a.cost FROM flows f JOIN arcs a ON f.edge = a.id AND f.u = a.u AND f.v = a.v;
+
+statement ok
+CREATE TABLE potentials AS SELECT i AS v, 0::DOUBLE AS d FROM range(10) t(i);
+
+loop i 0 12
+
+statement ok
+CREATE OR REPLACE TABLE potentials AS
+	SELECT p.v, least(p.d, coalesce(min(q.d + r.cost), p.d)) AS d
+	FROM potentials p LEFT JOIN residual r ON r.v = p.v LEFT JOIN potentials q ON q.v = r.u GROUP BY p.v, p.d;
+
+endloop
+
+query I
+SELECT count(*) FROM residual r JOIN potentials p ON p.v = r.u JOIN potentials q ON q.v = r.v WHERE p.d + r.cost < q.d - 1e-9;
+----
+0
+
+query I
+SELECT (SELECT max(agg_cost) FROM pgr_maxFlowMinCost((SELECT * FROM random_edges), 0, 9)) = (SELECT sum(f.flow * a.cost) FROM flows f JOIN arcs a ON f.edge = a.id AND f.u = a.u AND f.v = a.v);
+----
+true

@@ -1,0 +1,12 @@
+set(EXTENSION_SOURCES
+    ${EXTENSION_SOURCES}
+    ${CMAKE_CURRENT_SOURCE_DIR}/routing_module.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/routing_common.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/routing_graph.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/routing_paths.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/routing_points.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/routing_flow.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/routing_tour.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/routing_components.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/routing_topology.cpp
+    PARENT_SCOPE)

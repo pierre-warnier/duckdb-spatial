@@ -1,0 +1,490 @@
+# name: test/sql/routing/pgr_dijkstra.test
+# description: Test pgr_dijkstra, pgr_dijkstraCost and pgr_dijkstraCostMatrix
+# group: [routing]
+
+require spatial
+
+# The pgRouting sample graph
+statement ok
+CREATE TABLE edges AS SELECT * FROM (VALUES
+	(1, 5, 6, 1, 1), (2, 6, 10, -1, 1), (3, 10, 15, -1, 1), (4, 6, 7, 1, 1), (5, 10, 11, 1, -1), (6, 1, 3, 1, 1),
+	(7, 3, 7, 1, 1), (8, 7, 11, 1, 1), (9, 11, 16, 1, 1), (10, 7, 8, 1, 1), (11, 11, 12, 1, -1), (12, 8, 12, 1, -1),
+	(13, 12, 17, 1, -1), (14, 8, 9, 1, 1), (15, 16, 17, 1, 1), (16, 15, 16, 1, 1), (17, 2, 4, 1, 1), (18, 13, 14, 1, 1)
+) t(id, source, target, cost, reverse_cost);
+
+# One to one
+query IIIIIIRR
+SELECT * FROM pgr_dijkstra((SELECT id, source, target, cost, reverse_cost FROM edges), 6, 10);
+----
+1	1	6	10	6	4	1.0	0.0
+2	2	6	10	7	8	1.0	1.0
+3	3	6	10	11	9	1.0	2.0
+4	4	6	10	16	16	1.0	3.0
+5	5	6	10	15	3	1.0	4.0
+6	6	6	10	10	-1	0.0	5.0
+
+# The direction can be passed positionally, as in pgRouting
+query IIIIIIRR
+SELECT * FROM pgr_dijkstra((SELECT id, source, target, cost, reverse_cost FROM edges), 6, 10, false);
+----
+1	1	6	10	6	2	1.0	0.0
+2	2	6	10	10	-1	0.0	1.0
+
+# One to many
+query IIIIIIRR
+SELECT * FROM pgr_dijkstra((SELECT id, source, target, cost, reverse_cost FROM edges), 6, [10, 17]);
+----
+1	1	6	10	6	4	1.0	0.0
+2	2	6	10	7	8	1.0	1.0
+3	3	6	10	11	9	1.0	2.0
+4	4	6	10	16	16	1.0	3.0
+5	5	6	10	15	3	1.0	4.0
+6	6	6	10	10	-1	0.0	5.0
+7	1	6	17	6	4	1.0	0.0
+8	2	6	17	7	10	1.0	1.0
+9	3	6	17	8	12	1.0	2.0
+10	4	6	17	12	13	1.0	3.0
+11	5	6	17	17	-1	0.0	4.0
+
+# Many to one
+query IIIIIIRR
+SELECT * FROM pgr_dijkstra((SELECT id, source, target, cost, reverse_cost FROM edges), [6, 1], 17);
+----
+1	1	1	17	1	6	1.0	0.0
+2	2	1	17	3	7	1.0	1.0
+3	3	1	17	7	10	1.0	2.0
+4	4	1	17	8	12	1.0	3.0
+5	5	1	17	12	13	1.0	4.0
+6	6	1	17	17	-1	0.0	5.0
+7	1	6	17	6	4	1.0	0.0
+8	2	6	17	7	10	1.0	1.0
+9	3	6	17	8	12	1.0	2.0
+10	4	6	17	12	13	1.0	3.0
+11	5	6	17	17	-1	0.0	4.0
+
+# Many to many on an undirected graph, duplicates are ignored
+query IIIIIIRR
+SELECT * FROM pgr_dijkstra((SELECT id, source, target, cost, reverse_cost FROM edges), [6, 1, 6], [10, 17, 10], directed := false);
+----
+1	1	1	10	1	6	1.0	0.0
+2	2	1	10	3	7	1.0	1.0
+3	3	1	10	7	4	1.0	2.0
+4	4	1	10	6	2	1.0	3.0
+5	5	1	10	10	-1	0.0	4.0
+6	1	1	17	1	6	1.0	0.0
+7	2	1	17	3	7	1.0	1.0
+8	3	1	17	7	10	1.0	2.0
+9	4	1	17	8	12	1.0	3.0
+10	5	1	17	12	13	1.0	4.0
+11	6	1	17	17	-1	0.0	5.0
+12	1	6	10	6	2	1.0	0.0
+13	2	6	10	10	-1	0.0	1.0
+14	1	6	17	6	4	1.0	0.0
+15	2	6	17	7	10	1.0	1.0
+16	3	6	17	8	12	1.0	2.0
+17	4	6	17	12	13	1.0	3.0
+18	5	6	17	17	-1	0.0	4.0
+
+# Without reverse_cost the edges are one way
+query III
+SELECT path_seq, node, edge FROM pgr_dijkstra((SELECT id, source, target, cost FROM edges), 6, 10);
+----
+
+query III
+SELECT path_seq, node, edge FROM pgr_dijkstra((SELECT id, source, target, cost FROM edges), 5, 17);
+----
+1	5	1
+2	6	4
+3	7	10
+4	8	12
+5	12	13
+6	17	-1
+
+# The columns are matched by name, whatever their order and type
+query III
+SELECT path_seq, node, edge FROM pgr_dijkstra((
+	SELECT cost::DECIMAL(10, 2) AS cost, 'x' AS ignored, target::SMALLINT AS target, source::UBIGINT AS source, id::HUGEINT AS ID FROM edges), 5, 17);
+----
+1	5	1
+2	6	4
+3	7	10
+4	8	12
+5	12	13
+6	17	-1
+
+# The result does not depend on the order of the rows
+query I
+SELECT count(*) FROM (
+	SELECT * FROM pgr_dijkstra((SELECT * FROM edges ORDER BY id DESC), [1, 5, 9], [10, 15, 17])
+	EXCEPT
+	SELECT * FROM pgr_dijkstra((SELECT * FROM edges ORDER BY hash(id)), [1, 5, 9], [10, 15, 17]));
+----
+0
+
+# No rows: same start and end, unreachable, unknown vertices, empty graph, NULL arguments
+query I
+SELECT count(*) FROM pgr_dijkstra((SELECT * FROM edges), 6, 6);
+----
+0
+
+query I
+SELECT count(*) FROM pgr_dijkstra((SELECT * FROM edges), 6, 2);
+----
+0
+
+query I
+SELECT count(*) FROM pgr_dijkstra((SELECT * FROM edges), 6, 99);
+----
+0
+
+query I
+SELECT count(*) FROM pgr_dijkstra((SELECT * FROM edges), 99, [6, 7]);
+----
+0
+
+query I
+SELECT count(*) FROM pgr_dijkstra((SELECT * FROM edges WHERE false), 6, 10);
+----
+0
+
+query I
+SELECT count(*) FROM pgr_dijkstra((SELECT * FROM edges), NULL, 10);
+----
+0
+
+query I
+SELECT count(*) FROM pgr_dijkstra((SELECT * FROM edges), 6, []);
+----
+0
+
+query I
+SELECT count(*) FROM pgr_dijkstra((SELECT * FROM edges), 6, 10, directed := NULL);
+----
+0
+
+# Parallel edges, self loops, zero costs, and vertex identifiers that need 64 bits
+statement ok
+CREATE TABLE odd AS SELECT * FROM (VALUES
+	(1, -9000000000000000000, 5, 4.0, 4.0),
+	(2, -9000000000000000000, 5, 2.5, -1.0),
+	(3, 5, 5, 0.0, 0.0),
+	(4, 5, 9000000000000000000, 0.0, -1.0),
+	(5, 9000000000000000000, -9000000000000000000, 1.5, -1.0)
+) t(id, source, target, cost, reverse_cost);
+
+query IIIIIIRR
+SELECT * FROM pgr_dijkstra((SELECT * FROM odd), -9000000000000000000, 9000000000000000000);
+----
+1	1	-9000000000000000000	9000000000000000000	-9000000000000000000	2	2.5	0.0
+2	2	-9000000000000000000	9000000000000000000	5	4	0.0	2.5
+3	3	-9000000000000000000	9000000000000000000	9000000000000000000	-1	0.0	2.5
+
+query IIIIIIRR
+SELECT * FROM pgr_dijkstra((SELECT * FROM odd), 5, -9000000000000000000);
+----
+1	1	5	-9000000000000000000	5	4	0.0	0.0
+2	2	5	-9000000000000000000	9000000000000000000	5	1.5	0.0
+3	3	5	-9000000000000000000	-9000000000000000000	-1	0.0	1.5
+
+# The function runs inside the calling transaction and reads CTEs, temporary tables and uncommitted rows
+query III
+WITH shortcut AS (SELECT * FROM edges UNION ALL SELECT 99, 6, 10, 0.5, -1)
+SELECT node, edge, cost FROM pgr_dijkstra((SELECT * FROM shortcut), 6, 10);
+----
+6	99	0.5
+10	-1	0.0
+
+# An input that is produced by several pipelines is seen in full before the search starts
+query IIR
+SELECT * FROM pgr_dijkstraCost((
+	SELECT * FROM edges WHERE id <= 6
+	UNION ALL SELECT * FROM edges WHERE id BETWEEN 7 AND 12
+	UNION ALL SELECT * FROM edges WHERE id > 12), [6, 1], [10, 17]);
+----
+1	10	6.0
+1	17	5.0
+6	10	5.0
+6	17	4.0
+
+query I
+SELECT count(*) FROM (
+	SELECT * FROM pgr_dijkstra((SELECT e.* FROM edges e JOIN range(1, 19) r(i) ON e.id = r.i ORDER BY e.id DESC), 6, [10, 17])
+	EXCEPT SELECT * FROM pgr_dijkstra((SELECT * FROM edges), 6, [10, 17]));
+----
+0
+
+statement ok
+BEGIN;
+
+statement ok
+CREATE TEMPORARY TABLE scratch AS SELECT * FROM edges WHERE id <> 8;
+
+statement ok
+INSERT INTO scratch VALUES (100, 7, 10, 1, 1);
+
+query III
+SELECT node, edge, cost FROM pgr_dijkstra((SELECT * FROM scratch), 6, 10);
+----
+6	4	1.0
+7	100	1.0
+10	-1	0.0
+
+statement ok
+ROLLBACK;
+
+# Start and end vertices can come from a prepared statement parameter or a variable
+statement ok
+PREPARE route AS SELECT node FROM pgr_dijkstra((SELECT * FROM edges), $1, $2);
+
+query I
+EXECUTE route(6, 10);
+----
+6
+7
+11
+16
+15
+10
+
+statement ok
+SET VARIABLE targets = (SELECT list(id) FROM range(15, 18) t(id));
+
+query III
+SELECT start_vid, end_vid, max(agg_cost) FROM pgr_dijkstra((SELECT * FROM edges), 6, getvariable('targets')) GROUP BY ALL ORDER BY ALL;
+----
+6	15	4.0
+6	16	3.0
+6	17	4.0
+
+# The result can be filtered, joined and aggregated like any table
+query IR
+SELECT e.id, p.agg_cost FROM pgr_dijkstra((SELECT * FROM edges), 6, 10) p JOIN edges e ON e.id = p.edge WHERE p.path_seq > 2 ORDER BY p.seq;
+----
+9	2.0
+16	3.0
+3	4.0
+
+# Costs only
+query IIR
+SELECT * FROM pgr_dijkstraCost((SELECT * FROM edges), [6, 1], [10, 17, 2, 6]);
+----
+1	6	3.0
+1	10	6.0
+1	17	5.0
+6	10	5.0
+6	17	4.0
+
+query IIR
+SELECT * FROM pgr_dijkstraCost((SELECT * FROM edges), [6, 1, 5, 9], 17, directed := false);
+----
+1	17	5.0
+5	17	5.0
+6	17	4.0
+9	17	3.0
+
+query IIR
+SELECT * FROM pgr_dijkstraCostMatrix((SELECT * FROM edges), [5, 6, 10, 15]);
+----
+5	6	1.0
+5	10	6.0
+5	15	5.0
+6	5	1.0
+6	10	5.0
+6	15	4.0
+10	5	2.0
+10	6	1.0
+10	15	3.0
+15	5	3.0
+15	6	2.0
+15	10	1.0
+
+query IIR
+SELECT * FROM pgr_dijkstraCostMatrix((SELECT * FROM edges), [5, 6, 10, 15, 2], false);
+----
+5	6	1.0
+5	10	2.0
+5	15	3.0
+6	5	1.0
+6	10	1.0
+6	15	2.0
+10	5	2.0
+10	6	1.0
+10	15	1.0
+15	5	3.0
+15	6	2.0
+15	10	1.0
+
+# Errors
+statement error
+SELECT * FROM pgr_dijkstra((SELECT id, source, target FROM edges), 6, 10);
+----
+missing the required column "cost"
+
+statement error
+SELECT * FROM pgr_dijkstra((SELECT id::VARCHAR AS id, source, target, cost FROM edges), 6, 10);
+----
+column "id" of the edges input must be of an integer type, but it is of type VARCHAR
+
+statement error
+SELECT * FROM pgr_dijkstra((SELECT id, source, target, 'a' AS cost FROM edges), 6, 10);
+----
+column "cost" of the edges input must be of a numeric type
+
+statement error
+SELECT * FROM pgr_dijkstra((SELECT id, source, NULL::BIGINT AS target, cost FROM edges), 6, 10);
+----
+unexpected NULL value in column "target"
+
+statement error
+SELECT * FROM pgr_dijkstra((SELECT id, source, target, cost, NULL::DOUBLE AS reverse_cost FROM edges), 6, 10);
+----
+unexpected NULL value in column "reverse_cost"
+
+statement error
+SELECT * FROM pgr_dijkstra((SELECT * FROM edges), 6, 'a');
+----
+must be an integer or a list of integers
+
+statement error
+SELECT * FROM pgr_dijkstra((SELECT * FROM edges), 6, [1.5]);
+----
+must be an integer or a list of integers
+
+statement error
+SELECT * FROM pgr_dijkstra((SELECT * FROM edges), 6, 10, true, true);
+----
+too many arguments
+
+statement error
+SELECT * FROM pgr_dijkstra((SELECT * FROM edges), 6);
+----
+
+statement error
+SELECT * FROM pgr_dijkstra('SELECT * FROM edges', 6, 10);
+----
+
+statement error
+SELECT * FROM pgr_dijkstraCostMatrix((SELECT * FROM edges), (SELECT [1, 2]));
+----
+at most one subquery parameter
+
+# Cross-check against an all-pairs reference computed in SQL on a random graph
+statement ok
+CREATE TABLE random_edges AS SELECT
+	i AS id,
+	(hash(i + 1000) % 50)::BIGINT AS source,
+	(hash(i + 2000) % 50)::BIGINT AS target,
+	(1 + hash(i + 3000) % 20)::DOUBLE AS cost,
+	CASE WHEN hash(i + 4000) % 3 = 0 THEN -1 ELSE 1 + hash(i + 5000) % 20 END::DOUBLE AS reverse_cost
+FROM range(1, 161) t(i);
+
+statement ok
+CREATE TABLE arcs AS
+	SELECT id, source AS u, target AS v, cost AS c FROM random_edges WHERE cost >= 0
+	UNION ALL
+	SELECT id, target, source, reverse_cost FROM random_edges WHERE reverse_cost >= 0;
+
+statement ok
+CREATE TABLE reference AS
+	SELECT u, v, min(c) AS c FROM (SELECT u, v, c FROM arcs UNION ALL SELECT i, i, 0 FROM range(50) t(i)) GROUP BY ALL;
+
+# Min-plus squaring: six rounds cover every path of up to 64 edges
+loop i 0 6
+
+statement ok
+CREATE OR REPLACE TABLE reference AS
+	SELECT a.u, b.v, min(a.c + b.c) AS c FROM reference a JOIN reference b ON a.v = b.u GROUP BY ALL;
+
+endloop
+
+statement ok
+SET VARIABLE everything = (SELECT list(i) FROM range(50) t(i));
+
+query I
+SELECT count(*) > 1000 FROM reference WHERE u <> v;
+----
+true
+
+query I
+SELECT count(*) FROM (
+	(SELECT u, v, c FROM reference WHERE u <> v AND u IN (SELECT u FROM arcs UNION SELECT v FROM arcs)
+	                                        AND v IN (SELECT u FROM arcs UNION SELECT v FROM arcs)
+	 EXCEPT SELECT * FROM pgr_dijkstraCostMatrix((SELECT * FROM random_edges), getvariable('everything')))
+	UNION ALL
+	(SELECT * FROM pgr_dijkstraCostMatrix((SELECT * FROM random_edges), getvariable('everything'))
+	 EXCEPT SELECT u, v, c FROM reference));
+----
+0
+
+# Many sources to few targets takes the reversed search, few to many the forward one: both agree with the reference
+query I
+SELECT count(*) FROM (
+	SELECT * FROM pgr_dijkstraCost((SELECT * FROM random_edges), getvariable('everything'), [3, 17])
+	EXCEPT SELECT u, v, c FROM reference);
+----
+0
+
+query I
+SELECT count(*) FROM (
+	SELECT * FROM pgr_dijkstraCost((SELECT * FROM random_edges), [3, 17], getvariable('everything'))
+	EXCEPT SELECT u, v, c FROM reference);
+----
+0
+
+# Every returned path is a real path of the graph whose cost is the reference cost
+statement ok
+CREATE TABLE paths AS SELECT * FROM pgr_dijkstra((SELECT * FROM random_edges), getvariable('everything'), [3, 17, 28]);
+
+query I
+SELECT count(*) > 50 FROM paths WHERE edge = -1;
+----
+true
+
+query I
+SELECT count(*) FROM paths p JOIN reference r ON r.u = p.start_vid AND r.v = p.end_vid WHERE p.edge = -1 AND p.agg_cost <> r.c;
+----
+0
+
+query I
+SELECT count(*) FROM (
+	SELECT p.*, lead(node) OVER w AS next_node, lead(agg_cost) OVER w AS next_agg FROM paths p
+	WINDOW w AS (PARTITION BY start_vid, end_vid ORDER BY path_seq)) p
+WHERE edge <> -1 AND (next_agg <> agg_cost + cost
+	OR NOT EXISTS (SELECT 1 FROM arcs a WHERE a.id = p.edge AND a.u = p.node AND a.v = p.next_node AND a.c = p.cost));
+----
+0
+
+query I
+SELECT count(*) FROM (
+	SELECT seq - row_number() OVER (ORDER BY start_vid, end_vid, path_seq) AS d,
+	       path_seq - row_number() OVER (PARTITION BY start_vid, end_vid ORDER BY seq) AS e FROM paths) WHERE d <> 0 OR e <> 0;
+----
+0
+
+# The undirected graph uses every edge both ways
+statement ok
+CREATE TABLE undirected_reference AS
+	SELECT u, v, min(c) AS c FROM (
+		SELECT u, v, c FROM arcs UNION ALL SELECT v, u, c FROM arcs UNION ALL SELECT i, i, 0 FROM range(50) t(i)) GROUP BY ALL;
+
+loop i 0 6
+
+statement ok
+CREATE OR REPLACE TABLE undirected_reference AS
+	SELECT a.u, b.v, min(a.c + b.c) AS c FROM undirected_reference a JOIN undirected_reference b ON a.v = b.u GROUP BY ALL;
+
+endloop
+
+query I
+SELECT count(*) FROM (
+	SELECT * FROM pgr_dijkstraCostMatrix((SELECT * FROM random_edges), getvariable('everything'), directed := false)
+	EXCEPT SELECT u, v, c FROM undirected_reference);
+----
+0
+
+# A large input arrives in many chunks
+query IIR
+SELECT count(*), max(node), max(agg_cost) FROM pgr_dijkstra((
+	SELECT i AS id, i AS source, i + 1 AS target, 1 AS cost FROM range(100000) t(i)), 0, 100000);
+----
+100001	100000	100000.0

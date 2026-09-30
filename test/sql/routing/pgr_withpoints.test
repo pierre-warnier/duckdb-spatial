@@ -1,0 +1,340 @@
+# name: test/sql/routing/pgr_withpoints.test
+# description: Test pgr_withPoints
+# group: [routing]
+
+require spatial
+
+# The pgRouting sample graph and points of interest
+statement ok
+CREATE TABLE edges AS SELECT * FROM (VALUES
+	(1, 5, 6, 1, 1), (2, 6, 10, -1, 1), (3, 10, 15, -1, 1), (4, 6, 7, 1, 1), (5, 10, 11, 1, -1), (6, 1, 3, 1, 1),
+	(7, 3, 7, 1, 1), (8, 7, 11, 1, 1), (9, 11, 16, 1, 1), (10, 7, 8, 1, 1), (11, 11, 12, 1, -1), (12, 8, 12, 1, -1),
+	(13, 12, 17, 1, -1), (14, 8, 9, 1, 1), (15, 16, 17, 1, 1), (16, 15, 16, 1, 1), (17, 2, 4, 1, 1), (18, 13, 14, 1, 1)
+) t(id, source, target, cost, reverse_cost);
+
+statement ok
+CREATE TABLE points_of_interest AS SELECT * FROM (VALUES
+	(1, 1, 0.4, 'l'), (2, 15, 0.4, 'r'), (3, 12, 0.6, 'l'), (4, 6, 0.3, 'r'), (5, 5, 0.8, 'l'), (6, 4, 0.7, 'b')
+) t(pid, edge_id, fraction, side);
+
+statement ok
+SET VARIABLE points = (SELECT list(p) FROM points_of_interest p);
+
+# The queries of the pgRouting documentation, with the same results.
+# From point 1 to vertex 10, right side driving (the default on a directed graph), with details
+query IIIIIIRR
+SELECT seq, path_seq, start_vid, end_vid, node, edge, round(cost, 6), round(agg_cost, 6)
+FROM pgr_withPoints((SELECT id, source, target, cost, reverse_cost FROM edges), getvariable('points'), -1, 10, details := true);
+----
+1	1	-1	10	-1	1	0.4	0.0
+2	2	-1	10	5	1	1.0	0.4
+3	3	-1	10	6	4	0.7	1.4
+4	4	-1	10	-6	4	0.3	2.1
+5	5	-1	10	7	8	1.0	2.4
+6	6	-1	10	11	9	1.0	3.4
+7	7	-1	10	16	16	1.0	4.4
+8	8	-1	10	15	3	1.0	5.4
+9	9	-1	10	10	-1	0.0	6.4
+
+# From point 1 to point 3 and vertex 7 on an undirected graph
+query IIIIIIRR
+SELECT seq, path_seq, start_vid, end_vid, node, edge, round(cost, 6), round(agg_cost, 6)
+FROM pgr_withPoints((SELECT * FROM edges), getvariable('points'), -1, [-3, 7], directed := false);
+----
+1	1	-1	-3	-1	1	0.6	0.0
+2	2	-1	-3	6	4	1.0	0.6
+3	3	-1	-3	7	10	1.0	1.6
+4	4	-1	-3	8	12	0.6	2.6
+5	5	-1	-3	-3	-1	0.0	3.2
+6	1	-1	7	-1	1	0.6	0.0
+7	2	-1	7	6	4	1.0	0.6
+8	3	-1	7	7	-1	0.0	1.6
+
+# From point 1 and vertex 6 to point 3: without details the rows on the same edge are merged
+query IIIIIIRR
+SELECT seq, path_seq, start_vid, end_vid, node, edge, round(cost, 6), round(agg_cost, 6)
+FROM pgr_withPoints((SELECT * FROM edges), getvariable('points'), [-1, 6], -3);
+----
+1	1	-1	-3	-1	1	1.4	0.0
+2	2	-1	-3	6	4	1.0	1.4
+3	3	-1	-3	7	10	1.0	2.4
+4	4	-1	-3	8	12	0.6	3.4
+5	5	-1	-3	-3	-1	0.0	4.0
+6	1	6	-3	6	4	1.0	0.0
+7	2	6	-3	7	10	1.0	1.0
+8	3	6	-3	8	12	0.6	2.0
+9	4	6	-3	-3	-1	0.0	2.6
+
+# Left side driving
+query IIIIIIRR
+SELECT seq, path_seq, start_vid, end_vid, node, edge, round(cost, 6), round(agg_cost, 6)
+FROM pgr_withPoints((SELECT * FROM edges), getvariable('points'), [-1, 6], [-3, 1], 'L');
+----
+1	1	-1	-3	-1	1	0.6	0.0
+2	2	-1	-3	6	4	1.0	0.6
+3	3	-1	-3	7	10	1.0	1.6
+4	4	-1	-3	8	12	0.6	2.6
+5	5	-1	-3	-3	-1	0.0	3.2
+6	1	-1	1	-1	1	0.6	0.0
+7	2	-1	1	6	4	1.0	0.6
+8	3	-1	1	7	7	1.0	1.6
+9	4	-1	1	3	6	1.0	2.6
+10	5	-1	1	1	-1	0.0	3.6
+11	1	6	-3	6	4	1.0	0.0
+12	2	6	-3	7	10	1.0	1.0
+13	3	6	-3	8	12	0.6	2.0
+14	4	6	-3	-3	-1	0.0	2.6
+15	1	6	1	6	4	1.0	0.0
+16	2	6	1	7	7	1.0	1.0
+17	3	6	1	3	6	1.0	2.0
+18	4	6	1	1	-1	0.0	3.0
+
+# Right side driving with details, to points and vertices
+query IIIIIIRR
+SELECT seq, path_seq, start_vid, end_vid, node, edge, round(cost, 6), round(agg_cost, 6)
+FROM pgr_withPoints((SELECT * FROM edges), getvariable('points'), [5, -1], [-2, -3, -6, 10, 11], 'r', details := true);
+----
+1	1	-1	-6	-1	1	0.4	0.0
+2	2	-1	-6	5	1	1.0	0.4
+3	3	-1	-6	6	4	0.7	1.4
+4	4	-1	-6	-6	-1	0.0	2.1
+5	1	-1	-3	-1	1	0.4	0.0
+6	2	-1	-3	5	1	1.0	0.4
+7	3	-1	-3	6	4	0.7	1.4
+8	4	-1	-3	-6	4	0.3	2.1
+9	5	-1	-3	7	10	1.0	2.4
+10	6	-1	-3	8	12	0.6	3.4
+11	7	-1	-3	-3	-1	0.0	4.0
+12	1	-1	-2	-1	1	0.4	0.0
+13	2	-1	-2	5	1	1.0	0.4
+14	3	-1	-2	6	4	0.7	1.4
+15	4	-1	-2	-6	4	0.3	2.1
+16	5	-1	-2	7	8	1.0	2.4
+17	6	-1	-2	11	9	1.0	3.4
+18	7	-1	-2	16	15	0.4	4.4
+19	8	-1	-2	-2	-1	0.0	4.8
+20	1	-1	10	-1	1	0.4	0.0
+21	2	-1	10	5	1	1.0	0.4
+22	3	-1	10	6	4	0.7	1.4
+23	4	-1	10	-6	4	0.3	2.1
+24	5	-1	10	7	8	1.0	2.4
+25	6	-1	10	11	9	1.0	3.4
+26	7	-1	10	16	16	1.0	4.4
+27	8	-1	10	15	3	1.0	5.4
+28	9	-1	10	10	-1	0.0	6.4
+29	1	-1	11	-1	1	0.4	0.0
+30	2	-1	11	5	1	1.0	0.4
+31	3	-1	11	6	4	0.7	1.4
+32	4	-1	11	-6	4	0.3	2.1
+33	5	-1	11	7	8	1.0	2.4
+34	6	-1	11	11	-1	0.0	3.4
+35	1	5	-6	5	1	1.0	0.0
+36	2	5	-6	6	4	0.7	1.0
+37	3	5	-6	-6	-1	0.0	1.7
+38	1	5	-3	5	1	1.0	0.0
+39	2	5	-3	6	4	0.7	1.0
+40	3	5	-3	-6	4	0.3	1.7
+41	4	5	-3	7	10	1.0	2.0
+42	5	5	-3	8	12	0.6	3.0
+43	6	5	-3	-3	-1	0.0	3.6
+44	1	5	-2	5	1	1.0	0.0
+45	2	5	-2	6	4	0.7	1.0
+46	3	5	-2	-6	4	0.3	1.7
+47	4	5	-2	7	8	1.0	2.0
+48	5	5	-2	11	9	1.0	3.0
+49	6	5	-2	16	15	0.4	4.0
+50	7	5	-2	-2	-1	0.0	4.4
+51	1	5	10	5	1	1.0	0.0
+52	2	5	10	6	4	0.7	1.0
+53	3	5	10	-6	4	0.3	1.7
+54	4	5	10	7	8	1.0	2.0
+55	5	5	10	11	9	1.0	3.0
+56	6	5	10	16	16	1.0	4.0
+57	7	5	10	15	3	1.0	5.0
+58	8	5	10	10	-1	0.0	6.0
+59	1	5	11	5	1	1.0	0.0
+60	2	5	11	6	4	0.7	1.0
+61	3	5	11	-6	4	0.3	1.7
+62	4	5	11	7	8	1.0	2.0
+63	5	5	11	11	-1	0.0	3.0
+
+# The driving side can be named, and both sides can be allowed
+query IIR
+SELECT start_vid, end_vid, round(max(agg_cost), 6)
+FROM pgr_withPoints((SELECT * FROM edges), getvariable('points'), [-1, -4, -6], [-2, -5, 3], driving_side := 'b') GROUP BY ALL ORDER BY ALL;
+----
+-6	-5	5.1
+-6	-2	2.7
+-6	3	1.3
+-4	-5	6.5
+-4	-2	4.1
+-4	3	0.7
+-1	-5	6.4
+-1	-2	4.0
+-1	3	2.6
+
+# The points can be given inline; the identifier and the side are optional
+query IIIRR
+SELECT path_seq, node, edge, cost, agg_cost
+FROM pgr_withPoints((SELECT * FROM edges), [{'edge_id': 7, 'fraction': 0.25}, {'edge_id': 9, 'fraction': 0.5}], -1, -2, details := true);
+----
+1	-1	7	0.75	0.0
+2	7	8	1.0	0.75
+3	11	9	0.5	1.75
+4	-2	-1	0.0	2.25
+
+# A point at the very start or end of an edge
+query IIIRR
+SELECT path_seq, node, edge, cost, agg_cost
+FROM pgr_withPoints((SELECT * FROM edges), [{'pid': 1, 'edge_id': 7, 'fraction': 0.0}, {'pid': 2, 'edge_id': 9, 'fraction': 1.0}], -1, -2, details := true);
+----
+1	-1	7	1.0	0.0
+2	7	8	1.0	1.0
+3	11	9	1.0	2.0
+4	-2	-1	0.0	3.0
+
+# Two points on the same edge
+query IIIRR
+SELECT path_seq, node, edge, cost, agg_cost
+FROM pgr_withPoints((SELECT * FROM edges), [{'pid': 1, 'edge_id': 7, 'fraction': 0.75}, {'pid': 2, 'edge_id': 7, 'fraction': 0.25}], -1, -2, 'b');
+----
+1	-1	7	0.5	0.0
+2	-2	-1	0.0	0.5
+
+# Without points, or with points on unknown edges, the result is the one of pgr_dijkstra
+query I
+SELECT count(*) FROM (
+	SELECT * FROM pgr_withPoints((SELECT * FROM edges), [], [6, 1], [10, 17])
+	EXCEPT SELECT * FROM pgr_dijkstra((SELECT * FROM edges), [6, 1], [10, 17]));
+----
+0
+
+query I
+SELECT count(*) FROM (
+	SELECT * FROM pgr_dijkstra((SELECT * FROM edges), [6, 1], [10, 17])
+	EXCEPT SELECT * FROM pgr_withPoints((SELECT * FROM edges), [{'pid': 1, 'edge_id': 999, 'fraction': 0.5}], [6, 1], [10, 17]));
+----
+0
+
+# No rows: unknown point, same point, NULL arguments
+query I
+SELECT count(*) FROM pgr_withPoints((SELECT * FROM edges), getvariable('points'), -9, 10);
+----
+0
+
+query I
+SELECT count(*) FROM pgr_withPoints((SELECT * FROM edges), getvariable('points'), -1, -1);
+----
+0
+
+query I
+SELECT count(*) FROM pgr_withPoints((SELECT * FROM edges), NULL, -1, 10);
+----
+0
+
+# Errors
+statement error
+SELECT * FROM pgr_withPoints((SELECT * FROM edges), getvariable('points'), -1, 10, 'x');
+----
+invalid driving side 'x'
+
+statement error
+SELECT * FROM pgr_withPoints((SELECT * FROM edges), [{'pid': 1, 'edge_id': 7, 'fraction': 1.5}], -1, 10);
+----
+the fraction of point 1 must be between 0 and 1
+
+statement error
+SELECT * FROM pgr_withPoints((SELECT * FROM edges), [{'pid': 1, 'edge_id': 7, 'fraction': 0.5, 'side': 'x'}], -1, 10);
+----
+invalid point side 'x'
+
+statement error
+SELECT * FROM pgr_withPoints((SELECT * FROM edges), [{'pid': 1, 'edge_id': 7, 'fraction': 0.5}, {'pid': 1, 'edge_id': 8, 'fraction': 0.5}], -1, 10);
+----
+point 1 is given with different edge, fraction or side values
+
+statement error
+SELECT * FROM pgr_withPoints((SELECT * FROM edges), [{'pid': 1, 'fraction': 0.5}], -1, 10);
+----
+the points need the fields "edge_id" and "fraction"
+
+statement error
+SELECT * FROM pgr_withPoints((SELECT * FROM edges), [1, 2], -1, 10);
+----
+must be a list of structs
+
+statement error
+SELECT * FROM pgr_withPoints((SELECT * FROM edges), (SELECT list(p) FROM points_of_interest p), -1, 10);
+----
+at most one subquery parameter
+
+# Cross-check: a point in the middle of an edge is a vertex of a graph where that edge is split by hand
+statement ok
+CREATE TABLE random_edges AS SELECT
+	i AS id,
+	(hash(i + 1000) % 40)::BIGINT AS source,
+	(hash(i + 2000) % 40)::BIGINT AS target,
+	(1 + hash(i + 3000) % 20)::DOUBLE AS cost,
+	CASE WHEN hash(i + 4000) % 3 = 0 THEN -1 ELSE 1 + hash(i + 5000) % 20 END::DOUBLE AS reverse_cost
+FROM range(1, 121) t(i);
+
+statement ok
+CREATE TABLE random_points AS SELECT i AS pid, 3 * i + 1 AS edge_id, 0.25 AS fraction FROM range(1, 9, 2) t(i)
+	UNION ALL SELECT i, 10 * i, 0.5 FROM range(2, 9, 2) t(i);
+
+# Split edges: the edge (source, target) becomes (source, -pid) and (-pid, target), costs shared by the fraction
+statement ok
+CREATE TABLE split_edges AS
+	SELECT e.* FROM random_edges e WHERE e.id NOT IN (SELECT edge_id FROM random_points)
+	UNION ALL
+	SELECT e.id, e.source, -p.pid, CASE WHEN e.cost < 0 THEN -1 ELSE e.cost * p.fraction END,
+	       CASE WHEN e.reverse_cost < 0 THEN -1 ELSE e.reverse_cost * p.fraction END
+	FROM random_edges e JOIN random_points p ON p.edge_id = e.id
+	UNION ALL
+	SELECT e.id, -p.pid, e.target, CASE WHEN e.cost < 0 THEN -1 ELSE e.cost * (1 - p.fraction) END,
+	       CASE WHEN e.reverse_cost < 0 THEN -1 ELSE e.reverse_cost * (1 - p.fraction) END
+	FROM random_edges e JOIN random_points p ON p.edge_id = e.id;
+
+query I
+SELECT count(DISTINCT edge_id) FROM random_points;
+----
+8
+
+statement ok
+SET VARIABLE random_points = (SELECT list(p) FROM random_points p);
+
+statement ok
+SET VARIABLE stops = [-1, -2, -3, -4, -5, -6, -7, -8, 0, 7, 21, 39];
+
+query I
+SELECT count(*) > 20 FROM pgr_withPoints((SELECT * FROM random_edges), getvariable('random_points'), getvariable('stops'), getvariable('stops'), 'b', details := true) WHERE edge = -1;
+----
+true
+
+query I
+SELECT count(*) FROM (
+	SELECT start_vid, end_vid, agg_cost FROM pgr_withPoints((SELECT * FROM random_edges), getvariable('random_points'), getvariable('stops'), getvariable('stops'), 'b', details := true) WHERE edge = -1) p
+FULL JOIN pgr_dijkstraCost((SELECT * FROM split_edges), getvariable('stops'), getvariable('stops')) c USING (start_vid, end_vid)
+WHERE p.agg_cost IS NULL OR c.agg_cost IS NULL OR abs(p.agg_cost - c.agg_cost) > 1e-9;
+----
+0
+
+# Same on the undirected graph, where the driving side does not matter
+query I
+SELECT count(*) FROM (
+	SELECT start_vid, end_vid, agg_cost FROM pgr_withPoints((SELECT * FROM random_edges), getvariable('random_points'), getvariable('stops'), getvariable('stops'), 'r', directed := false) WHERE edge = -1) p
+FULL JOIN pgr_dijkstraCost((SELECT * FROM split_edges), getvariable('stops'), getvariable('stops'), directed := false) c USING (start_vid, end_vid)
+WHERE p.agg_cost IS NULL OR c.agg_cost IS NULL OR abs(p.agg_cost - c.agg_cost) > 1e-9;
+----
+0
+
+# Without details the total cost of every path is unchanged
+query I
+SELECT count(*) FROM (
+	SELECT start_vid, end_vid, agg_cost FROM pgr_withPoints((SELECT * FROM random_edges), getvariable('random_points'), getvariable('stops'), getvariable('stops'), 'r') WHERE edge = -1) p
+FULL JOIN (
+	SELECT start_vid, end_vid, agg_cost FROM pgr_withPoints((SELECT * FROM random_edges), getvariable('random_points'), getvariable('stops'), getvariable('stops'), 'r', details := true) WHERE edge = -1) d
+USING (start_vid, end_vid)
+WHERE p.agg_cost IS NULL OR d.agg_cost IS NULL OR abs(p.agg_cost - d.agg_cost) > 1e-9;
+----
+0
