@@ -7,6 +7,7 @@
 #include "spatial/modules/gdal/gdal_module.hpp"
 #if SPATIAL_USE_GEOS
 #include "spatial/modules/geos/geos_module.hpp"
+#include "spatial/modules/topology/topology_module.hpp"
 #endif
 #include "spatial/modules/mvt/mvt_module.hpp"
 #include "operators/spatial_operator_extension.hpp"
@@ -41,6 +42,7 @@ static void LoadInternal(ExtensionLoader &loader) {
 	RegisterGDALModule(loader);
 #if SPATIAL_USE_GEOS
 	RegisterGEOSModule(loader);
+	RegisterTopologyModule(loader);
 #endif
 	RegisterOSMModule(loader);
 	RegisterShapefileModule(loader);
