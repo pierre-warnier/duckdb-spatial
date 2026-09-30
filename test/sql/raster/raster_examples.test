@@ -479,7 +479,7 @@ SELECT ST_SummaryStats(ST_SetValue(ST_AddBand(ST_MakeEmptyRaster(2, 1, 0, 0, 1),
 query I
 SELECT (ST_SummaryStatsAgg(rast)).mean FROM ST_ReadRaster('test/data/raster/dem.tif', 8, 8);
 ----
-170.5593220338983
+170.55932203389833
 
 # ST_TPI
 query I

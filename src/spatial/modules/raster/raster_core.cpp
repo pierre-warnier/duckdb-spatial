@@ -1289,10 +1289,23 @@ static bool BlobToRasterCast(Vector &source, Vector &result, idx_t count, CastPa
 	}
 
 	HandleCastError::AssignError(INVALID_RASTER_MESSAGE, parameters);
-	VectorOperations::Copy(source, result, count, 0, 0);
-	result.Flatten(count);
-	for (const auto row : invalid_rows) {
-		FlatVector::SetNull(result, row, true);
+	result.SetVectorType(VectorType::FLAT_VECTOR);
+	const auto rasters = FlatVector::GetData<string_t>(result);
+	idx_t next_invalid = 0;
+	for (idx_t i = 0; i < count; i++) {
+		const auto idx = format.sel->get_index(i);
+		const auto is_invalid = next_invalid < invalid_rows.size() && invalid_rows[next_invalid] == i;
+		if (is_invalid) {
+			next_invalid++;
+		}
+		if (is_invalid || !format.validity.RowIsValid(idx)) {
+			FlatVector::SetNull(result, i, true);
+		} else {
+			rasters[i] = StringVector::AddStringOrBlob(result, blobs[idx]);
+		}
+	}
+	if (source.GetVectorType() == VectorType::CONSTANT_VECTOR) {
+		result.SetVectorType(VectorType::CONSTANT_VECTOR);
 	}
 	return false;
 }

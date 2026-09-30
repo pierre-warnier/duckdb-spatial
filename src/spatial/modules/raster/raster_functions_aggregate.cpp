@@ -65,9 +65,17 @@ struct RasterAggregate {
 		UnifiedVectorFormat state_format;
 		state_vec.ToUnifiedFormat(count, state_format);
 		const auto states = UnifiedVectorFormat::GetData<STATE *>(state_format);
-		for (idx_t i = 0; i < count; i++) {
-			CPLErrorReset();
-			states[state_format.sel->get_index(i)]->Finalize(result, i + offset);
+		try {
+			for (idx_t i = 0; i < count; i++) {
+				CPLErrorReset();
+				states[state_format.sel->get_index(i)]->Finalize(result, i + offset);
+			}
+		} catch (...) {
+			// DuckDB does not destroy the states of an aggregate whose finalize failed
+			for (idx_t i = 0; i < count; i++) {
+				states[state_format.sel->get_index(i)]->Release();
+			}
+			throw;
 		}
 	}
 };
@@ -122,6 +130,10 @@ struct UnionState {
 	bool has_arguments = false;
 	int32_t band = 0;
 	UnionType type = UnionType::LAST;
+
+	void Release() {
+		vector<string>().swap(rasters);
+	}
 
 	void CopyArguments(const UnionState &other) {
 		has_arguments = true;
@@ -325,6 +337,11 @@ struct RetileState {
 	int32_t tile_width = 0;
 	int32_t tile_height = 0;
 	vector<string> algorithm;
+
+	void Release() {
+		vector<string>().swap(rasters);
+		vector<string>().swap(algorithm);
+	}
 
 	void CopyArguments(const RetileState &other) {
 		has_arguments = true;
