@@ -6,4 +6,5 @@ set(EXTENSION_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/raster_functions_io.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/raster_functions_process.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/raster_functions_stats.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/raster_functions_mapalgebra.cpp
     PARENT_SCOPE)

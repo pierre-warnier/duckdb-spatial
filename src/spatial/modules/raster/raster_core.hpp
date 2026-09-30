@@ -16,6 +16,7 @@
 #include "cpl_vsi.h"
 
 #include <cmath>
+#include <functional>
 
 namespace duckdb {
 namespace raster {
@@ -174,6 +175,8 @@ struct BandValues {
 };
 
 GDALDataType ParsePixelType(const string &name);
+// The value a band of this type stores for `value`
+double ClampToPixelType(double value, GDALDataType type);
 string PixelTypeName(GDALDataType type);
 double MinPossibleValue(GDALDataType type);
 
@@ -307,7 +310,7 @@ public:
 	ClientContext &Context() const;
 
 private:
-	friend void ExecuteCall(const vector<Param> &params, void (*function)(Call &), DataChunk &args,
+	friend void ExecuteCall(const vector<Param> &params, const std::function<void(Call &)> &function, DataChunk &args,
 	                        ExpressionState &state, Vector &result);
 
 	struct Slot {
@@ -336,8 +339,15 @@ private:
 
 typedef void (*raster_function_t)(Call &call);
 
-void ExecuteCall(const vector<Param> &params, raster_function_t function, DataChunk &args, ExpressionState &state,
-                 Vector &result);
+void ExecuteCall(const vector<Param> &params, const std::function<void(Call &)> &function, DataChunk &args,
+                 ExpressionState &state, Vector &result);
+
+// Gives the bind callback of a custom function the parameters of the overload that was chosen
+struct ParamsInfo final : public ScalarFunctionInfo {
+	explicit ParamsInfo(shared_ptr<vector<Param>> params_p) : params(std::move(params_p)) {
+	}
+	shared_ptr<vector<Param>> params;
+};
 
 class RasterFunction {
 public:
@@ -348,6 +358,9 @@ public:
 	RasterFunction &AddOptional(const vector<Param> &required, const vector<Param> &optional,
 	                            const LogicalType &return_type, raster_function_t function);
 	RasterFunction &Describe(const char *description, const char *example);
+	// For functions that need bind data or a local state: every overload runs `function`, which finds its parameters
+	// in the ParamsInfo of the bound function
+	RasterFunction &Custom(scalar_function_t function, bind_scalar_function_t bind, init_local_state_t init);
 	void Register(ExtensionLoader &loader);
 
 private:
@@ -361,6 +374,9 @@ private:
 	const char *description;
 	const char *example;
 	vector<Variant> variants;
+	scalar_function_t custom_function;
+	bind_scalar_function_t custom_bind;
+	init_local_state_t custom_init;
 };
 
 // Keeps the tags of a function that already exists when overloads are added to it

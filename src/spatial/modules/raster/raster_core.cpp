@@ -529,6 +529,10 @@ GDALDataType ParsePixelType(const string &name) {
 	                            name);
 }
 
+double ClampToPixelType(double value, GDALDataType type) {
+	return GDALAdjustValueToDataType(type, value, nullptr, nullptr);
+}
+
 string PixelTypeName(GDALDataType type) {
 	switch (type) {
 	case GDT_Byte:
@@ -987,8 +991,8 @@ ClientContext &Call::Context() const {
 	return state.GetContext();
 }
 
-void ExecuteCall(const vector<Param> &params, raster_function_t function, DataChunk &args, ExpressionState &state,
-                 Vector &result) {
+void ExecuteCall(const vector<Param> &params, const std::function<void(Call &)> &function, DataChunk &args,
+                 ExpressionState &state, Vector &result) {
 	Call call(params, args, state, result);
 	const auto all_constant = args.AllConstant();
 	const auto count = all_constant ? MinValue<idx_t>(args.size(), 1) : args.size();
@@ -1018,7 +1022,17 @@ void ExecuteCall(const vector<Param> &params, raster_function_t function, DataCh
 	}
 }
 
-RasterFunction::RasterFunction(const char *name_p) : name(name_p), description(""), example("") {
+RasterFunction::RasterFunction(const char *name_p)
+    : name(name_p), description(""), example(""), custom_function(nullptr), custom_bind(nullptr),
+      custom_init(nullptr) {
+}
+
+RasterFunction &RasterFunction::Custom(scalar_function_t function, bind_scalar_function_t bind,
+                                       init_local_state_t init) {
+	custom_function = std::move(function);
+	custom_bind = bind;
+	custom_init = init;
+	return *this;
 }
 
 RasterFunction &RasterFunction::Add(vector<Param> params, const LogicalType &return_type, raster_function_t function) {
@@ -1087,10 +1101,17 @@ void RasterFunction::Register(ExtensionLoader &loader) {
 		documentation.examples.push_back(clean_example);
 		descriptions.push_back(std::move(documentation));
 
-		ScalarFunction overload(std::move(arguments), variant.return_type,
-		                        [params, function](DataChunk &args, ExpressionState &state, Vector &result) {
-			                        ExecuteCall(*params, function, args, state, result);
-		                        });
+		scalar_function_t execute = custom_function;
+		if (!execute) {
+			execute = [params, function](DataChunk &args, ExpressionState &state, Vector &result) {
+				ExecuteCall(*params, function, args, state, result);
+			};
+		}
+		ScalarFunction overload(std::move(arguments), variant.return_type, std::move(execute), custom_bind);
+		if (custom_function) {
+			overload.SetInitStateCallback(custom_init);
+			overload.SetExtraFunctionInfo<ParamsInfo>(params);
+		}
 		overload.SetFallible();
 		if (has_nullable) {
 			// A literal NULL in a nullable parameter must reach the function instead of folding the call to NULL
@@ -1210,7 +1231,7 @@ void RegisterRasterType(ExtensionLoader &loader) {
 
 	// Untyped NULLs and string literals cast to every type at the same cost. Several raster functions share their name
 	// with a geometry function, so make RASTER the more expensive target to keep those calls unambiguous
-	loader.RegisterCastFunction(LogicalType::SQLNULL, raster, BoundCastInfo(NullToRasterCast), 111);
+	loader.RegisterCastFunction(LogicalType::SQLNULL, raster, BoundCastInfo(NullToRasterCast), 200);
 	const auto literal = LogicalType(LogicalTypeId::STRING_LITERAL);
 	loader.RegisterCastFunction(literal, raster, BoundCastInfo(LiteralToRasterCast), 100);
 	loader.RegisterCastFunction(literal, LogicalType::LIST(raster), BoundCastInfo(LiteralToRasterCast), 100);
