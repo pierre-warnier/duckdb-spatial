@@ -1,8 +1,8 @@
 # DuckDB Spatial Extension (Enhanced Fork)
 
-This fork of [duckdb/duckdb-spatial](https://github.com/duckdb/duckdb-spatial) extends the DuckDB spatial extension with **87 additional functions**, a **native KNN spatial join operator**, **DBSCAN/K-means clustering**, and significant **performance optimizations** to the spatial join pipeline. The goal is PostGIS parity and SedonaDB-competitive performance within DuckDB's analytical engine.
+This fork of [duckdb/duckdb-spatial](https://github.com/duckdb/duckdb-spatial) extends the DuckDB spatial extension with **80 additional functions**, a **native KNN spatial join operator**, **DBSCAN/K-means clustering**, and significant **performance optimizations** to the spatial join pipeline. The goal is PostGIS parity and SedonaDB-competitive performance within DuckDB's analytical engine.
 
-**241 spatial functions** (vs. 158 upstream) | **180 tests / 2490 assertions** | Synced with upstream v1.5-variegata
+**245 documented functions** (vs. 165 upstream) | **181 tests / 2551 assertions** | Synced with upstream v1.5-variegata
 
 **Table of contents**
 - [What's new in this fork](#whats-new-in-this-fork)
@@ -16,14 +16,21 @@ This fork of [duckdb/duckdb-spatial](https://github.com/duckdb/duckdb-spatial) e
 
 ## KNN Spatial Join
 
-Native k-nearest-neighbor spatial join via `ST_KNN`, using Hjaltason-Samet priority-queue traversal over a FlatRTree. Includes over-fetch with exact distance refinement, haversine spheroidal distance, LEFT JOIN support, and spill-to-disk for larger-than-memory build sides.
+Native k-nearest-neighbor spatial join via `ST_KNN`, using Hjaltason-Samet priority-queue traversal over a FlatRTree. Candidates are refined with the exact geometry distance, so the result is the exact set of k nearest rows. Supports INNER and LEFT joins, and an optional partition key to get the k nearest rows of every group in a single join.
 
 ```sql
 -- Find 5 nearest hydrants for each building
 SELECT b.id, h.id, ST_Distance(b.geom, h.geom) AS dist
 FROM buildings b
 JOIN hydrants h ON ST_KNN(b.geom, h.geom, 5);
+
+-- Find the nearest point of interest of every category for each building
+SELECT b.id, p.category, ST_Distance(b.geom, p.geom) AS dist
+FROM buildings b
+JOIN pois p ON ST_KNN(b.geom, p.geom, 1, p.category);
 ```
+
+Distances are planar, in the units of the coordinates: project longitude/latitude data to a metric CRS first. The searched side (the second geometry) is indexed in memory. See [`ST_KNN`](docs/functions.md#st_knn) in the function reference for the full semantics.
 
 ## Spatial Clustering
 
@@ -49,22 +56,22 @@ Also includes `ST_ClusterIntersecting` and `ST_ClusterWithin` aggregate function
 - **Robust predicates**: Shewchuk adaptive-precision `orient2d` replaces the fast-but-wrong `orient2d_fast`, eliminating false positives in point-in-polygon and intersection tests near collinear edges
 - **Native ST_Intersects**: GEOMETRY-to-GEOMETRY intersection without GEOS fallback for the common bbox-miss and point-in-polygon cases
 
-## 87 New Functions (PostGIS parity)
+## 80 New Functions (PostGIS parity)
 
 | Category | Functions |
 |---|---|
 | **Serialization** (12) | `ST_AsEWKB`, `ST_AsEWKT`, `ST_AsTWKB`, `ST_GeomFromEWKB`, `ST_GeomFromEWKT`, `ST_GeomFromTWKB`, `ST_AsEncodedPolyline`, `ST_LineFromEncodedPolyline`, `ST_GeoHash`, `ST_GeomFromGeoHash`, `ST_Box2dFromGeoHash`, `ST_AsLatLonText` |
-| **GEOS Construction** (16) | `ST_ClipByBox2D`, `ST_DelaunayTriangles`, `ST_GeometricMedian`, `ST_LargestEmptyCircle`, `ST_MinimumBoundingCircle`, `ST_MinimumClearance`, `ST_MinimumClearanceLine`, `ST_OffsetCurve`, `ST_SharedPaths`, `ST_SimplifyPolygonHull`, `ST_Snap`, `ST_Split`, `ST_Subdivide`, `ST_TriangulatePolygon`, `ST_UnaryUnion`, `ST_CoverageClean` |
+| **GEOS Construction** (13) | `ST_ClipByBox2D`, `ST_DelaunayTriangles`, `ST_GeometricMedian`, `ST_LargestEmptyCircle`, `ST_MinimumBoundingCircle`, `ST_MinimumClearance`, `ST_MinimumClearanceLine`, `ST_OffsetCurve`, `ST_SharedPaths`, `ST_SimplifyPolygonHull`, `ST_Split`, `ST_TriangulatePolygon`, `ST_UnaryUnion` |
 | **Geometry Editing** (15) | `ST_AddPoint`, `ST_SetPoint`, `ST_RemovePoint`, `ST_ChaikinSmoothing`, `ST_ForceCollection`, `ST_QuantizeCoordinates`, `ST_Scroll`, `ST_Segmentize`, `ST_SetSRID`, `ST_ShiftLongitude`, `ST_SimplifyVW`, `ST_SwapOrdinates`, `ST_ForcePolygonCCW`, `ST_ForcePolygonCW`, `ST_SnapToGrid` |
-| **Accessors** (12) | `ST_BoundingDiagonal`, `ST_GeometryN`, `ST_InteriorRingN`, `ST_IsCollection`, `ST_IsPolygonCCW`, `ST_IsPolygonCW`, `ST_IsValidDetail`, `ST_IsValidReason`, `ST_MemSize`, `ST_NRings`, `ST_SRID`, `ST_Summary` |
-| **3D / Measure** (8) | `ST_3DDistance`, `ST_3DLength`, `ST_3DLineInterpolatePoint`, `ST_3DPerimeter`, `ST_AddMeasure`, `ST_CoordDim`, `ST_NDims`, `ST_SwapOrdinates` |
-| **Distance / Proximity** (6) | `ST_Angle`, `ST_ClosestPoint`, `ST_FrechetDistance`, `ST_HausdorffDistance`, `ST_LongestLine`, `ST_MaxDistance` |
+| **Accessors** (11) | `ST_BoundingDiagonal`, `ST_GeometryN`, `ST_IsCollection`, `ST_IsPolygonCCW`, `ST_IsPolygonCW`, `ST_IsValidDetail`, `ST_IsValidReason`, `ST_MemSize`, `ST_NRings`, `ST_SRID`, `ST_Summary` |
+| **3D / Measure** (7) | `ST_3DDistance`, `ST_3DLength`, `ST_3DLineInterpolatePoint`, `ST_3DPerimeter`, `ST_AddMeasure`, `ST_CoordDim`, `ST_NDims` |
+| **Distance / Proximity** (5) | `ST_Angle`, `ST_FrechetDistance`, `ST_HausdorffDistance`, `ST_LongestLine`, `ST_MaxDistance` |
 | **Clustering** (4) | `ST_ClusterDBSCAN`, `ST_ClusterIntersecting`, `ST_ClusterKMeans`, `ST_ClusterWithin` |
 | **Predicates** (4) | `ST_DFullyWithin`, `ST_OrderingEquals`, `ST_Relate`, `ST_RelateMatch` |
 | **Decomposition** (3) | `ST_DumpPoints`, `ST_DumpRings`, `ST_DumpSegments` |
 | **Constructors** (2) | `ST_LineFromMultiPoint`, `ST_Polygon` |
 | **Grids** (2) | `ST_HexagonGrid`, `ST_SquareGrid` |
-| **Geodesic** (2) | `ST_Project`, `ST_Expand` |
+| **Geodesic** (1) | `ST_Project` |
 | **Join** (1) | `ST_KNN` |
 
 ## Backward Compatibility
@@ -105,6 +112,33 @@ You can then invoke the built DuckDB (with the extension statically linked):
 ```
 
 **Dependencies**: CMake 3.20+, a C++17 compiler, OpenSSL (`sudo apt install libssl-dev` on Ubuntu), and [Ninja](https://ninja-build.org) (recommended). All other dependencies are bundled.
+
+## Using the build from another DuckDB client
+
+The build also produces a loadable extension, laid out as a local extension repository in `build/release/repository`. It can only be loaded by a DuckDB of the exact version it was built against (currently v1.5.6), on the same platform.
+
+```bash
+make install-local
+```
+
+installs it into the extension directory of the current user (`~/.duckdb/extensions`), replacing the official `spatial` extension for that DuckDB version. It is equivalent to running, from any client:
+
+```sql
+FORCE INSTALL spatial FROM '/path/to/duckdb-spatial/build/release/repository';
+```
+
+After that, a plain `INSTALL spatial; LOAD spatial;` keeps working in every client, and `duckdb_extensions()` reports `install_mode = REPOSITORY` with the commit of this repository as `extension_version`. `FORCE INSTALL spatial FROM core;` goes back to the official extension.
+
+A local build is not signed, so the connection that loads it has to be opened with unsigned extensions allowed. This cannot be changed once the database is open:
+
+| Client | Setting |
+|---|---|
+| CLI | `duckdb -unsigned` |
+| Python | `duckdb.connect(config={'allow_unsigned_extensions': 'true'})` |
+| C API | `duckdb_set_config(config, "allow_unsigned_extensions", "true")` before `duckdb_open_ext` |
+| Rust | `Connection::open_with_flags(path, Config::default().allow_unsigned_extensions()?)` |
+
+Do not copy `spatial.duckdb_extension` over an installed one by hand: the `.info` file next to it still describes the previous binary, and loading by name then fails with `Metadata mismatch detected when loading extension`. Loading by explicit path (`LOAD '/path/to/spatial.duckdb_extension'`) does work.
 
 # Example Usage
 

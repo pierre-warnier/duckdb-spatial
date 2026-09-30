@@ -24,3 +24,7 @@ unittest_relassert:
 format:
 	find src/spatial -iname *.hpp -o -iname *.cpp | xargs clang-format --sort-includes=0 -style=file -i
 	cmake-format -i CMakeLists.txt
+
+#### Install the locally built (unsigned) extension into the DuckDB extension directory of the current user
+install-local:
+	./build/release/duckdb -unsigned -c "FORCE INSTALL spatial FROM '$(PROJ_DIR)build/release/repository';"

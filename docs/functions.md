@@ -5,22 +5,38 @@
 
 | Function | Summary |
 | --- | --- |
-| [`DuckDB_PROJ_Compiled_Version`](#duckdb_proj_compiled_version) | Returns a text description of the PROJ library version that that this instance of DuckDB was compiled against. |
+| [`DuckDB_PROJ_Compiled_Version`](#duckdb_proj_compiled_version) | Returns a text description of the PROJ library version that this instance of DuckDB was compiled against. |
 | [`DuckDB_Proj_Version`](#duckdb_proj_version) | Returns a text description of the PROJ library version that is being used by this instance of DuckDB. |
+| [`ST_3DDistance`](#st_3ddistance) | Returns the 3D Euclidean distance between two POINT geometries. Non-point inputs are rejected (not yet implemented for lines/polygons). |
+| [`ST_3DLength`](#st_3dlength) | Returns the 3D length of a linestring (considers Z coordinate) |
+| [`ST_3DLineInterpolatePoint`](#st_3dlineinterpolatepoint) | Interpolates a point along a linestring at a fraction of its 3D length |
+| [`ST_3DPerimeter`](#st_3dperimeter) | Returns the 3D perimeter of a polygon (considers Z coordinate) |
+| [`ST_AddMeasure`](#st_addmeasure) | Adds M values along a linestring, interpolated between start and end measures |
+| [`ST_AddPoint`](#st_addpoint) | Adds a point to a linestring at a given position (default: end) |
 | [`ST_Affine`](#st_affine) | Applies an affine transformation to a geometry. |
+| [`ST_Angle`](#st_angle) | Returns the angle in radians between two points |
 | [`ST_Area`](#st_area) | Compute the area of a geometry. |
 | [`ST_Area_Spheroid`](#st_area_spheroid) | Returns the area of a geometry in meters, using an ellipsoidal model of the earth |
+| [`ST_AsEncodedPolyline`](#st_asencodedpolyline) | Encodes a linestring as a Google Encoded Polyline string |
+| [`ST_AsEWKB`](#st_asewkb) | Returns the geometry as EWKB (Extended Well-Known Binary). Alias for ST_AsWKB. |
+| [`ST_AsEWKT`](#st_asewkt) | Returns the geometry as an Extended WKT (EWKT) string |
 | [`ST_AsGeoJSON`](#st_asgeojson) | Returns the geometry as a GeoJSON fragment |
 | [`ST_AsHEXWKB`](#st_ashexwkb) | Returns the geometry as a HEXWKB string |
+| [`ST_AsLatLonText`](#st_aslatlontext) | Returns a point as a DMS (degrees-minutes-seconds) latitude/longitude string |
 | [`ST_AsMVTGeom`](#st_asmvtgeom) | Transform and clip geometry to a tile boundary |
 | [`ST_AsSVG`](#st_assvg) | Convert the geometry into a SVG fragment or path |
-| [`ST_AsText`](#st_astext) | Returns the geometry as a WKT string |
-| [`ST_AsWKB`](#st_aswkb) | Returns the geometry as a WKB (Well-Known-Binary) blob |
+| [`ST_AsText`](#st_astext) | Returns the Well-Known Text (WKT) representation of the geometry |
+| [`ST_AsTWKB`](#st_astwkb) | Encodes geometry as Tiny WKB (TWKB) with specified coordinate precision |
+| [`ST_AsWKB`](#st_aswkb) | Returns the Well-Known Binary (WKB) representation of the geometry |
 | [`ST_Azimuth`](#st_azimuth) | Returns the azimuth (a clockwise angle measured from north) of two points in radian. |
 | [`ST_Boundary`](#st_boundary) | Returns the "boundary" of a geometry |
+| [`ST_BoundingDiagonal`](#st_boundingdiagonal) | Returns the diagonal of the bounding box as a linestring |
+| [`ST_Box2dFromGeoHash`](#st_box2dfromgeohash) | Returns the bounding box polygon of a GeoHash cell |
 | [`ST_Buffer`](#st_buffer) | Returns a buffer around the input geometry at the target distance |
-| [`ST_BuildArea`](#st_buildarea) | Creates a polygonal geometry by attemtping to "fill in" the input geometry. |
+| [`ST_BuildArea`](#st_buildarea) | Creates a polygonal geometry by attempting to "fill in" the input geometry. |
 | [`ST_Centroid`](#st_centroid) | Returns the centroid of a geometry |
+| [`ST_ChaikinSmoothing`](#st_chaikinsmoothing) | Smooths a geometry using Chaikin's corner-cutting algorithm |
+| [`ST_ClipByBox2D`](#st_clipbybox2d) | Clips a geometry by a bounding box |
 | [`ST_ClosestPoint`](#st_closestpoint) | Returns the closest point on the first geometry to the second geometry |
 | [`ST_Collect`](#st_collect) | Collects a list of geometries into a collection geometry. |
 | [`ST_CollectionExtract`](#st_collectionextract) | Extracts geometries from a GeometryCollection into a typed multi geometry. |
@@ -28,6 +44,7 @@
 | [`ST_Contains`](#st_contains) | Returns true if the first geometry contains the second geometry |
 | [`ST_ContainsProperly`](#st_containsproperly) | Returns true if the first geometry \"properly\" contains the second geometry |
 | [`ST_ConvexHull`](#st_convexhull) | Returns the convex hull enclosing the geometry |
+| [`ST_CoordDim`](#st_coorddim) | Returns the coordinate dimension of a geometry |
 | [`ST_CoverageClean`](#st_coverageclean) | Aligns the edges of a list of polygons whose edges are meant to align but are in fact exact matches. |
 | [`ST_CoverageInvalidEdges`](#st_coverageinvalidedges) | Returns the invalid edges in a polygonal coverage, which are edges that are not shared by two polygons. |
 | [`ST_CoverageSimplify`](#st_coveragesimplify) | Simplify the edges in a polygonal coverage, preserving the coverange by ensuring that the there are no seams between the resulting simplified polygons. |
@@ -35,9 +52,8 @@
 | [`ST_CoveredBy`](#st_coveredby) | Returns true if geom1 is "covered by" geom2 |
 | [`ST_Covers`](#st_covers) | Returns true if the geom1 "covers" geom2 |
 | [`ST_Crosses`](#st_crosses) | Returns true if geom1 "crosses" geom2 |
-| [`ST_DWithin`](#st_dwithin) | Returns if two geometries are within a target distance of each-other |
-| [`ST_DWithin_GEOS`](#st_dwithin_geos) | Returns if two geometries are within a target distance of each-other |
-| [`ST_DWithin_Spheroid`](#st_dwithin_spheroid) | Returns if two POINT_2D's are within a target distance in meters, using an ellipsoidal model of the earths surface |
+| [`ST_DelaunayTriangles`](#st_delaunaytriangles) | Returns Delaunay triangulation of input geometry vertices |
+| [`ST_DFullyWithin`](#st_dfullywithin) | Returns true if every point of geom1 is within the given distance of geom2. Currently restricted to POINT inputs (reduces to ST_DWithin for points). |
 | [`ST_Difference`](#st_difference) | Returns the "difference" between two geometries |
 | [`ST_Dimension`](#st_dimension) | Returns the "topological dimension" of a geometry. |
 | [`ST_Disjoint`](#st_disjoint) | Returns true if the geometries are disjoint |
@@ -46,6 +62,9 @@
 | [`ST_Distance_Sphere`](#st_distance_sphere) | Returns the haversine (great circle) distance between two geometries. |
 | [`ST_Distance_Spheroid`](#st_distance_spheroid) | Returns the distance between two geometries in meters using an ellipsoidal model of the earths surface |
 | [`ST_Dump`](#st_dump) | Dumps a geometry into a list of sub-geometries and their "path" in the original geometry. |
+| [`ST_DWithin`](#st_dwithin) | Returns if two geometries are within a target distance of each-other |
+| [`ST_DWithin_GEOS`](#st_dwithin_geos) | Returns true if two geometries are within a target distance of each-other |
+| [`ST_DWithin_Spheroid`](#st_dwithin_spheroid) | Returns if two POINT_2D's are within a target distance in meters, using an ellipsoidal model of the earths surface |
 | [`ST_EndPoint`](#st_endpoint) | Returns the end point of a LINESTRING. |
 | [`ST_Envelope`](#st_envelope) | Returns the minimum bounding rectangle of a geometry as a polygon geometry |
 | [`ST_Equals`](#st_equals) | Returns true if the geometries are "equal" |
@@ -58,27 +77,48 @@
 | [`ST_Force3DM`](#st_force3dm) | Forces the vertices of a geometry to have X, Y and M components |
 | [`ST_Force3DZ`](#st_force3dz) | Forces the vertices of a geometry to have X, Y and Z components |
 | [`ST_Force4D`](#st_force4d) | Forces the vertices of a geometry to have X, Y, Z and M components |
+| [`ST_ForceCollection`](#st_forcecollection) | Wraps a geometry in a GeometryCollection (no-op if already a collection) |
+| [`ST_ForcePolygonCCW`](#st_forcepolygonccw) | Forces polygon exterior rings to be counter-clockwise |
+| [`ST_ForcePolygonCW`](#st_forcepolygoncw) | Forces polygon exterior rings to be clockwise |
+| [`ST_FrechetDistance`](#st_frechetdistance) | Returns the Frechet distance between two geometries |
+| [`ST_GeoHash`](#st_geohash) | Returns the GeoHash string of a geometry's centroid at the given precision |
+| [`ST_GeometricMedian`](#st_geometricmedian) | Returns the geometric median of a geometry's vertices (Weiszfeld algorithm) |
+| [`ST_GeometryN`](#st_geometryn) | Returns the Nth geometry from a geometry collection (0-indexed) |
+| [`ST_GeometryType`](#st_geometrytype) | Returns a 'GEOMETRY_TYPE' enum identifying the input geometry type. Possible enum return types are: `POINT`, `LINESTRING`, `POLYGON`, `MULTIPOINT`, `MULTILINESTRING`, `MULTIPOLYGON`, and `GEOMETRYCOLLECTION`. |
+| [`ST_GeomFromEWKB`](#st_geomfromewkb) | Creates a geometry from EWKB (Extended Well-Known Binary) data |
+| [`ST_GeomFromEWKT`](#st_geomfromewkt) | Parses an Extended WKT (EWKT) string, optionally with SRID prefix |
+| [`ST_GeomFromGeoHash`](#st_geomfromgeohash) | Returns the center point of a GeoHash cell |
 | [`ST_GeomFromGeoJSON`](#st_geomfromgeojson) | Deserializes a GEOMETRY from a GeoJSON fragment. |
 | [`ST_GeomFromHEXEWKB`](#st_geomfromhexewkb) | Deserialize a GEOMETRY from a HEX(E)WKB encoded string |
 | [`ST_GeomFromHEXWKB`](#st_geomfromhexwkb) | Deserialize a GEOMETRY from a HEX(E)WKB encoded string |
 | [`ST_GeomFromText`](#st_geomfromtext) | Deserialize a GEOMETRY from a WKT encoded string |
-| [`ST_GeomFromWKB`](#st_geomfromwkb) | Deserializes a GEOMETRY from a WKB encoded blob |
-| [`ST_GeometryType`](#st_geometrytype) | Returns a 'GEOMETRY_TYPE' enum identifying the input geometry type. Possible enum return types are: `POINT`, `LINESTRING`, `POLYGON`, `MULTIPOINT`, `MULTILINESTRING`, `MULTIPOLYGON`, and `GEOMETRYCOLLECTION`. |
+| [`ST_GeomFromTWKB`](#st_geomfromtwkb) | Decodes a Tiny WKB (TWKB) binary into a geometry |
+| [`ST_GeomFromWKB`](#st_geomfromwkb) | Creates a geometry from Well-Known Binary (WKB) representation |
 | [`ST_HasM`](#st_hasm) | Check if the input geometry has M values. |
 | [`ST_HasZ`](#st_hasz) | Check if the input geometry has Z values. |
+| [`ST_HausdorffDistance`](#st_hausdorffdistance) | Returns the Hausdorff distance between two geometries |
 | [`ST_Hilbert`](#st_hilbert) | Encodes the X and Y values as the hilbert curve index for a curve covering the given bounding box. |
 | [`ST_InteriorRingN`](#st_interiorringn) | Returns the N-th interior ring (hole) of a POLYGON as a LINESTRING. Indexing is 1-based  (n = 1 returns the first interior ring). Returns NULL if the polygon is empty or has fewer than N interior rings. |
 | [`ST_InterpolatePoint`](#st_interpolatepoint) | Computes the closest point on a LINESTRING to a given POINT and returns the interpolated M value of that point. |
 | [`ST_Intersection`](#st_intersection) | Returns the intersection of two geometries |
-| [`ST_Intersects`](#st_intersects) | Returns true if the geometries intersect |
+| [`ST_Intersects`](#st_intersects) | Returns true if two geometries intersect |
 | [`ST_Intersects_Extent`](#st_intersects_extent) | Returns true if the extent of two geometries intersects |
 | [`ST_IsClosed`](#st_isclosed) | Check if a geometry is 'closed' |
+| [`ST_IsCollection`](#st_iscollection) | Returns true if geometry is a Multi* or GeometryCollection type |
 | [`ST_IsEmpty`](#st_isempty) | Returns true if the geometry is "empty". |
+| [`ST_IsPolygonCCW`](#st_ispolygonccw) | Returns true if the exterior ring of a polygon is counter-clockwise |
+| [`ST_IsPolygonCW`](#st_ispolygoncw) | Returns true if the exterior ring of a polygon is clockwise |
 | [`ST_IsRing`](#st_isring) | Returns true if the geometry is a ring (both ST_IsClosed and ST_IsSimple). |
 | [`ST_IsSimple`](#st_issimple) | Returns true if the geometry is simple |
 | [`ST_IsValid`](#st_isvalid) | Returns true if the geometry is valid |
+| [`ST_IsValidDetail`](#st_isvaliddetail) | Returns a struct with validity info: {valid, reason, location} |
+| [`ST_IsValidReason`](#st_isvalidreason) | Returns text explaining why a geometry is invalid, or 'Valid Geometry' |
+| [`ST_KNN`](#st_knn) | K-nearest-neighbor join predicate: matches each row of the `geom1` side with its `k` nearest rows of the `geom2` side. |
+| [`ST_LargestEmptyCircle`](#st_largestemptycircle) | Returns the largest empty circle within a geometry |
 | [`ST_Length`](#st_length) | Returns the length of the input line geometry |
 | [`ST_Length_Spheroid`](#st_length_spheroid) | Returns the length of the input geometry in meters, using an ellipsoidal model of the earth |
+| [`ST_LineFromEncodedPolyline`](#st_linefromencodedpolyline) | Decodes a Google Encoded Polyline string into a linestring |
+| [`ST_LineFromMultiPoint`](#st_linefrommultipoint) | Creates a linestring from the points of a multipoint geometry |
 | [`ST_LineInterpolatePoint`](#st_lineinterpolatepoint) | Returns a point interpolated along a line at a fraction of total 2D length. |
 | [`ST_LineInterpolatePoints`](#st_lineinterpolatepoints) | Returns a multi-point interpolated along a line at a fraction of total 2D length. |
 | [`ST_LineLocatePoint`](#st_linelocatepoint) | Returns the location on a line closest to a point as a fraction of the total 2D length of the line. |
@@ -87,26 +127,36 @@
 | [`ST_LineSubstring`](#st_linesubstring) | Returns a substring of a line between two fractions of total 2D length. |
 | [`ST_LocateAlong`](#st_locatealong) | Returns a point or multi-point, containing the point(s) at the geometry with the given measure |
 | [`ST_LocateBetween`](#st_locatebetween) | Returns a geometry or geometry collection created by filtering and interpolating vertices within a range of "M" values |
+| [`ST_LongestLine`](#st_longestline) | Returns the longest line between two geometries (vertex-to-vertex) |
 | [`ST_M`](#st_m) | Returns the M coordinate of a point geometry |
-| [`ST_MMax`](#st_mmax) | Returns the maximum M coordinate of a geometry |
-| [`ST_MMin`](#st_mmin) | Returns the minimum M coordinate of a geometry |
 | [`ST_MakeBox2D`](#st_makebox2d) | Create a BOX2D from two POINT geometries |
 | [`ST_MakeEnvelope`](#st_makeenvelope) | Create a rectangular polygon from min/max coordinates |
 | [`ST_MakeLine`](#st_makeline) | Create a LINESTRING from a list of POINT geometries |
 | [`ST_MakePoint`](#st_makepoint) | Creates a GEOMETRY point from an pair of floating point numbers. |
 | [`ST_MakePolygon`](#st_makepolygon) | Create a POLYGON from a LINESTRING shell |
 | [`ST_MakeValid`](#st_makevalid) | Returns a valid representation of the geometry |
+| [`ST_MaxDistance`](#st_maxdistance) | Returns the maximum distance between two geometries |
 | [`ST_MaximumInscribedCircle`](#st_maximuminscribedcircle) | Returns the maximum inscribed circle of the input geometry, optionally with a tolerance. |
+| [`ST_MemSize`](#st_memsize) | Returns the memory size of a geometry in bytes |
+| [`ST_MinimumBoundingCircle`](#st_minimumboundingcircle) | Returns the minimum bounding circle of a geometry |
+| [`ST_MinimumClearance`](#st_minimumclearance) | Returns the minimum clearance of a geometry |
+| [`ST_MinimumClearanceLine`](#st_minimumclearanceline) | Returns the line spanning the minimum clearance |
 | [`ST_MinimumRotatedRectangle`](#st_minimumrotatedrectangle) | Returns the minimum rotated rectangle that bounds the input geometry, finding the surrounding box that has the lowest area by using a rotated rectangle, rather than taking the lowest and highest coordinate values as per ST_Envelope(). |
+| [`ST_MMax`](#st_mmax) | Returns the maximum M coordinate of a geometry |
+| [`ST_MMin`](#st_mmin) | Returns the minimum M coordinate of a geometry |
 | [`ST_Multi`](#st_multi) | Turns a single geometry into a multi geometry. |
+| [`ST_NDims`](#st_ndims) | Returns the topological dimension of a geometry |
 | [`ST_NGeometries`](#st_ngeometries) | Returns the number of component geometries in a collection geometry. |
 | [`ST_NInteriorRings`](#st_ninteriorrings) | Returns the number of interior rings of a polygon |
-| [`ST_NPoints`](#st_npoints) | Returns the number of vertices within a geometry |
 | [`ST_Node`](#st_node) | Returns a "noded" MultiLinestring, produced by combining a collection of input linestrings and adding additional vertices where they intersect. |
 | [`ST_Normalize`](#st_normalize) | Returns the "normalized" representation of the geometry |
+| [`ST_NPoints`](#st_npoints) | Returns the number of vertices within a geometry |
+| [`ST_NRings`](#st_nrings) | Returns the number of rings in a polygon (exterior + interior) |
 | [`ST_NumGeometries`](#st_numgeometries) | Returns the number of component geometries in a collection geometry. |
 | [`ST_NumInteriorRings`](#st_numinteriorrings) | Returns the number of interior rings of a polygon |
 | [`ST_NumPoints`](#st_numpoints) | Returns the number of vertices within a geometry |
+| [`ST_OffsetCurve`](#st_offsetcurve) | Returns an offset curve from a linestring |
+| [`ST_OrderingEquals`](#st_orderingequals) | Returns true if two geometries are exactly equal (same vertex order) |
 | [`ST_Overlaps`](#st_overlaps) | Returns true if the geometries overlap |
 | [`ST_Perimeter`](#st_perimeter) | Returns the length of the perimeter of the geometry |
 | [`ST_Perimeter_Spheroid`](#st_perimeter_spheroid) | Returns the length of the perimeter in meters using an ellipsoidal model of the earths surface |
@@ -118,22 +168,43 @@
 | [`ST_PointN`](#st_pointn) | Returns the n'th vertex from the input geometry as a point geometry |
 | [`ST_PointOnSurface`](#st_pointonsurface) | Returns a point guaranteed to lie on the surface of the geometry |
 | [`ST_Points`](#st_points) | Collects all the vertices in the geometry into a MULTIPOINT |
+| [`ST_Polygon`](#st_polygon) | Creates a polygon from a closed linestring |
 | [`ST_Polygon2DFromWKB`](#st_polygon2dfromwkb) | Deserialize a POLYGON_2D from a WKB encoded blob |
 | [`ST_Polygonize`](#st_polygonize) | Returns a polygonized representation of the input geometries |
+| [`ST_Project`](#st_project) | Projects a point along the geodesic by a distance (meters) and azimuth (radians) |
 | [`ST_QuadKey`](#st_quadkey) | Compute the [quadkey](https://learn.microsoft.com/en-us/bingmaps/articles/bing-maps-tile-system) for a given lon/lat point at a given level. |
+| [`ST_QuantizeCoordinates`](#st_quantizecoordinates) | Rounds all coordinates to the given number of decimal places |
 | [`ST_ReducePrecision`](#st_reduceprecision) | Returns the geometry with all vertices reduced to the given precision |
+| [`ST_Relate`](#st_relate) | Returns the DE-9IM intersection matrix string |
+| [`ST_RelateMatch`](#st_relatematch) | Tests if a DE-9IM matrix string matches a DE-9IM pattern |
+| [`ST_RemovePoint`](#st_removepoint) | Removes a point from a linestring (0-indexed, negative from end) |
 | [`ST_RemoveRepeatedPoints`](#st_removerepeatedpoints) | Remove repeated points from a LINESTRING. |
 | [`ST_Reverse`](#st_reverse) | Returns the geometry with the order of its vertices reversed |
+| [`ST_Scroll`](#st_scroll) | Rotates a closed linestring's start point to the vertex nearest to the given point |
+| [`ST_Segmentize`](#st_segmentize) | Densifies a geometry by adding vertices so no segment exceeds max_segment_length |
+| [`ST_SetPoint`](#st_setpoint) | Replaces a point in a linestring (0-indexed, negative from end) |
+| [`ST_SetSRID`](#st_setsrid) | Sets the SRID of a geometry (no-op in DuckDB — use GEOMETRY('EPSG:XXXX') type for CRS) |
+| [`ST_SharedPaths`](#st_sharedpaths) | Returns shared paths between two linear geometries |
+| [`ST_ShiftLongitude`](#st_shiftlongitude) | Shifts longitude: negative values get +360, values >180 get -360 |
 | [`ST_ShortestLine`](#st_shortestline) | Returns the shortest line between two geometries |
 | [`ST_Simplify`](#st_simplify) | Returns a simplified version of the geometry |
+| [`ST_SimplifyPolygonHull`](#st_simplifypolygonhull) | Simplifies a polygon while preserving topology |
 | [`ST_SimplifyPreserveTopology`](#st_simplifypreservetopology) | Returns a simplified version of the geometry that preserves topology |
+| [`ST_SimplifyVW`](#st_simplifyvw) | Simplifies geometry using the Visvalingam-Whyatt area-based algorithm |
 | [`ST_Snap`](#st_snap) | Snaps the vertices and segments of a geometry to another geometry's vertices within the given tolerance |
+| [`ST_SnapToGrid`](#st_snaptogrid) | Snaps all coordinates to a grid of the given size |
+| [`ST_Split`](#st_split) | Splits a geometry by another geometry, returning a geometry collection of the pieces |
+| [`ST_SRID`](#st_srid) | Returns the SRID of a geometry (always 0 — DuckDB uses CRS type metadata instead of per-geometry SRIDs) |
 | [`ST_StartPoint`](#st_startpoint) | Returns the start point of a LINESTRING. |
 | [`ST_Subdivide`](#st_subdivide) | Recursively splits a geometry into sub-geometries until the number of vertices of each are below the threshold given by max_vertices. Accepts any type of input except for a GeometryCollection.Degenerate inputs can lead to results having more than max_vertices vertices due to a recursion depth limit. |
-| [`ST_SymDifference`](#st_symdifference) | Returns a geometry that represents the portions of two geometries that do not intersect |
+| [`ST_Summary`](#st_summary) | Returns a text summary of a geometry |
+| [`ST_SwapOrdinates`](#st_swapordinates) | Swaps two ordinate values in a geometry (e.g., 'xy' swaps x and y) |
+| [`ST_SymDifference`](#st_symdifference) | Returns the symmetric difference of two geometries |
 | [`ST_TileEnvelope`](#st_tileenvelope) | The `ST_TileEnvelope` scalar function generates tile envelope rectangular polygons from specified zoom level and tile indices. |
 | [`ST_Touches`](#st_touches) | Returns true if the geometries touch |
 | [`ST_Transform`](#st_transform) | Transforms a geometry between two coordinate systems |
+| [`ST_TriangulatePolygon`](#st_triangulatepolygon) | Returns constrained Delaunay triangulation of a polygon |
+| [`ST_UnaryUnion`](#st_unaryunion) | Dissolves a geometry collection into a single geometry |
 | [`ST_Union`](#st_union) | Returns the union of two geometries |
 | [`ST_VoronoiDiagram`](#st_voronoidiagram) | Returns the Voronoi diagram of the supplied MultiPoint geometry |
 | [`ST_Within`](#st_within) | Returns true if the first geometry is within the second |
@@ -145,8 +216,8 @@
 | [`ST_YMax`](#st_ymax) | Returns the maximum Y coordinate of a geometry |
 | [`ST_YMin`](#st_ymin) | Returns the minimum Y coordinate of a geometry |
 | [`ST_Z`](#st_z) | Returns the Z coordinate of a point geometry |
-| [`ST_ZMFlag`](#st_zmflag) | Returns a flag indicating the presence of Z and M values in the input geometry. |
 | [`ST_ZMax`](#st_zmax) | Returns the maximum Z coordinate of a geometry |
+| [`ST_ZMFlag`](#st_zmflag) | Returns a flag indicating the presence of Z and M values in the input geometry. |
 | [`ST_ZMin`](#st_zmin) | Returns the minimum Z coordinate of a geometry |
 
 **[Aggregate Functions](#aggregate-functions)**
@@ -154,6 +225,10 @@
 | Function | Summary |
 | --- | --- |
 | [`ST_AsMVT`](#st_asmvt) | Make a Mapbox Vector Tile from a set of geometries and properties |
+| [`ST_ClusterDBSCAN`](#st_clusterdbscan) | Assigns a DBSCAN cluster ID to each geometry based on spatial proximity. |
+| [`ST_ClusterIntersecting`](#st_clusterintersecting) | Groups intersecting geometries into clusters (returns geometry collection of collections) |
+| [`ST_ClusterKMeans`](#st_clusterkmeans) | Assigns a k-means cluster ID to each geometry. |
+| [`ST_ClusterWithin`](#st_clusterwithin) | Groups geometries within a given distance into clusters |
 | [`ST_CoverageInvalidEdges_Agg`](#st_coverageinvalidedges_agg) | Returns the invalid edges of a coverage geometry |
 | [`ST_CoverageSimplify_Agg`](#st_coveragesimplify_agg) | Simplifies a set of geometries while maintaining coverage |
 | [`ST_CoverageUnion_Agg`](#st_coverageunion_agg) | Unions a set of geometries while maintaining coverage |
@@ -172,19 +247,24 @@
 | [`ST_RotateY`](#st_rotatey) | Rotates a geometry around the Y axis. This is a shorthand macro for calling ST_Affine. |
 | [`ST_RotateZ`](#st_rotatez) | Rotates a geometry around the Z axis. This is a shorthand macro for calling ST_Affine. |
 | [`ST_Scale`](#st_scale) |  |
-| [`ST_TransScale`](#st_transscale) | Translates and then scales a geometry in X and Y direction. This is a shorthand macro for calling ST_Affine. |
 | [`ST_Translate`](#st_translate) |  |
+| [`ST_TransScale`](#st_transscale) | Translates and then scales a geometry in X and Y direction. This is a shorthand macro for calling ST_Affine. |
 
 **[Table Functions](#table-functions)**
 
 | Function | Summary |
 | --- | --- |
 | [`ST_Drivers`](#st_drivers) | Returns the list of supported GDAL drivers and file formats |
+| [`ST_DumpPoints`](#st_dumppoints) | Extracts all vertices from a geometry as individual point geometries. |
+| [`ST_DumpRings`](#st_dumprings) | Extracts the rings of a polygon geometry. |
+| [`ST_DumpSegments`](#st_dumpsegments) | Extracts consecutive vertex pairs from a geometry as 2-point linestring segments. |
 | [`ST_GeneratePoints`](#st_generatepoints) | Generates a set of random points within the specified bounding box. |
+| [`ST_HexagonGrid`](#st_hexagongrid) | Generates a regular hexagonal grid covering the bounding box of the input geometry. |
 | [`ST_Read`](#st_read) | Read and import a variety of geospatial file formats using the GDAL library. |
-| [`ST_ReadOSM`](#st_readosm) | The `ST_ReadOsm()` table function enables reading compressed OpenStreetMap data directly from a `.osm.pbf file.` |
-| [`ST_ReadSHP`](#st_readshp) | Read a Shapefile without relying on the GDAL library |
 | [`ST_Read_Meta`](#st_read_meta) | Read the metadata from a variety of geospatial file formats using the GDAL library. |
+| [`ST_ReadOSM`](#st_readosm) | The `ST_ReadOsm()` table function enables reading compressed OpenStreetMap data directly from a `.osm.pbf` file. |
+| [`ST_ReadSHP`](#st_readshp) | Read a Shapefile without relying on the GDAL library |
+| [`ST_SquareGrid`](#st_squaregrid) | Generates a regular grid of square polygons covering the bounding box of the input geometry. |
 
 ----
 
@@ -201,7 +281,7 @@ VARCHAR DuckDB_PROJ_Compiled_Version ()
 
 #### Description
 
-Returns a text description of the PROJ library version that that this instance of DuckDB was compiled against.
+Returns a text description of the PROJ library version that this instance of DuckDB was compiled against.
 
 #### Example
 
@@ -238,8 +318,135 @@ SELECT duckdb_proj_version();
 │ duckdb_proj_version() │
 │        varchar        │
 ├───────────────────────┤
-│ 9.1.1                 │
+│ 9.1.1                 │geometry_always_xy
 └───────────────────────┘
+```
+
+----
+
+### ST_3DDistance
+
+
+#### Signature
+
+```sql
+DOUBLE ST_3DDistance (geom1 GEOMETRY, geom2 GEOMETRY)
+```
+
+#### Description
+
+Returns the 3D Euclidean distance between two POINT geometries. Non-point inputs are rejected (not yet implemented for lines/polygons).
+
+#### Example
+
+```sql
+SELECT ST_3DDistance(ST_GeomFromText('POINT Z(0 0 0)'), ST_GeomFromText('POINT Z(1 1 1)'))
+```
+
+----
+
+### ST_3DLength
+
+
+#### Signature
+
+```sql
+DOUBLE ST_3DLength (geom GEOMETRY)
+```
+
+#### Description
+
+Returns the 3D length of a linestring (considers Z coordinate)
+
+#### Example
+
+```sql
+SELECT ST_3DLength(ST_GeomFromText('LINESTRING Z(0 0 0, 1 0 0, 1 1 1)'))
+```
+
+----
+
+### ST_3DLineInterpolatePoint
+
+
+#### Signature
+
+```sql
+GEOMETRY ST_3DLineInterpolatePoint (line GEOMETRY, fraction DOUBLE)
+```
+
+#### Description
+
+Interpolates a point along a linestring at a fraction of its 3D length
+
+#### Example
+
+```sql
+SELECT ST_AsText(ST_3DLineInterpolatePoint(ST_GeomFromText('LINESTRING Z(0 0 0, 10 0 10)'), 0.5))
+```
+
+----
+
+### ST_3DPerimeter
+
+
+#### Signature
+
+```sql
+DOUBLE ST_3DPerimeter (geom GEOMETRY)
+```
+
+#### Description
+
+Returns the 3D perimeter of a polygon (considers Z coordinate)
+
+#### Example
+
+```sql
+SELECT ST_3DPerimeter(ST_GeomFromText('POLYGON Z((0 0 0, 1 0 0, 1 1 1, 0 1 0, 0 0 0))'))
+```
+
+----
+
+### ST_AddMeasure
+
+
+#### Signature
+
+```sql
+GEOMETRY ST_AddMeasure (line GEOMETRY, measure_start DOUBLE, measure_end DOUBLE)
+```
+
+#### Description
+
+Adds M values along a linestring, interpolated between start and end measures
+
+#### Example
+
+```sql
+SELECT ST_AsText(ST_AddMeasure(ST_GeomFromText('LINESTRING(0 0, 5 0, 10 0)'), 0, 100))
+```
+
+----
+
+### ST_AddPoint
+
+
+#### Signatures
+
+```sql
+GEOMETRY ST_AddPoint (line GEOMETRY, point GEOMETRY)
+GEOMETRY ST_AddPoint (line GEOMETRY, point GEOMETRY, position INTEGER)
+```
+
+#### Description
+
+Adds a point to a linestring at a given position (default: end)
+
+#### Example
+
+```sql
+SELECT ST_AsText(ST_AddPoint(ST_GeomFromText('LINESTRING(0 0, 2 2)'), ST_Point(1, 1), 1))
 ```
 
 ----
@@ -298,6 +505,21 @@ POINT (2 2)
 
 ----
 
+### ST_Angle
+
+
+#### Signature
+
+```sql
+DOUBLE ST_Angle (point1 GEOMETRY, point2 GEOMETRY)
+```
+
+#### Description
+
+Returns the angle in radians between two points
+
+----
+
 ### ST_Area
 
 
@@ -325,7 +547,7 @@ The `POINT_2D` and `LINESTRING_2D` overloads of this function always return `0.0
 #### Example
 
 ```sql
-select ST_Area('POLYGON((0 0, 0 1, 1 1, 1 0, 0 0))'::geometry);
+SELECT ST_Area('POLYGON((0 0, 0 1, 1 1, 1 0, 0 0))'::GEOMETRY);
 -- 1.0
 ```
 
@@ -351,6 +573,69 @@ Returns `0.0` for any geometry that is not a `POLYGON`, `MULTIPOLYGON` or `GEOME
 
 ----
 
+### ST_AsEncodedPolyline
+
+
+#### Signature
+
+```sql
+VARCHAR ST_AsEncodedPolyline (line GEOMETRY)
+```
+
+#### Description
+
+Encodes a linestring as a Google Encoded Polyline string
+
+#### Example
+
+```sql
+SELECT ST_AsEncodedPolyline(ST_GeomFromText('LINESTRING(-120.2 38.5, -120.95 40.7, -126.453 43.252)'))
+```
+
+----
+
+### ST_AsEWKB
+
+
+#### Signature
+
+```sql
+BLOB ST_AsEWKB (geom GEOMETRY)
+```
+
+#### Description
+
+Returns the geometry as EWKB (Extended Well-Known Binary). Alias for ST_AsWKB.
+
+#### Example
+
+```sql
+SELECT ST_AsEWKB(ST_Point(1, 2))::BLOB
+```
+
+----
+
+### ST_AsEWKT
+
+
+#### Signature
+
+```sql
+VARCHAR ST_AsEWKT (geom GEOMETRY)
+```
+
+#### Description
+
+Returns the geometry as an Extended WKT (EWKT) string
+
+#### Example
+
+```sql
+SELECT ST_AsEWKT(ST_Point(1, 2))
+```
+
+----
+
 ### ST_AsGeoJSON
 
 
@@ -371,20 +656,20 @@ This function supports geometries with Z values, but not M values. M values are 
 #### Example
 
 ```sql
-select ST_AsGeoJSON('POLYGON((0 0, 0 1, 1 1, 1 0, 0 0))'::geometry);
+SELECT ST_AsGeoJSON('POLYGON((0 0, 0 1, 1 1, 1 0, 0 0))'::GEOMETRY);
 ----
-{"type":"Polygon","coordinates":[[[0.0,0.0],[0.0,1.0],[1.0,1.0],[1.0,0.0],[0.0,0.0]]]}
+{"type":"Polygon","coordinates":[[[0.0, 0.0], [0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]]]}
 
 -- Convert a geometry into a full GeoJSON feature (requires the JSON extension to be loaded)
 SELECT CAST({
     type: 'Feature',
-    geometry: ST_AsGeoJSON(ST_Point(1,2)),
+    geometry: ST_AsGeoJSON(ST_Point(1, 2)),
     properties: {
         name: 'my_point'
     }
 } AS JSON);
 ----
-{"type":"Feature","geometry":{"type":"Point","coordinates":[1.0,2.0]},"properties":{"name":"my_point"}}
+{"type":"Feature","geometry":{"type":"Point","coordinates":[1.0, 2.0]},"properties":{"name":"my_point"}}
 ```
 
 ----
@@ -405,9 +690,30 @@ Returns the geometry as a HEXWKB string
 #### Example
 
 ```sql
-SELECT ST_AsHexWKB('POLYGON((0 0, 0 1, 1 1, 1 0, 0 0))'::geometry);
+SELECT ST_AsHexWKB('POLYGON((0 0, 0 1, 1 1, 1 0, 0 0))'::GEOMETRY);
 ----
 01030000000100000005000000000000000000000000000...
+```
+
+----
+
+### ST_AsLatLonText
+
+
+#### Signature
+
+```sql
+VARCHAR ST_AsLatLonText (geom GEOMETRY)
+```
+
+#### Description
+
+Returns a point as a DMS (degrees-minutes-seconds) latitude/longitude string
+
+#### Example
+
+```sql
+SELECT ST_AsLatLonText(ST_Point(-73.9857, 40.7484))
 ```
 
 ----
@@ -476,14 +782,33 @@ VARCHAR ST_AsText (box BOX_2D)
 
 #### Description
 
-Returns the geometry as a WKT string
+Returns the Well-Known Text (WKT) representation of the geometry
 
 #### Example
 
 ```sql
-SELECT ST_MakeEnvelope(0,0,1,1);
+ST_AsText(ST_GeomFromWKB(X'01010000000000000000000000000000000000000000000000'))
+```
+
 ----
-POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))
+
+### ST_AsTWKB
+
+
+#### Signature
+
+```sql
+BLOB ST_AsTWKB (geom GEOMETRY, precision INTEGER)
+```
+
+#### Description
+
+Encodes geometry as Tiny WKB (TWKB) with specified coordinate precision
+
+#### Example
+
+```sql
+SELECT ST_AsTWKB(ST_Point(1, 2), 0)
 ```
 
 ----
@@ -494,19 +819,17 @@ POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))
 #### Signature
 
 ```sql
-WKB_BLOB ST_AsWKB (geom GEOMETRY)
+BLOB ST_AsWKB (geom GEOMETRY)
 ```
 
 #### Description
 
-Returns the geometry as a WKB (Well-Known-Binary) blob
+Returns the Well-Known Binary (WKB) representation of the geometry
 
 #### Example
 
 ```sql
-SELECT ST_AsWKB('POLYGON((0 0, 0 1, 1 1, 1 0, 0 0))'::GEOMETRY)::BLOB;
-----
-\x01\x03\x00\x00\x00\x01\x00\x00\x00\x05...
+st_aswkb(ST_GeomFromWKB(X'01010000000000000000000000000000000000000000000000000'))
 ```
 
 ----
@@ -547,6 +870,42 @@ GEOMETRY ST_Boundary (geom GEOMETRY)
 #### Description
 
 Returns the "boundary" of a geometry
+
+----
+
+### ST_BoundingDiagonal
+
+
+#### Signature
+
+```sql
+GEOMETRY ST_BoundingDiagonal (geom GEOMETRY)
+```
+
+#### Description
+
+Returns the diagonal of the bounding box as a linestring
+
+----
+
+### ST_Box2dFromGeoHash
+
+
+#### Signature
+
+```sql
+GEOMETRY ST_Box2dFromGeoHash (hash VARCHAR)
+```
+
+#### Description
+
+Returns the bounding box polygon of a GeoHash cell
+
+#### Example
+
+```sql
+SELECT ST_AsText(ST_Box2dFromGeoHash('dr5regw3p'))
+```
 
 ----
 
@@ -592,7 +951,7 @@ GEOMETRY ST_BuildArea (geom GEOMETRY)
 
 #### Description
 
-Creates a polygonal geometry by attemtping to "fill in" the input geometry.
+Creates a polygonal geometry by attempting to "fill in" the input geometry.
 
 Unlike ST_Polygonize, this function does not fill in holes.
 
@@ -615,6 +974,42 @@ POINT_2D ST_Centroid (box BOX_2DF)
 #### Description
 
 Returns the centroid of a geometry
+
+----
+
+### ST_ChaikinSmoothing
+
+
+#### Signature
+
+```sql
+GEOMETRY ST_ChaikinSmoothing (geom GEOMETRY, iterations INTEGER)
+```
+
+#### Description
+
+Smooths a geometry using Chaikin's corner-cutting algorithm
+
+#### Example
+
+```sql
+SELECT ST_AsText(ST_ChaikinSmoothing(ST_GeomFromText('LINESTRING(0 0, 5 10, 10 0)'), 1))
+```
+
+----
+
+### ST_ClipByBox2D
+
+
+#### Signature
+
+```sql
+GEOMETRY ST_ClipByBox2D (geom GEOMETRY, box GEOMETRY)
+```
+
+#### Description
+
+Clips a geometry by a bounding box
 
 ----
 
@@ -703,9 +1098,9 @@ GEOMETRY ST_CollectionExtract (geom GEOMETRY)
 Extracts geometries from a GeometryCollection into a typed multi geometry.
 
 If the input geometry is a GeometryCollection, the function will return a multi geometry, determined by the `type` parameter.
-- if `type` = 1, returns a MultiPoint containg all the Points in the collection
-- if `type` = 2, returns a MultiLineString containg all the LineStrings in the collection
-- if `type` = 3, returns a MultiPolygon containg all the Polygons in the collection
+- if `type` = 1, returns a MultiPoint containing all the Points in the collection
+- if `type` = 2, returns a MultiLineString containing all the LineStrings in the collection
+- if `type` = 3, returns a MultiPolygon containing all the Polygons in the collection
 
 If no `type` parameters is provided, the function will return a multi geometry matching the highest "surface dimension"
 of the contained geometries. E.g. if the collection contains only Points, a MultiPoint will be returned. But if the
@@ -720,7 +1115,7 @@ If the input geometry is not a GeometryCollection, the function will return the 
 #### Example
 
 ```sql
-select st_collectionextract('MULTIPOINT(1 2,3 4)'::geometry, 1);
+SELECT ST_CollectionExtract('MULTIPOINT(1 2, 3 4)'::GEOMETRY, 1);
 -- MULTIPOINT (1 2, 3 4)
 ```
 
@@ -790,6 +1185,21 @@ GEOMETRY ST_ConvexHull (geom GEOMETRY)
 #### Description
 
 Returns the convex hull enclosing the geometry
+
+----
+
+### ST_CoordDim
+
+
+#### Signature
+
+```sql
+INTEGER ST_CoordDim (geom GEOMETRY)
+```
+
+#### Description
+
+Returns the coordinate dimension of a geometry
 
 ----
 
@@ -909,50 +1319,39 @@ Returns true if geom1 "crosses" geom2
 
 ----
 
-### ST_DWithin
+### ST_DelaunayTriangles
 
 
 #### Signature
 
 ```sql
-BOOLEAN ST_DWithin (geom1 GEOMETRY, geom2 GEOMETRY, distance DOUBLE)
+GEOMETRY ST_DelaunayTriangles (geom GEOMETRY)
 ```
 
 #### Description
 
-Returns if two geometries are within a target distance of each-other
+Returns Delaunay triangulation of input geometry vertices
 
 ----
 
-### ST_DWithin_GEOS
+### ST_DFullyWithin
 
 
 #### Signature
 
 ```sql
-BOOLEAN ST_DWithin_GEOS (geom1 GEOMETRY, geom2 GEOMETRY, distance DOUBLE)
+BOOLEAN ST_DFullyWithin (geom1 GEOMETRY, geom2 GEOMETRY, distance DOUBLE)
 ```
 
 #### Description
 
-Returns if two geometries are within a target distance of each-other
+Returns true if every point of geom1 is within the given distance of geom2. Currently restricted to POINT inputs (reduces to ST_DWithin for points).
 
-----
-
-### ST_DWithin_Spheroid
-
-
-#### Signature
+#### Example
 
 ```sql
-BOOLEAN ST_DWithin_Spheroid (p1 POINT_2D, p2 POINT_2D, distance DOUBLE)
+SELECT ST_DFullyWithin(ST_Point(0, 0), ST_Point(1, 0), 2.0)
 ```
-
-#### Description
-
-Returns if two POINT_2D's are within a target distance in meters, using an ellipsoidal model of the earths surface
-
-The input geometry is assumed to be in the [EPSG:4326](https://en.wikipedia.org/wiki/World_Geodetic_System) coordinate system (WGS84), with [latitude, longitude] axis order and the distance is returned in meters. This function uses the [GeographicLib](https://geographiclib.sourceforge.io/) library to solve the [inverse geodesic problem](https://en.wikipedia.org/wiki/Geodesics_on_an_ellipsoid#Solution_of_the_direct_and_inverse_problems), calculating the distance between two points using an ellipsoidal model of the earth. This is a highly accurate method for calculating the distance between two arbitrary points taking the curvature of the earths surface into account, but is also the slowest.
 
 ----
 
@@ -992,7 +1391,7 @@ Returns the "topological dimension" of a geometry.
 #### Example
 
 ```sql
-select st_dimension('POLYGON((0 0, 0 1, 1 1, 1 0, 0 0))'::geometry);
+SELECT ST_Dimension('POLYGON((0 0, 0 1, 1 1, 1 0, 0 0))'::GEOMETRY);
 ----
 2
 ```
@@ -1124,16 +1523,16 @@ STRUCT(geom GEOMETRY, path INTEGER[])[] ST_Dump (geom GEOMETRY)
 
 Dumps a geometry into a list of sub-geometries and their "path" in the original geometry.
 
-You can use the `UNNEST(res, recursive := true)` function to explode  resulting list of structs into multiple rows.
+You can use the `unnest(res, recursive := true)` function to explode the resulting list of structs into multiple rows.
 
 #### Example
 
 ```sql
-select st_dump('MULTIPOINT(1 2,3 4)'::geometry);
+SELECT ST_Dump('MULTIPOINT(1 2, 3 4)'::GEOMETRY);
 ----
 [{'geom': 'POINT(1 2)', 'path': [0]}, {'geom': 'POINT(3 4)', 'path': [1]}]
 
-select unnest(st_dump('MULTIPOINT(1 2,3 4)'::geometry), recursive := true);
+SELECT unnest(ST_Dump('MULTIPOINT(1 2, 3 4)'::GEOMETRY), recursive := true);
 -- ┌─────────────┬─────────┐
 -- │    geom     │  path   │
 -- │  geometry   │ int32[] │
@@ -1142,6 +1541,53 @@ select unnest(st_dump('MULTIPOINT(1 2,3 4)'::geometry), recursive := true);
 -- │ POINT (3 4) │ [2]     │
 -- └─────────────┴─────────┘
 ```
+
+----
+
+### ST_DWithin
+
+
+#### Signature
+
+```sql
+BOOLEAN ST_DWithin (geom1 GEOMETRY, geom2 GEOMETRY, distance DOUBLE)
+```
+
+#### Description
+
+Returns if two geometries are within a target distance of each-other
+
+----
+
+### ST_DWithin_GEOS
+
+
+#### Signature
+
+```sql
+BOOLEAN ST_DWithin_GEOS (geom1 GEOMETRY, geom2 GEOMETRY, distance DOUBLE)
+```
+
+#### Description
+
+Returns true if two geometries are within a target distance of each-other
+
+----
+
+### ST_DWithin_Spheroid
+
+
+#### Signature
+
+```sql
+BOOLEAN ST_DWithin_Spheroid (p1 POINT_2D, p2 POINT_2D, distance DOUBLE)
+```
+
+#### Description
+
+Returns if two POINT_2D's are within a target distance in meters, using an ellipsoidal model of the earths surface
+
+The input geometry is assumed to be in the [EPSG:4326](https://en.wikipedia.org/wiki/World_Geodetic_System) coordinate system (WGS84), with [latitude, longitude] axis order and the distance is returned in meters. This function uses the [GeographicLib](https://geographiclib.sourceforge.io/) library to solve the [inverse geodesic problem](https://en.wikipedia.org/wiki/Geodesics_on_an_ellipsoid#Solution_of_the_direct_and_inverse_problems), calculating the distance between two points using an ellipsoidal model of the earth. This is a highly accurate method for calculating the distance between two arbitrary points taking the curvature of the earths surface into account, but is also the slowest.
 
 ----
 
@@ -1221,11 +1667,10 @@ SELECT ST_AsText(ST_Expand(ST_GeomFromText('POINT(20 30)'), 0.1));
 ### ST_Extent
 
 
-#### Signatures
+#### Signature
 
 ```sql
 BOX_2D ST_Extent (geom GEOMETRY)
-BOX_2D ST_Extent (wkb WKB_BLOB)
 ```
 
 #### Description
@@ -1367,6 +1812,218 @@ The following cases apply:
 
 ----
 
+### ST_ForceCollection
+
+
+#### Signature
+
+```sql
+GEOMETRY ST_ForceCollection (geom GEOMETRY)
+```
+
+#### Description
+
+Wraps a geometry in a GeometryCollection (no-op if already a collection)
+
+#### Example
+
+```sql
+SELECT ST_AsText(ST_ForceCollection(ST_Point(1, 2)))
+```
+
+----
+
+### ST_ForcePolygonCCW
+
+
+#### Signature
+
+```sql
+GEOMETRY ST_ForcePolygonCCW (geom GEOMETRY)
+```
+
+#### Description
+
+Forces polygon exterior rings to be counter-clockwise
+
+----
+
+### ST_ForcePolygonCW
+
+
+#### Signature
+
+```sql
+GEOMETRY ST_ForcePolygonCW (geom GEOMETRY)
+```
+
+#### Description
+
+Forces polygon exterior rings to be clockwise
+
+----
+
+### ST_FrechetDistance
+
+
+#### Signature
+
+```sql
+DOUBLE ST_FrechetDistance (geom1 GEOMETRY, geom2 GEOMETRY)
+```
+
+#### Description
+
+Returns the Frechet distance between two geometries
+
+----
+
+### ST_GeoHash
+
+
+#### Signature
+
+```sql
+VARCHAR ST_GeoHash (geom GEOMETRY, precision INTEGER)
+```
+
+#### Description
+
+Returns the GeoHash string of a geometry's centroid at the given precision
+
+#### Example
+
+```sql
+SELECT ST_GeoHash(ST_Point(-74.006, 40.7128), 9);
+```
+
+----
+
+### ST_GeometricMedian
+
+
+#### Signature
+
+```sql
+GEOMETRY ST_GeometricMedian (geom GEOMETRY)
+```
+
+#### Description
+
+Returns the geometric median of a geometry's vertices (Weiszfeld algorithm)
+
+#### Example
+
+```sql
+SELECT ST_AsText(ST_GeometricMedian(ST_GeomFromText('MULTIPOINT(0 0, 10 0, 0 10)')))
+```
+
+----
+
+### ST_GeometryN
+
+
+#### Signature
+
+```sql
+GEOMETRY ST_GeometryN (geom GEOMETRY, n INTEGER)
+```
+
+#### Description
+
+Returns the Nth geometry from a geometry collection (0-indexed)
+
+----
+
+### ST_GeometryType
+
+
+#### Signatures
+
+```sql
+ANY ST_GeometryType (geom GEOMETRY)
+ANY ST_GeometryType (point POINT_2D)
+ANY ST_GeometryType (linestring LINESTRING_2D)
+ANY ST_GeometryType (polygon POLYGON_2D)
+```
+
+#### Description
+
+Returns a 'GEOMETRY_TYPE' enum identifying the input geometry type. Possible enum return types are: `POINT`, `LINESTRING`, `POLYGON`, `MULTIPOINT`, `MULTILINESTRING`, `MULTIPOLYGON`, and `GEOMETRYCOLLECTION`.
+
+#### Example
+
+```sql
+SELECT DISTINCT ST_GeometryType(ST_GeomFromText('POINT(1 1)'));
+----
+POINT
+```
+
+----
+
+### ST_GeomFromEWKB
+
+
+#### Signature
+
+```sql
+GEOMETRY ST_GeomFromEWKB (ewkb BLOB)
+```
+
+#### Description
+
+Creates a geometry from EWKB (Extended Well-Known Binary) data
+
+#### Example
+
+```sql
+SELECT ST_AsText(ST_GeomFromEWKB(ST_AsEWKB(ST_Point(1, 2))))
+```
+
+----
+
+### ST_GeomFromEWKT
+
+
+#### Signature
+
+```sql
+GEOMETRY ST_GeomFromEWKT (ewkt VARCHAR)
+```
+
+#### Description
+
+Parses an Extended WKT (EWKT) string, optionally with SRID prefix
+
+#### Example
+
+```sql
+SELECT ST_AsText(ST_GeomFromEWKT('SRID=4326;POINT(1 2)'))
+```
+
+----
+
+### ST_GeomFromGeoHash
+
+
+#### Signature
+
+```sql
+GEOMETRY ST_GeomFromGeoHash (hash VARCHAR)
+```
+
+#### Description
+
+Returns the center point of a GeoHash cell
+
+#### Example
+
+```sql
+SELECT ST_AsText(ST_GeomFromGeoHash('dr5regw3p'))
+```
+
+----
+
 ### ST_GeomFromGeoJSON
 
 
@@ -1384,7 +2041,7 @@ Deserializes a GEOMETRY from a GeoJSON fragment.
 #### Example
 
 ```sql
-SELECT ST_GeomFromGeoJSON('{"type":"Point","coordinates":[1.0,2.0]}');
+SELECT ST_GeomFromGeoJSON('{"type": "Point", "coordinates": [1.0, 2.0]}');
 ----
 POINT (1 2)
 ```
@@ -1404,7 +2061,7 @@ GEOMETRY ST_GeomFromHEXEWKB (hexwkb VARCHAR)
 
 Deserialize a GEOMETRY from a HEX(E)WKB encoded string
 
-DuckDB spatial doesnt currently differentiate between `WKB` and `EWKB`, so `ST_GeomFromHEXWKB` and `ST_GeomFromHEXEWKB" are just aliases of eachother.
+DuckDB spatial doesn't currently differentiate between `WKB` and `EWKB`, so `ST_GeomFromHEXWKB` and `ST_GeomFromHEXEWKB` are just aliases of each other.
 
 ----
 
@@ -1421,7 +2078,7 @@ GEOMETRY ST_GeomFromHEXWKB (hexwkb VARCHAR)
 
 Deserialize a GEOMETRY from a HEX(E)WKB encoded string
 
-DuckDB spatial doesnt currently differentiate between `WKB` and `EWKB`, so `ST_GeomFromHEXWKB` and `ST_GeomFromHEXEWKB" are just aliases of eachother.
+DuckDB spatial doesn't currently differentiate between `WKB` and `EWKB`, so `ST_GeomFromHEXWKB` and `ST_GeomFromHEXEWKB` are just aliases of each other.
 
 ----
 
@@ -1441,45 +2098,44 @@ Deserialize a GEOMETRY from a WKT encoded string
 
 ----
 
-### ST_GeomFromWKB
+### ST_GeomFromTWKB
 
 
-#### Signatures
+#### Signature
 
 ```sql
-GEOMETRY ST_GeomFromWKB (wkb WKB_BLOB)
-GEOMETRY ST_GeomFromWKB (blob BLOB)
+GEOMETRY ST_GeomFromTWKB (twkb BLOB)
 ```
 
 #### Description
 
-Deserializes a GEOMETRY from a WKB encoded blob
-
-----
-
-### ST_GeometryType
-
-
-#### Signatures
-
-```sql
-ANY ST_GeometryType (geom GEOMETRY)
-ANY ST_GeometryType (point POINT_2D)
-ANY ST_GeometryType (linestring LINESTRING_2D)
-ANY ST_GeometryType (polygon POLYGON_2D)
-ANY ST_GeometryType (wkb WKB_BLOB)
-```
-
-#### Description
-
-Returns a 'GEOMETRY_TYPE' enum identifying the input geometry type. Possible enum return types are: `POINT`, `LINESTRING`, `POLYGON`, `MULTIPOINT`, `MULTILINESTRING`, `MULTIPOLYGON`, and `GEOMETRYCOLLECTION`.
+Decodes a Tiny WKB (TWKB) binary into a geometry
 
 #### Example
 
 ```sql
-SELECT DISTINCT ST_GeometryType(ST_GeomFromText('POINT(1 1)'));
+SELECT ST_AsText(ST_GeomFromTWKB(ST_AsTWKB(ST_Point(1, 2), 0)))
+```
+
 ----
-POINT
+
+### ST_GeomFromWKB
+
+
+#### Signature
+
+```sql
+GEOMETRY ST_GeomFromWKB (wkb BLOB)
+```
+
+#### Description
+
+Creates a geometry from Well-Known Binary (WKB) representation
+
+#### Example
+
+```sql
+ST_GeomFromWKB(X'01010000000000000000000000000000000000000000000000')
 ```
 
 ----
@@ -1487,11 +2143,10 @@ POINT
 ### ST_HasM
 
 
-#### Signatures
+#### Signature
 
 ```sql
 BOOLEAN ST_HasM (geom GEOMETRY)
-BOOLEAN ST_HasM (wkb WKB_BLOB)
 ```
 
 #### Description
@@ -1527,11 +2182,10 @@ true
 ### ST_HasZ
 
 
-#### Signatures
+#### Signature
 
 ```sql
 BOOLEAN ST_HasZ (geom GEOMETRY)
-BOOLEAN ST_HasZ (wkb WKB_BLOB)
 ```
 
 #### Description
@@ -1564,6 +2218,21 @@ true
 
 ----
 
+### ST_HausdorffDistance
+
+
+#### Signature
+
+```sql
+DOUBLE ST_HausdorffDistance (geom1 GEOMETRY, geom2 GEOMETRY)
+```
+
+#### Description
+
+Returns the Hausdorff distance between two geometries
+
+----
+
 ### ST_Hilbert
 
 
@@ -1581,7 +2250,7 @@ UINTEGER ST_Hilbert (box BOX_2DF, bounds BOX_2DF)
 
 Encodes the X and Y values as the hilbert curve index for a curve covering the given bounding box.
 If a geometry is provided, the center of the approximate bounding box is used as the point to encode.
-If no bounding box is provided, the hilbert curve index is mapped to the full range of a single-presicion float.
+If no bounding box is provided, the hilbert curve index is mapped to the full range of a single-precision float.
 For the BOX_2D and BOX_2DF variants, the center of the box is used as the point to encode.
 
 ----
@@ -1653,7 +2322,7 @@ BOOLEAN ST_Intersects (geom1 GEOMETRY, geom2 GEOMETRY)
 
 #### Description
 
-Returns true if the geometries intersect
+Returns true if two geometries intersect
 
 ----
 
@@ -1687,6 +2356,21 @@ Check if a geometry is 'closed'
 
 ----
 
+### ST_IsCollection
+
+
+#### Signature
+
+```sql
+BOOLEAN ST_IsCollection (geom GEOMETRY)
+```
+
+#### Description
+
+Returns true if geometry is a Multi* or GeometryCollection type
+
+----
+
 ### ST_IsEmpty
 
 
@@ -1701,6 +2385,36 @@ BOOLEAN ST_IsEmpty (polygon POLYGON_2D)
 #### Description
 
 Returns true if the geometry is "empty".
+
+----
+
+### ST_IsPolygonCCW
+
+
+#### Signature
+
+```sql
+BOOLEAN ST_IsPolygonCCW (geom GEOMETRY)
+```
+
+#### Description
+
+Returns true if the exterior ring of a polygon is counter-clockwise
+
+----
+
+### ST_IsPolygonCW
+
+
+#### Signature
+
+```sql
+BOOLEAN ST_IsPolygonCW (geom GEOMETRY)
+```
+
+#### Description
+
+Returns true if the exterior ring of a polygon is clockwise
 
 ----
 
@@ -1749,6 +2463,103 @@ Returns true if the geometry is valid
 
 ----
 
+### ST_IsValidDetail
+
+
+#### Signature
+
+```sql
+STRUCT("valid" BOOLEAN, reason VARCHAR, "location" GEOMETRY) ST_IsValidDetail (geom GEOMETRY)
+```
+
+#### Description
+
+Returns a struct with validity info: {valid, reason, location}
+
+#### Example
+
+```sql
+SELECT ST_IsValidDetail(ST_GeomFromText('POLYGON((0 0, 1 1, 1 0, 0 1, 0 0))'))
+```
+
+----
+
+### ST_IsValidReason
+
+
+#### Signature
+
+```sql
+VARCHAR ST_IsValidReason (geom GEOMETRY)
+```
+
+#### Description
+
+Returns text explaining why a geometry is invalid, or 'Valid Geometry'
+
+----
+
+### ST_KNN
+
+
+#### Signatures
+
+```sql
+BOOLEAN ST_KNN (geom1 GEOMETRY, geom2 GEOMETRY, k INTEGER)
+BOOLEAN ST_KNN (geom1 GEOMETRY, geom2 GEOMETRY, k INTEGER, partition ANY)
+```
+
+#### Description
+
+K-nearest-neighbor join predicate: matches each row of the `geom1` side with its `k` nearest rows of the `geom2` side.
+
+`ST_KNN` is not a regular function. It is only valid as the condition of a `JOIN ... ON`, where the optimizer replaces the join with a dedicated `SPATIAL_KNN_JOIN` operator. Evaluating it anywhere else raises an error.
+
+- **Arguments**: `geom1` is the probe side (every row of it is matched), `geom2` is the searched side, regardless of the order in which the two tables are written in the `FROM` clause. `k` must be a constant integer `>= 1`.
+- **Distance**: planar euclidean distance between the two geometries, in the units of their coordinates, exactly as computed by `ST_Distance`. There is no geodesic mode: reproject longitude/latitude data to a metric CRS with `ST_Transform` first.
+- **Exactness**: the result is the exact set of `k` nearest rows. An R-tree over the `geom2` side yields candidates by bounding box distance, and candidates are refined with the exact geometry distance until no closer row can exist. If fewer than `k` rows are available, all of them are returned. Ties at the `k`-th distance are broken arbitrarily.
+- **Join types**: `INNER` and `LEFT`. Rows with a `NULL` or empty geometry never match; with a `LEFT JOIN` a probe row without any match is returned once, with `NULL` for the columns of the other side.
+- **Other conditions**: a condition on a single table restricts the rows of that table *before* the search, exactly like filtering it in a subquery. A condition comparing both tables is not part of the search: an equality (`a.x = b.x`) raises an error, anything else only filters the k rows that were found (`INNER` joins only). To search within groups of the `geom2` side, use the `partition` argument.
+- **Partitioning**: the optional `partition` argument is an expression over the `geom2` side. The search is then run independently within each distinct value of it, so each probe row is matched with its `k` nearest rows *per partition value* (`NULL` forms a partition of its own), while scanning the probe side only once.
+- **Memory**: the `geom2` side is materialized and indexed in memory, so it should be the smaller of the two inputs.
+
+#### Example
+
+```sql
+-- The 5 nearest hydrants of each building, with their distance (coordinates in a metric CRS)
+SELECT b.id, h.id, ST_Distance(b.geom, h.geom) AS dist
+FROM buildings b
+JOIN hydrants h ON ST_KNN(b.geom, h.geom, 5);
+
+-- Longitude/latitude input: project both sides to a metric CRS first
+SELECT b.id, h.id
+FROM (SELECT id, ST_Transform(geom, 'EPSG:4326', 'EPSG:3812', always_xy := true) AS geom FROM buildings) b
+JOIN (SELECT id, ST_Transform(geom, 'EPSG:4326', 'EPSG:3812', always_xy := true) AS geom FROM hydrants) h
+  ON ST_KNN(b.geom, h.geom, 5);
+
+-- The nearest point of interest of every category for each building, in a single join
+SELECT b.id, p.category, ST_Distance(b.geom, p.geom) AS dist
+FROM buildings b
+JOIN pois p ON ST_KNN(b.geom, p.geom, 1, p.category);
+```
+
+----
+
+### ST_LargestEmptyCircle
+
+
+#### Signature
+
+```sql
+GEOMETRY ST_LargestEmptyCircle (geom GEOMETRY, tolerance DOUBLE)
+```
+
+#### Description
+
+Returns the largest empty circle within a geometry
+
+----
+
 ### ST_Length
 
 
@@ -1782,6 +2593,48 @@ Returns the length of the input geometry in meters, using an ellipsoidal model o
 The input geometry is assumed to be in the [EPSG:4326](https://en.wikipedia.org/wiki/World_Geodetic_System) coordinate system (WGS84), with [latitude, longitude] axis order and the length is returned in meters. This function uses the [GeographicLib](https://geographiclib.sourceforge.io/) library, calculating the length using an ellipsoidal model of the earth. This is a highly accurate method for calculating the length of a line geometry taking the curvature of the earth into account, but is also the slowest.
 
 Returns `0.0` for any geometry that is not a `LINESTRING`, `MULTILINESTRING` or `GEOMETRYCOLLECTION` containing line geometries.
+
+----
+
+### ST_LineFromEncodedPolyline
+
+
+#### Signature
+
+```sql
+GEOMETRY ST_LineFromEncodedPolyline (encoded VARCHAR)
+```
+
+#### Description
+
+Decodes a Google Encoded Polyline string into a linestring
+
+#### Example
+
+```sql
+SELECT ST_AsText(ST_LineFromEncodedPolyline('_p~iF~ps|U_ulLnnqC_mqNvxq`@'))
+```
+
+----
+
+### ST_LineFromMultiPoint
+
+
+#### Signature
+
+```sql
+GEOMETRY ST_LineFromMultiPoint (multipoint GEOMETRY)
+```
+
+#### Description
+
+Creates a linestring from the points of a multipoint geometry
+
+#### Example
+
+```sql
+SELECT ST_AsText(ST_LineFromMultiPoint(ST_GeomFromText('MULTIPOINT(0 0, 1 1, 2 2)')))
+```
 
 ----
 
@@ -1855,7 +2708,7 @@ GEOMETRY ST_LineMerge (geom GEOMETRY, preserve_direction BOOLEAN)
 #### Signature
 
 ```sql
-GEOMETRY ST_LineString2DFromWKB (linestring LINESTRING_2D)
+LINESTRING_2D ST_LineString2DFromWKB (blob BLOB)
 ```
 
 #### Description
@@ -1925,6 +2778,27 @@ If offset is provided, the resulting vertices are offset by the given amount per
 
 ----
 
+### ST_LongestLine
+
+
+#### Signature
+
+```sql
+GEOMETRY ST_LongestLine (geom1 GEOMETRY, geom2 GEOMETRY)
+```
+
+#### Description
+
+Returns the longest line between two geometries (vertex-to-vertex)
+
+#### Example
+
+```sql
+SELECT ST_AsText(ST_LongestLine(ST_Point(0, 0), ST_Point(1, 1)))
+```
+
+----
+
 ### ST_M
 
 
@@ -1942,48 +2816,6 @@ Returns the M coordinate of a point geometry
 
 ```sql
 SELECT ST_M(ST_Point(1, 2, 3, 4))
-```
-
-----
-
-### ST_MMax
-
-
-#### Signature
-
-```sql
-DOUBLE ST_MMax (geom GEOMETRY)
-```
-
-#### Description
-
-Returns the maximum M coordinate of a geometry
-
-#### Example
-
-```sql
-SELECT ST_MMax(ST_Point(1, 2, 3, 4))
-```
-
-----
-
-### ST_MMin
-
-
-#### Signature
-
-```sql
-DOUBLE ST_MMin (geom GEOMETRY)
-```
-
-#### Description
-
-Returns the minimum M coordinate of a geometry
-
-#### Example
-
-```sql
-SELECT ST_MMin(ST_Point(1, 2, 3, 4))
 ```
 
 ----
@@ -2104,7 +2936,7 @@ SELECT ST_MakePolygon(ST_LineString([ST_Point(0, 0), ST_Point(1, 0), ST_Point(1,
 ### ST_MakeValid
 
 
-#### Signature
+#### Signatures
 
 ```sql
 GEOMETRY ST_MakeValid (geom GEOMETRY)
@@ -2114,14 +2946,22 @@ GEOMETRY ST_MakeValid (geom GEOMETRY, method VARCHAR, keepCollapsed BOOLEAN)
 
 #### Description
 
-Returns a valid representation of the geometry.
+Returns a valid representation of the geometry
 
-`method`: accepts `LINEWORK` or `STRUCTURE`. This parameter is case-insensitive. The default value is `LINEWORK`.
+----
 
-- The `LINEWORK` method combines all rings into a set of noded lines and then extracts valid polygons from that linework. This method keeps all input vertices.
-- The `STRUCTURE` method first makes all rings valid then merges shells and subtracts holes from shells to generate valid result. It assumes that holes and shells are correctly categorized.
+### ST_MaxDistance
 
-`keepCollapsed`: whether or not to retain components that have collapsed into a lower dimensionality. Only works with the  `STRUCTURE` method. The default value is `true`.
+
+#### Signature
+
+```sql
+DOUBLE ST_MaxDistance (geom1 GEOMETRY, geom2 GEOMETRY)
+```
+
+#### Description
+
+Returns the maximum distance between two geometries
 
 ----
 
@@ -2155,6 +2995,72 @@ SELECT ST_MaximumInscribedCircle(
 
 ----
 
+### ST_MemSize
+
+
+#### Signature
+
+```sql
+INTEGER ST_MemSize (geom GEOMETRY)
+```
+
+#### Description
+
+Returns the memory size of a geometry in bytes
+
+#### Example
+
+```sql
+SELECT ST_MemSize(ST_Point(1, 2))
+```
+
+----
+
+### ST_MinimumBoundingCircle
+
+
+#### Signature
+
+```sql
+GEOMETRY ST_MinimumBoundingCircle (geom GEOMETRY)
+```
+
+#### Description
+
+Returns the minimum bounding circle of a geometry
+
+----
+
+### ST_MinimumClearance
+
+
+#### Signature
+
+```sql
+DOUBLE ST_MinimumClearance (geom GEOMETRY)
+```
+
+#### Description
+
+Returns the minimum clearance of a geometry
+
+----
+
+### ST_MinimumClearanceLine
+
+
+#### Signature
+
+```sql
+GEOMETRY ST_MinimumClearanceLine (geom GEOMETRY)
+```
+
+#### Description
+
+Returns the line spanning the minimum clearance
+
+----
+
 ### ST_MinimumRotatedRectangle
 
 
@@ -2167,6 +3073,48 @@ GEOMETRY ST_MinimumRotatedRectangle (geom GEOMETRY)
 #### Description
 
 Returns the minimum rotated rectangle that bounds the input geometry, finding the surrounding box that has the lowest area by using a rotated rectangle, rather than taking the lowest and highest coordinate values as per ST_Envelope().
+
+----
+
+### ST_MMax
+
+
+#### Signature
+
+```sql
+DOUBLE ST_MMax (geom GEOMETRY)
+```
+
+#### Description
+
+Returns the maximum M coordinate of a geometry
+
+#### Example
+
+```sql
+SELECT ST_MMax(ST_Point(1, 2, 3, 4))
+```
+
+----
+
+### ST_MMin
+
+
+#### Signature
+
+```sql
+DOUBLE ST_MMin (geom GEOMETRY)
+```
+
+#### Description
+
+Returns the minimum M coordinate of a geometry
+
+#### Example
+
+```sql
+SELECT ST_MMin(ST_Point(1, 2, 3, 4))
+```
 
 ----
 
@@ -2203,6 +3151,21 @@ MULTIPOLYGON (((0 0, 0 1, 1 1, 1 0, 0 0)))
 
 ----
 
+### ST_NDims
+
+
+#### Signature
+
+```sql
+INTEGER ST_NDims (geom GEOMETRY)
+```
+
+#### Description
+
+Returns the topological dimension of a geometry
+
+----
+
 ### ST_NGeometries
 
 
@@ -2232,25 +3195,6 @@ INTEGER ST_NInteriorRings (polygon POLYGON_2D)
 #### Description
 
 Returns the number of interior rings of a polygon
-
-----
-
-### ST_NPoints
-
-
-#### Signatures
-
-```sql
-UINTEGER ST_NPoints (geom GEOMETRY)
-UBIGINT ST_NPoints (point POINT_2D)
-UBIGINT ST_NPoints (linestring LINESTRING_2D)
-UBIGINT ST_NPoints (polygon POLYGON_2D)
-UBIGINT ST_NPoints (box BOX_2D)
-```
-
-#### Description
-
-Returns the number of vertices within a geometry
 
 ----
 
@@ -2292,6 +3236,40 @@ GEOMETRY ST_Normalize (geom GEOMETRY)
 #### Description
 
 Returns the "normalized" representation of the geometry
+
+----
+
+### ST_NPoints
+
+
+#### Signatures
+
+```sql
+UINTEGER ST_NPoints (geom GEOMETRY)
+UBIGINT ST_NPoints (point POINT_2D)
+UBIGINT ST_NPoints (linestring LINESTRING_2D)
+UBIGINT ST_NPoints (polygon POLYGON_2D)
+UBIGINT ST_NPoints (box BOX_2D)
+```
+
+#### Description
+
+Returns the number of vertices within a geometry
+
+----
+
+### ST_NRings
+
+
+#### Signature
+
+```sql
+INTEGER ST_NRings (geom GEOMETRY)
+```
+
+#### Description
+
+Returns the number of rings in a polygon (exterior + interior)
 
 ----
 
@@ -2343,6 +3321,36 @@ UBIGINT ST_NumPoints (box BOX_2D)
 #### Description
 
 Returns the number of vertices within a geometry
+
+----
+
+### ST_OffsetCurve
+
+
+#### Signature
+
+```sql
+GEOMETRY ST_OffsetCurve (geom GEOMETRY, distance DOUBLE)
+```
+
+#### Description
+
+Returns an offset curve from a linestring
+
+----
+
+### ST_OrderingEquals
+
+
+#### Signature
+
+```sql
+BOOLEAN ST_OrderingEquals (geom1 GEOMETRY, geom2 GEOMETRY)
+```
+
+#### Description
+
+Returns true if two geometries are exactly equal (same vertex order)
 
 ----
 
@@ -2434,7 +3442,7 @@ Creates a POINT_2D
 #### Signature
 
 ```sql
-GEOMETRY ST_Point2DFromWKB (point POINT_2D)
+POINT_2D ST_Point2DFromWKB (blob BLOB)
 ```
 
 #### Description
@@ -2520,13 +3528,34 @@ Collects all the vertices in the geometry into a MULTIPOINT
 #### Example
 
 ```sql
-select st_points('LINESTRING(1 1, 2 2)'::geometry);
+SELECT ST_Points('LINESTRING(1 1, 2 2)'::GEOMETRY);
 ----
 MULTIPOINT (1 1, 2 2)
 
-select st_points('MULTIPOLYGON Z EMPTY'::geometry);
+SELECT ST_Points('MULTIPOLYGON Z EMPTY'::GEOMETRY);
 ----
 MULTIPOINT Z EMPTY
+```
+
+----
+
+### ST_Polygon
+
+
+#### Signature
+
+```sql
+GEOMETRY ST_Polygon (line GEOMETRY)
+```
+
+#### Description
+
+Creates a polygon from a closed linestring
+
+#### Example
+
+```sql
+SELECT ST_AsText(ST_Polygon(ST_GeomFromText('LINESTRING(0 0, 1 0, 1 1, 0 1, 0 0)')))
 ```
 
 ----
@@ -2537,7 +3566,7 @@ MULTIPOINT Z EMPTY
 #### Signature
 
 ```sql
-GEOMETRY ST_Polygon2DFromWKB (polygon POLYGON_2D)
+POLYGON_2D ST_Polygon2DFromWKB (blob BLOB)
 ```
 
 #### Description
@@ -2572,6 +3601,27 @@ GEOMETRYCOLLECTION (POLYGON ((0 0, 0 10, 10 10, 10 0, 0 0)))
 
 ----
 
+### ST_Project
+
+
+#### Signature
+
+```sql
+GEOMETRY ST_Project (point GEOMETRY, distance DOUBLE, azimuth DOUBLE)
+```
+
+#### Description
+
+Projects a point along the geodesic by a distance (meters) and azimuth (radians)
+
+#### Example
+
+```sql
+SELECT ST_AsText(ST_Project(ST_Point(0, 0), 100000, 0))
+```
+
+----
+
 ### ST_QuadKey
 
 
@@ -2596,9 +3646,30 @@ The geometry overload throws an error if the input geometry is not a `POINT`
 #### Example
 
 ```sql
-SELECT ST_QuadKey(st_point(11.08, 49.45), 10);
+SELECT ST_QuadKey(ST_Point(11.08, 49.45), 10);
 ----
 1333203202
+```
+
+----
+
+### ST_QuantizeCoordinates
+
+
+#### Signature
+
+```sql
+GEOMETRY ST_QuantizeCoordinates (geom GEOMETRY, precision INTEGER)
+```
+
+#### Description
+
+Rounds all coordinates to the given number of decimal places
+
+#### Example
+
+```sql
+SELECT ST_AsText(ST_QuantizeCoordinates(ST_Point(1.23456, 2.78901), 2))
 ```
 
 ----
@@ -2615,6 +3686,63 @@ GEOMETRY ST_ReducePrecision (geom GEOMETRY, precision DOUBLE)
 #### Description
 
 Returns the geometry with all vertices reduced to the given precision
+
+----
+
+### ST_Relate
+
+
+#### Signature
+
+```sql
+VARCHAR ST_Relate (geom1 GEOMETRY, geom2 GEOMETRY)
+```
+
+#### Description
+
+Returns the DE-9IM intersection matrix string
+
+----
+
+### ST_RelateMatch
+
+
+#### Signature
+
+```sql
+BOOLEAN ST_RelateMatch (matrix VARCHAR, pattern VARCHAR)
+```
+
+#### Description
+
+Tests if a DE-9IM matrix string matches a DE-9IM pattern
+
+#### Example
+
+```sql
+SELECT ST_RelateMatch('FF2FF1FF2', 'FF*FF****')
+```
+
+----
+
+### ST_RemovePoint
+
+
+#### Signature
+
+```sql
+GEOMETRY ST_RemovePoint (line GEOMETRY, position INTEGER)
+```
+
+#### Description
+
+Removes a point from a linestring (0-indexed, negative from end)
+
+#### Example
+
+```sql
+SELECT ST_AsText(ST_RemovePoint(ST_GeomFromText('LINESTRING(0 0, 1 1, 2 2)'), 1))
+```
 
 ----
 
@@ -2651,6 +3779,120 @@ Returns the geometry with the order of its vertices reversed
 
 ----
 
+### ST_Scroll
+
+
+#### Signature
+
+```sql
+GEOMETRY ST_Scroll (line GEOMETRY, point GEOMETRY)
+```
+
+#### Description
+
+Rotates a closed linestring's start point to the vertex nearest to the given point
+
+#### Example
+
+```sql
+SELECT ST_AsText(ST_Scroll(ST_GeomFromText('LINESTRING(0 0, 1 0, 1 1, 0 1, 0 0)'), ST_Point(1, 1)))
+```
+
+----
+
+### ST_Segmentize
+
+
+#### Signature
+
+```sql
+GEOMETRY ST_Segmentize (geom GEOMETRY, max_segment_length DOUBLE)
+```
+
+#### Description
+
+Densifies a geometry by adding vertices so no segment exceeds max_segment_length
+
+----
+
+### ST_SetPoint
+
+
+#### Signature
+
+```sql
+GEOMETRY ST_SetPoint (line GEOMETRY, position INTEGER, point GEOMETRY)
+```
+
+#### Description
+
+Replaces a point in a linestring (0-indexed, negative from end)
+
+#### Example
+
+```sql
+SELECT ST_AsText(ST_SetPoint(ST_GeomFromText('LINESTRING(0 0, 1 1, 2 2)'), 1, ST_Point(5, 5)))
+```
+
+----
+
+### ST_SetSRID
+
+
+#### Signature
+
+```sql
+GEOMETRY ST_SetSRID (geom GEOMETRY, srid INTEGER)
+```
+
+#### Description
+
+Sets the SRID of a geometry (no-op in DuckDB — use GEOMETRY('EPSG:XXXX') type for CRS)
+
+#### Example
+
+```sql
+SELECT ST_SetSRID(ST_Point(1, 2), 4326)
+```
+
+----
+
+### ST_SharedPaths
+
+
+#### Signature
+
+```sql
+GEOMETRY ST_SharedPaths (geom1 GEOMETRY, geom2 GEOMETRY)
+```
+
+#### Description
+
+Returns shared paths between two linear geometries
+
+----
+
+### ST_ShiftLongitude
+
+
+#### Signature
+
+```sql
+GEOMETRY ST_ShiftLongitude (geom GEOMETRY)
+```
+
+#### Description
+
+Shifts longitude: negative values get +360, values >180 get -360
+
+#### Example
+
+```sql
+SELECT ST_AsText(ST_ShiftLongitude(ST_Point(-120, 45)))
+```
+
+----
+
 ### ST_ShortestLine
 
 
@@ -2681,6 +3923,21 @@ Returns a simplified version of the geometry
 
 ----
 
+### ST_SimplifyPolygonHull
+
+
+#### Signature
+
+```sql
+GEOMETRY ST_SimplifyPolygonHull (geom GEOMETRY, vertex_fraction DOUBLE)
+```
+
+#### Description
+
+Simplifies a polygon while preserving topology
+
+----
+
 ### ST_SimplifyPreserveTopology
 
 
@@ -2696,39 +3953,95 @@ Returns a simplified version of the geometry that preserves topology
 
 ----
 
+### ST_SimplifyVW
+
+
+#### Signature
+
+```sql
+GEOMETRY ST_SimplifyVW (geom GEOMETRY, area_threshold DOUBLE)
+```
+
+#### Description
+
+Simplifies geometry using the Visvalingam-Whyatt area-based algorithm
+
+#### Example
+
+```sql
+SELECT ST_AsText(ST_SimplifyVW(ST_GeomFromText('LINESTRING(0 0, 1 1, 2 0, 3 1, 4 0)'), 0.5))
+```
+
+----
+
 ### ST_Snap
 
 
 #### Signature
 
 ```sql
-GEOMETRY ST_Snap (geom GEOMETRY, reference GEOMETRY, tolerance DOUBLE)
+GEOMETRY ST_Snap (geom GEOMETRY, snap_to GEOMETRY, tolerance DOUBLE)
 ```
 
 #### Description
 
 Snaps the vertices and segments of a geometry to another geometry's vertices within the given tolerance
 
+----
+
+### ST_SnapToGrid
+
+
+#### Signature
+
+```sql
+GEOMETRY ST_SnapToGrid (geom GEOMETRY, size DOUBLE)
+```
+
+#### Description
+
+Snaps all coordinates to a grid of the given size
+
+----
+
+### ST_Split
+
+
+#### Signature
+
+```sql
+GEOMETRY ST_Split (geom GEOMETRY, blade GEOMETRY)
+```
+
+#### Description
+
+Splits a geometry by another geometry, returning a geometry collection of the pieces
+
 #### Example
 
 ```sql
--- Multipolygon snapped to linestring at 1.01x distance
-SELECT ST_AsText(ST_Snap(poly, line, ST_Distance(poly, line) * 1.01))
-FROM (SELECT
-    ST_GeomFromText('MULTIPOLYGON(((26 125,26 200,126 200,126 125,26 125),(51 150,101 150,76 175,51 150)),((151 100,151 200,176 175,151 100)))') AS poly,
-    ST_GeomFromText('LINESTRING(5 107,54 84,101 100)') AS line
-) AS foo;
-----
-MULTIPOLYGON (((26 125, 26 200, 126 200, 126 125, 101 100, 26 125), (51 150, 101 150, 76 175, 51 150)), ((151 100, 151 200, 176 175, 151 100)))
+SELECT ST_AsText(ST_Split(ST_GeomFromText('LINESTRING(0 0, 10 0)'), ST_Point(5, 0)))
+```
 
--- Multipolygon snapped to linestring at 1.25x distance (more vertices snap)
-SELECT ST_AsText(ST_Snap(poly, line, ST_Distance(poly, line) * 1.25))
-FROM (SELECT
-    ST_GeomFromText('MULTIPOLYGON(((26 125,26 200,126 200,126 125,26 125),(51 150,101 150,76 175,51 150)),((151 100,151 200,176 175,151 100)))') AS poly,
-    ST_GeomFromText('LINESTRING(5 107,54 84,101 100)') AS line
-) AS foo;
 ----
-MULTIPOLYGON (((5 107, 26 200, 126 200, 126 125, 101 100, 54 84, 5 107), (51 150, 101 150, 76 175, 51 150)), ((151 100, 151 200, 176 175, 151 100)))
+
+### ST_SRID
+
+
+#### Signature
+
+```sql
+INTEGER ST_SRID (geom GEOMETRY)
+```
+
+#### Description
+
+Returns the SRID of a geometry (always 0 — DuckDB uses CRS type metadata instead of per-geometry SRIDs)
+
+#### Example
+
+```sql
+SELECT ST_SRID(ST_Point(1, 2))
 ```
 
 ----
@@ -2764,18 +4077,60 @@ Recursively splits a geometry into sub-geometries until the number of vertices o
 
 ----
 
-### ST_SymDifference
+### ST_Summary
 
 
-#### Signatures
+#### Signature
 
 ```sql
-GEOMETRY ST_SymDifference(geom1 GEOMETRY, geom2 GEOMETRY)
+VARCHAR ST_Summary (geom GEOMETRY)
 ```
 
 #### Description
 
-Returns a geometry that represents the portions of geom1 and geom2 that do not intersect.
+Returns a text summary of a geometry
+
+#### Example
+
+```sql
+SELECT ST_Summary(ST_Point(1, 2))
+```
+
+----
+
+### ST_SwapOrdinates
+
+
+#### Signature
+
+```sql
+GEOMETRY ST_SwapOrdinates (geom GEOMETRY, ords VARCHAR)
+```
+
+#### Description
+
+Swaps two ordinate values in a geometry (e.g., 'xy' swaps x and y)
+
+#### Example
+
+```sql
+SELECT ST_AsText(ST_SwapOrdinates(ST_Point(1, 2), 'xy'))
+```
+
+----
+
+### ST_SymDifference
+
+
+#### Signature
+
+```sql
+GEOMETRY ST_SymDifference (geom1 GEOMETRY, geom2 GEOMETRY)
+```
+
+#### Description
+
+Returns the symmetric difference of two geometries
 
 ----
 
@@ -2844,6 +4199,8 @@ POINT_2D ST_Transform (point POINT_2D, source_crs VARCHAR, target_crs VARCHAR)
 POINT_2D ST_Transform (point POINT_2D, source_crs VARCHAR, target_crs VARCHAR, always_xy BOOLEAN)
 GEOMETRY ST_Transform (geom GEOMETRY, source_crs VARCHAR, target_crs VARCHAR)
 GEOMETRY ST_Transform (geom GEOMETRY, source_crs VARCHAR, target_crs VARCHAR, always_xy BOOLEAN)
+GEOMETRY ST_Transform (geom GEOMETRY, target_crs VARCHAR)
+GEOMETRY ST_Transform (geom GEOMETRY, target_crs VARCHAR, always_xy BOOLEAN)
 ```
 
 #### Description
@@ -2910,6 +4267,36 @@ FROM (SELECT ST_GeomFromText('POINT( 170370.718 11572.405 )') AS bng) t;
 ----
 POINT (-5.203046090608746 49.96006137018598)
 ```
+
+----
+
+### ST_TriangulatePolygon
+
+
+#### Signature
+
+```sql
+GEOMETRY ST_TriangulatePolygon (geom GEOMETRY)
+```
+
+#### Description
+
+Returns constrained Delaunay triangulation of a polygon
+
+----
+
+### ST_UnaryUnion
+
+
+#### Signature
+
+```sql
+GEOMETRY ST_UnaryUnion (geom GEOMETRY)
+```
+
+#### Description
+
+Dissolves a geometry collection into a single geometry
 
 ----
 
@@ -3145,14 +4532,34 @@ SELECT ST_Z(ST_Point(1, 2, 3))
 
 ----
 
+### ST_ZMax
+
+
+#### Signature
+
+```sql
+DOUBLE ST_ZMax (geom GEOMETRY)
+```
+
+#### Description
+
+Returns the maximum Z coordinate of a geometry
+
+#### Example
+
+```sql
+SELECT ST_ZMax(ST_Point(1, 2, 3))
+```
+
+----
+
 ### ST_ZMFlag
 
 
-#### Signatures
+#### Signature
 
 ```sql
 UTINYINT ST_ZMFlag (geom GEOMETRY)
-UTINYINT ST_ZMFlag (wkb WKB_BLOB)
 ```
 
 #### Description
@@ -3185,27 +4592,6 @@ SELECT ST_ZMFlag(ST_GeomFromText('POINT M(1 1 1)'));
 SELECT ST_ZMFlag(ST_GeomFromText('POINT ZM(1 1 1 1)'));
 ----
 3
-```
-
-----
-
-### ST_ZMax
-
-
-#### Signature
-
-```sql
-DOUBLE ST_ZMax (geom GEOMETRY)
-```
-
-#### Description
-
-Returns the maximum Z coordinate of a geometry
-
-#### Example
-
-```sql
-SELECT ST_ZMax(ST_Point(1, 2, 3))
 ```
 
 ----
@@ -3290,6 +4676,100 @@ COPY (
     FROM {your table} WHERE ST_Intersects(geometry, ST_TileEnvelope({z}, {x}, {y}))
 ) to {tile_path} (FORMAT 'BLOB');
 ```
+
+----
+
+### ST_ClusterDBSCAN
+
+
+#### Signature
+
+```sql
+INTEGER ST_ClusterDBSCAN (col0 GEOMETRY, col1 DOUBLE, col2 INTEGER)
+```
+
+#### Description
+
+Assigns a DBSCAN cluster ID to each geometry based on spatial proximity.
+Returns NULL for noise points. Must be used as a window function.
+
+Parameters:
+- geom: input geometry (centroid is used for distance)
+- eps: maximum distance between two points to be in the same neighborhood
+- minpoints: minimum number of points required to form a dense region
+
+Compatible with PostGIS ST_ClusterDBSCAN.
+
+Note: OVER (PARTITION BY ...) currently requires an ORDER BY clause
+(e.g. OVER (PARTITION BY grp ORDER BY id)). Without an ORDER BY,
+DuckDB's window_self_join optimizer rewrites the query into a grouped
+aggregate, which this function cannot satisfy. The ORDER BY expression
+does not affect clustering results — the whole partition is always
+used — it only disables the rewrite.
+
+#### Example
+
+```sql
+SELECT ST_ClusterDBSCAN(geom, 5.0, 3) OVER () as cluster_id
+FROM my_points;
+```
+
+----
+
+### ST_ClusterIntersecting
+
+
+#### Signature
+
+```sql
+GEOMETRY ST_ClusterIntersecting (col0 GEOMETRY)
+```
+
+#### Description
+
+Groups intersecting geometries into clusters (returns geometry collection of collections)
+
+----
+
+### ST_ClusterKMeans
+
+
+#### Signature
+
+```sql
+INTEGER ST_ClusterKMeans (col0 GEOMETRY, col1 INTEGER)
+```
+
+#### Description
+
+Assigns a k-means cluster ID to each geometry.
+Returns integer cluster IDs (0 to k-1). Must be used as a window function.
+Compatible with PostGIS ST_ClusterKMeans.
+
+Note: OVER (PARTITION BY ...) requires an ORDER BY clause — see
+ST_ClusterDBSCAN for the rationale.
+
+#### Example
+
+```sql
+SELECT ST_ClusterKMeans(geom, 3) OVER () as cluster_id
+FROM my_points;
+```
+
+----
+
+### ST_ClusterWithin
+
+
+#### Signature
+
+```sql
+GEOMETRY ST_ClusterWithin (col0 GEOMETRY, col1 DOUBLE)
+```
+
+#### Description
+
+Groups geometries within a given distance into clusters
 
 ----
 
@@ -3533,6 +5013,18 @@ GEOMETRY ST_Scale (geom GEOMETRY, xs double, ys double)
 
 ----
 
+### ST_Translate
+
+
+#### Signatures
+
+```sql
+GEOMETRY ST_Translate (geom GEOMETRY, dx double, dy double, dz double)
+GEOMETRY ST_Translate (geom GEOMETRY, dx double, dy double)
+```
+
+----
+
 ### ST_TransScale
 
 
@@ -3553,18 +5045,6 @@ Translates and then scales a geometry in X and Y direction. This is a shorthand 
 SELECT ST_TransScale(ST_Point(1, 1), 1, 2, 2, 3);
 ----
 POINT (4 9)
-```
-
-----
-
-### ST_Translate
-
-
-#### Signatures
-
-```sql
-GEOMETRY ST_Translate (geom GEOMETRY, dx double, dy double, dz double)
-GEOMETRY ST_Translate (geom GEOMETRY, dx double, dy double)
 ```
 
 ----
@@ -3595,6 +5075,77 @@ SELECT * FROM ST_Drivers();
 
 ----
 
+### ST_DumpPoints
+
+#### Signature
+
+```sql
+ST_DumpPoints (col0 GEOMETRY)
+```
+
+#### Description
+
+Extracts all vertices from a geometry as individual point geometries.
+
+Returns a table with a 'geom' column containing each point and a 'path' column
+(an integer array) showing the position of each vertex in the geometry tree.
+
+#### Example
+
+```sql
+SELECT * FROM ST_DumpPoints('LINESTRING(0 0, 1 1, 2 2)'::GEOMETRY);
+```
+
+----
+
+### ST_DumpRings
+
+#### Signature
+
+```sql
+ST_DumpRings (col0 GEOMETRY)
+```
+
+#### Description
+
+Extracts the rings of a polygon geometry.
+
+Returns a table with a 'geom' column containing each ring as a linestring and
+a 'path' column (integer) where 0 is the exterior ring and 1,2,... are interior rings (holes).
+Only works on POLYGON geometries.
+
+#### Example
+
+```sql
+SELECT * FROM ST_DumpRings('POLYGON((0 0, 1 0, 1 1, 0 1, 0 0), (0.25 0.25, 0.75 0.25, 0.75 0.75, 0.25 0.75, 0.25 0.25))'::GEOMETRY);
+```
+
+----
+
+### ST_DumpSegments
+
+#### Signature
+
+```sql
+ST_DumpSegments (col0 GEOMETRY)
+```
+
+#### Description
+
+Extracts consecutive vertex pairs from a geometry as 2-point linestring segments.
+
+Returns a table with a 'geom' column containing each segment as a linestring and
+a 'path' column (integer) with the segment index.
+For example, LINESTRING(0 0, 1 1, 2 2) produces LINESTRING(0 0, 1 1) and LINESTRING(1 1, 2 2).
+
+#### Example
+
+```sql
+SELECT * FROM ST_DumpSegments('LINESTRING(0 0, 1 1, 2 2)'::GEOMETRY);
+```
+
+----
+
 ### ST_GeneratePoints
 
 #### Signature
@@ -3618,12 +5169,37 @@ SELECT * FROM ST_GeneratePoints({min_x: 0, min_y:0, max_x:10, max_y:10}::BOX_2D,
 
 ----
 
+### ST_HexagonGrid
+
+#### Signature
+
+```sql
+ST_HexagonGrid (col0 DOUBLE, col1 GEOMETRY)
+```
+
+#### Description
+
+Generates a regular hexagonal grid covering the bounding box of the input geometry.
+
+Takes an edge length (size) and a geometry whose bounding box defines the grid extent.
+The grid is aligned to global coordinates, with cell (0,0) centered at the origin.
+Returns rows of (geom, i, j) where geom is a flat-top hexagon polygon and (i, j) are the column and row indices.
+Odd columns are offset vertically by half the row spacing.
+
+#### Example
+
+```sql
+SELECT * FROM ST_HexagonGrid(1.0, ST_MakeEnvelope(0, 0, 3, 3));
+```
+
+----
+
 ### ST_Read
 
 #### Signature
 
 ```sql
-ST_Read (col0 VARCHAR, keep_wkb BOOLEAN, max_batch_size INTEGER, sequential_layer_scan BOOLEAN, layer VARCHAR, sibling_files VARCHAR[], spatial_filter WKB_BLOB, spatial_filter_box BOX_2D, allowed_drivers VARCHAR[], open_options VARCHAR[])
+ST_Read (col0 VARCHAR, keep_wkb BOOLEAN, max_batch_size INTEGER, layer VARCHAR, sibling_files VARCHAR[], allowed_drivers VARCHAR[], open_options VARCHAR[])
 ```
 
 #### Description
@@ -3646,7 +5222,7 @@ Except for the `path` parameter, all parameters are optional.
 | `allowed_drivers` | VARCHAR[] | A list of GDAL driver names that are allowed to be used to open the file. If empty, all drivers are allowed. |
 | `sibling_files` | VARCHAR[] | A list of sibling files that are required to open the file. E.g., the ESRI Shapefile driver requires a .shx file to be present. Although most of the time these can be discovered automatically. |
 | `spatial_filter_box` | BOX_2D | If set to a BOX_2D, the table function will only return rows that intersect with the given bounding box. Similar to spatial_filter. |
-| `keep_wkb` | BOOLEAN | If set, the table function will return geometries in a wkb_geometry column with the type WKB_BLOB (which can be cast to BLOB) instead of GEOMETRY. This is useful if you want to use DuckDB with more exotic geometry subtypes that DuckDB spatial doesnt support representing in the GEOMETRY type yet. |
+| `keep_wkb` | BOOLEAN | If set, the table function will return geometries in a wkb_geometry column with the type WKB_BLOB (which can be cast to BLOB) instead of GEOMETRY. This is useful if you want to use DuckDB with more exotic geometry subtypes that DuckDB spatial doesn't support representing in the GEOMETRY type yet. |
 
 Note that GDAL is single-threaded, so this table function will not be able to make full use of parallelism.
 
@@ -3678,6 +5254,34 @@ CREATE TABLE my_geojson_table AS SELECT * FROM ST_Read('some/file/path/filename.
 
 ----
 
+### ST_Read_Meta
+
+#### Signature
+
+```sql
+ST_Read_Meta (col0 VARCHAR)
+ST_Read_Meta (col0 VARCHAR[])
+```
+
+#### Description
+
+Read the metadata from a variety of geospatial file formats using the GDAL library.
+
+The `ST_Read_Meta` table function accompanies the `ST_Read` table function, but instead of reading the contents of a file, this function scans the metadata instead.
+Since the data model of the underlying GDAL library is quite flexible, most of the interesting metadata is within the returned `layers` column, which is a somewhat complex nested structure of DuckDB `STRUCT` and `LIST` types.
+
+#### Example
+
+```sql
+-- Find the coordinate reference system authority name and code for the first layers first geometry column in the file
+SELECT
+    layers[1].geometry_fields[1].crs.auth_name as name,
+    layers[1].geometry_fields[1].crs.auth_code as code
+FROM st_read_meta('../../tmp/data/amsterdam_roads.fgb');
+```
+
+----
+
 ### ST_ReadOSM
 
 #### Signature
@@ -3688,7 +5292,7 @@ ST_ReadOSM (col0 VARCHAR)
 
 #### Description
 
-The `ST_ReadOsm()` table function enables reading compressed OpenStreetMap data directly from a `.osm.pbf file.`
+The `ST_ReadOsm()` table function enables reading compressed OpenStreetMap data directly from a `.osm.pbf` file.
 
 This function uses multithreading and zero-copy protobuf parsing which makes it a lot faster than using the `ST_Read()` OSM driver, however it only outputs the raw OSM data (Nodes, Ways, Relations), without constructing any geometries. For simple node entities (like PoI's) you can trivially construct POINT geometries, but it is also possible to construct LINESTRING and POLYGON geometries by manually joining refs and nodes together in SQL, although with available memory usually being a limiting factor.
 The `ST_ReadOSM()` function also provides a "replacement scan" to enable reading from a file directly as if it were a table. This is just syntax sugar for calling `ST_ReadOSM()` though. Example:
@@ -3733,30 +5337,26 @@ Read a Shapefile without relying on the GDAL library
 
 ----
 
-### ST_Read_Meta
+### ST_SquareGrid
 
 #### Signature
 
 ```sql
-ST_Read_Meta (col0 VARCHAR)
-ST_Read_Meta (col0 VARCHAR[])
+ST_SquareGrid (col0 DOUBLE, col1 GEOMETRY)
 ```
 
 #### Description
 
-Read the metadata from a variety of geospatial file formats using the GDAL library.
+Generates a regular grid of square polygons covering the bounding box of the input geometry.
 
-The `ST_Read_Meta` table function accompanies the `ST_Read` table function, but instead of reading the contents of a file, this function scans the metadata instead.
-Since the data model of the underlying GDAL library is quite flexible, most of the interesting metadata is within the returned `layers` column, which is a somewhat complex nested structure of DuckDB `STRUCT` and `LIST` types.
+Takes a cell size and a geometry whose bounding box defines the grid extent.
+The grid is aligned to global coordinates (multiples of size), so grid cell (0,0) always covers the origin.
+Returns rows of (geom, i, j) where geom is the square polygon and (i, j) are the column and row indices.
 
 #### Example
 
 ```sql
--- Find the coordinate reference system authority name and code for the first layers first geometry column in the file
-SELECT
-    layers[1].geometry_fields[1].crs.auth_name as name,
-    layers[1].geometry_fields[1].crs.auth_code as code
-FROM st_read_meta('../../tmp/data/amsterdam_roads.fgb');
+SELECT * FROM ST_SquareGrid(1.0, ST_MakeEnvelope(0, 0, 2, 2));
 ```
 
 ----

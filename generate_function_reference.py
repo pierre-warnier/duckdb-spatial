@@ -1,6 +1,15 @@
 import os
 import json
 
+# Geometry functions that moved into DuckDB itself (registered there in lower case and without tags) but are still
+# part of the reference
+CORE_FUNCTION_NAMES = {
+    'st_astext': 'ST_AsText',
+    'st_aswkb': 'ST_AsWKB',
+    'st_geomfromwkb': 'ST_GeomFromWKB',
+    'st_intersects_extent': 'ST_Intersects_Extent',
+}
+
 # We just take the first non-empty description and example for now
 get_spatial_functions_sql = """
 INSTALL json;
@@ -24,9 +33,10 @@ FROM (
             description: description,
             examples: examples
         }) as signatures,
-        list_filter(signatures, x -> x.description IS NOT NULL)[1].description as description,
-        list_filter(signatures, x -> len(x.examples) != 0)[1].examples[1] as example,
+        list_filter(signatures, lambda x: x.description IS NOT NULL)[1].description as description,
+        list_filter(signatures, lambda x: len(x.examples) != 0)[1].examples[1] as example,
         any_value(tags) AS func_tags,
+        bool_or(tags['ext'] = 'spatial') AS is_spatial,
     FROM duckdb_functions() as funcs
     WHERE function_type = '$FUNCTION_TYPE$'
         -- function-specific tweaks
@@ -36,20 +46,25 @@ FROM (
             ELSE true
         END
     GROUP BY function_name, function_type
-    HAVING func_tags['ext'] = 'spatial'
+    HAVING is_spatial
+        OR function_name IN ($CORE_FUNCTION_NAMES$)
         -- TODO: macros cannot have tags
         OR (
             func_tags['ext'] IS NULL
             AND function_name LIKE 'ST_%'
         )
-    ORDER BY function_name
+    ORDER BY lower(function_name)
 );
 """
 
 def get_functions(function_type = 'scalar'):
     functions = []
-    for line in os.popen("./build/debug/duckdb -list -noheader -c \"" + get_spatial_functions_sql.replace('$FUNCTION_TYPE$', function_type) + "\"").readlines():
-        functions.append(json.loads(line))
+    sql = get_spatial_functions_sql.replace('$FUNCTION_TYPE$', function_type)
+    sql = sql.replace('$CORE_FUNCTION_NAMES$', ", ".join(f"'{name}'" for name in CORE_FUNCTION_NAMES))
+    for line in os.popen("./build/debug/duckdb -list -noheader -c \"" + sql + "\"").readlines():
+        function = json.loads(line)
+        function['name'] = CORE_FUNCTION_NAMES.get(function['name'], function['name'])
+        functions.append(function)
     return functions
 
 def write_table_of_contents(f, functions):
