@@ -1,0 +1,117 @@
+# name: test/sql/raster/raster_editors.test
+# group: [raster]
+
+require spatial
+
+statement ok
+CREATE TABLE t AS SELECT ST_SetValue(ST_AddBand(ST_MakeEmptyRaster(4, 3, 100, 200, 2, -2, 0, 0, 31370), '16BSI', 7, -1), 2, 3, 42) AS rast;
+
+# ST_SetBandNoDataValue
+query IIII
+SELECT ST_BandNoDataValue(ST_SetBandNoDataValue(rast, 42))::INTEGER, ST_Value(ST_SetBandNoDataValue(rast, 42), 2, 3), ST_Value(ST_SetBandNoDataValue(rast, 42), 2, 3, false)::INTEGER, ST_BandNoDataValue(ST_SetBandNoDataValue(rast, NULL)) FROM t;
+----
+42	NULL	42	NULL
+
+query III
+SELECT ST_BandNoDataValue(r, 1)::INTEGER, ST_BandNoDataValue(r, 2)::INTEGER, ST_BandNoDataValue(ST_SetBandNoDataValue(r, 2, NULL, true), 2)
+FROM (SELECT ST_SetBandNoDataValue(ST_AddBand(rast, '16BSI'), 2, 5) AS r FROM t);
+----
+-1	5	NULL
+
+statement error
+SELECT ST_SetBandNoDataValue(rast, 2, 5) FROM t;
+----
+Band 2 is out of range
+
+# The georeference editors do not touch the pixels or the coordinate system
+query IIII
+SELECT ST_GeoReference(r) = concat_ws(chr(10), '3.0000000000', '0.2500000000', '0.5000000000', '-4.0000000000', '10.0000000000', '20.0000000000', ''),
+       ST_DumpValues(r) = ST_DumpValues(rast), ST_SRID(r), ST_Width(r)
+FROM (SELECT rast, ST_SetGeoReference(rast, '3 0.25 0.5 -4 10 20') AS r FROM t);
+----
+true	true	31370	4
+
+query II
+SELECT ST_UpperLeftX(r)::VARCHAR, ST_UpperLeftY(r)::VARCHAR FROM (SELECT ST_SetGeoReference(rast, '2 0 0 -2 11 19', 'ESRI') AS r FROM t);
+----
+10.0	20.0
+
+query I
+SELECT ST_GeoReference(ST_SetGeoReference(rast, ST_GeoReference(rast, 'ESRI'), 'ESRI')) = ST_GeoReference(rast) FROM t;
+----
+true
+
+query I
+SELECT ST_MetaData(ST_SetGeoReference(rast, 10, 20, 3, -4, 0.5, 0.25))::VARCHAR FROM t;
+----
+{'upperleftx': 10.0, 'upperlefty': 20.0, 'width': 4, 'height': 3, 'scalex': 3.0, 'scaley': -4.0, 'skewx': 0.5, 'skewy': 0.25, 'srid': 31370, 'numbands': 1}
+
+statement error
+SELECT ST_SetGeoReference(rast, '3 0.25 0.5 -4 10') FROM t;
+----
+expected six numbers
+
+statement error
+SELECT ST_SetGeoReference(rast, '3 0.25 0.5 -4 10 20 30') FROM t;
+----
+expected six numbers
+
+statement error
+SELECT ST_SetGeoReference(rast, '3 0.25 0.5 -4 10 20', 'TFW') FROM t;
+----
+Unknown georeference format
+
+query IIII
+SELECT ST_ScaleX(ST_SetScale(rast, 5))::VARCHAR, ST_ScaleY(ST_SetScale(rast, 5))::VARCHAR, ST_ScaleX(ST_SetScale(rast, 5, -6))::VARCHAR, ST_ScaleY(ST_SetScale(rast, 5, -6))::VARCHAR FROM t;
+----
+5.0	5.0	5.0	-6.0
+
+query IIII
+SELECT ST_SkewX(ST_SetSkew(rast, 0.5))::VARCHAR, ST_SkewY(ST_SetSkew(rast, 0.5))::VARCHAR, ST_SkewX(ST_SetSkew(rast, 0.5, 0.25))::VARCHAR, ST_SkewY(ST_SetSkew(rast, 0.5, 0.25))::VARCHAR FROM t;
+----
+0.5	0.5	0.5	0.25
+
+query IIII
+SELECT ST_UpperLeftX(r)::VARCHAR, ST_UpperLeftY(r)::VARCHAR, ST_ScaleX(r)::VARCHAR, ST_Value(r, 2, 3)::INTEGER FROM (SELECT ST_SetUpperLeft(rast, -5.5, 6.5) AS r FROM t);
+----
+-5.5	6.5	2.0	42
+
+# Coordinate system
+query IIII
+SELECT ST_SRID(ST_SetSRID(rast, 4326)), ST_CRS(ST_SetSRID(rast, 4326)), ST_SRID(ST_SetSRID(rast, 0)), ST_CRS(ST_SetSRID(rast, 0)) FROM t;
+----
+4326	EPSG:4326	0	NULL
+
+# Setting the coordinate system does not move or resample anything
+query II
+SELECT ST_UpperLeftX(ST_SetSRID(rast, 4326))::VARCHAR, ST_DumpValues(ST_SetSRID(rast, 4326)) = ST_DumpValues(rast) FROM t;
+----
+100.0	true
+
+statement error
+SELECT ST_SetSRID(rast, 999999) FROM t;
+----
+EPSG:999999
+
+query IIII
+SELECT ST_CRS(ST_SetCRS(rast, 'EPSG:3857')), ST_SRID(ST_SetCRS(rast, 'epsg:3857')), ST_CRS(ST_SetCRS(rast, '')), ST_CRS(ST_SetCRS(rast, 'ESRI:102100')) FROM t;
+----
+EPSG:3857	3857	NULL	ESRI:102100
+
+# WKT with an authority code is recognised
+query I
+SELECT ST_SRID(ST_SetCRS(rast, 'GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433],AUTHORITY["EPSG","4326"]]')) FROM t;
+----
+4326
+
+statement error
+SELECT ST_SetCRS(rast, 'not a coordinate system') FROM t;
+----
+Could not parse the coordinate system
+
+# Many rows with alternating coordinate systems
+query II
+SELECT ST_SRID(ST_SetSRID(rast, CASE WHEN i % 2 = 0 THEN 4326 ELSE 3857 END)) AS srid, count(*) FROM t, range(100) r(i) GROUP BY srid ORDER BY srid;
+----
+3857	50
+4326	50

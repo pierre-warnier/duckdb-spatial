@@ -1,0 +1,314 @@
+# name: test/sql/raster/raster_reclass_colormap.test
+# group: [raster]
+
+require spatial
+
+# One row of four pixels: 0, 50, 100, 150
+statement ok
+CREATE TABLE v AS SELECT ST_SetValue(ST_SetValue(ST_SetValue(ST_AddBand(ST_MakeEmptyRaster(4, 1, 0, 0, 1), '32BF'), 2, 1, 50), 3, 1, 100), 4, 1, 150) AS rast;
+
+#----------------------------------------------------------------------------------------------------------------------
+# ST_Reclass
+#----------------------------------------------------------------------------------------------------------------------
+
+query III
+SELECT ST_DumpValues(r)::VARCHAR, ST_BandPixelType(r), ST_BandNoDataValue(r)::INTEGER FROM (SELECT ST_Reclass(rast, 1, '[0-100]:1-11, (100-200]:20', '8BUI', 0) AS r FROM v);
+----
+[[1.0, 6.0, 11.0, 20.0]]	8BUI	0
+
+# The maximum of a range is excluded unless it ends with ]
+query I
+SELECT ST_DumpValues(ST_Reclass(rast, 1, '0-100:1-11', '8BUI', 255))::VARCHAR FROM v;
+----
+[[1.0, 6.0, NULL, NULL]]
+
+query I
+SELECT ST_DumpValues(ST_Reclass(rast, 1, '[0-100):1-11', '8BUI', 255))::VARCHAR FROM v;
+----
+[[1.0, 6.0, NULL, NULL]]
+
+# The minimum is included unless the range starts with (
+query I
+SELECT ST_DumpValues(ST_Reclass(rast, 1, '(0-100]:1-11', '8BUI', 255))::VARCHAR FROM v;
+----
+[[NULL, 6.0, 11.0, NULL]]
+
+query I
+SELECT ST_DumpValues(ST_Reclass(rast, 1, '(0-100):1-11', '8BUI', 255))::VARCHAR FROM v;
+----
+[[NULL, 6.0, NULL, NULL]]
+
+# Single values, a descending target range, the first match wins
+query I
+SELECT ST_DumpValues(ST_Reclass(rast, 1, '50:7, 150 : 8', '8BUI', 255))::VARCHAR FROM v;
+----
+[[NULL, 7.0, NULL, 8.0]]
+
+query I
+SELECT ST_DumpValues(ST_Reclass(rast, 1, '[0-100]:11-1', '8BUI', 255))::VARCHAR FROM v;
+----
+[[11.0, 6.0, 1.0, NULL]]
+
+query I
+SELECT ST_DumpValues(ST_Reclass(rast, 1, '[0-60]:1, [50-200]:2', '8BUI', 255))::VARCHAR FROM v;
+----
+[[1.0, 1.0, 2.0, 2.0]]
+
+# A range open on one side
+query II
+SELECT ST_DumpValues(ST_Reclass(rast, 1, ']50-100]:5', '8BUI', 255))::VARCHAR, ST_DumpValues(ST_Reclass(rast, 1, '[50-100[:5', '8BUI', 255))::VARCHAR FROM v;
+----
+[[5.0, 5.0, 5.0, NULL]]	[[NULL, 5.0, 5.0, 5.0]]
+
+# Negative numbers
+query I
+SELECT ST_DumpValues(ST_Reclass(ST_SetValue(ST_SetValue(rast, 1, 1, -10), 2, 1, -5), '-10--5:1-2, [-5-0]:3, [100-150]:-7--8', '16BSI'))::VARCHAR FROM v;
+----
+[[1.0, 3.0, -7.0, -8.0]]
+
+# Floating-point results are not rounded, integer ones are
+query II
+SELECT ST_DumpValues(ST_Reclass(rast, 1, '[0-200]:0-1', '64BF'))::VARCHAR, ST_DumpValues(ST_Reclass(rast, 1, '[0-200]:0-1', '8BUI'))::VARCHAR FROM v;
+----
+[[0.0, 0.25, 0.5, 0.75]]	[[0.0, 0.0, 1.0, 1.0]]
+
+# Without a NODATA value: no NODATA in the result, unmatched pixels are 0
+query II
+SELECT ST_DumpValues(r)::VARCHAR, ST_BandNoDataValue(r) IS NULL FROM (SELECT ST_Reclass(rast, '[50-100]:7', '8BUI') AS r FROM v);
+----
+[[0.0, 7.0, 7.0, 0.0]]	true
+
+query I
+SELECT ST_DumpValues(ST_Reclass(rast, 1, '[50-100]:7', '8BUI', NULL))::VARCHAR FROM v;
+----
+[[0.0, 7.0, 7.0, 0.0]]
+
+# NODATA pixels of the input become NODATA in the result
+query I
+SELECT ST_DumpValues(ST_Reclass(ST_SetBandNoDataValue(rast, 50), 1, '[0-200]:1', '8BUI', 9))::VARCHAR FROM v;
+----
+[[1.0, NULL, 1.0, 1.0]]
+
+# Only the chosen band changes
+query IIII
+SELECT ST_NumBands(r), ST_DumpValues(r, 1)::VARCHAR, ST_DumpValues(r, 2)::VARCHAR, ST_BandNoDataValue(r, 1) IS NULL
+FROM (SELECT ST_Reclass(ST_AddBand(rast, rast), 2, '[0-200]:1', '32BF', 9) AS r FROM v);
+----
+2	[[0.0, 50.0, 100.0, 150.0]]	[[1.0, 1.0, 1.0, 1.0]]	true
+
+statement error
+SELECT ST_Reclass(ST_AddBand(rast, rast), 2, '[0-200]:1', '8BUI', 9) FROM v;
+----
+all bands of a RASTER share one pixel type
+
+statement error
+SELECT ST_Reclass(rast, 2, '[0-200]:1', '8BUI') FROM v;
+----
+Band 2 is out of range
+
+statement error
+SELECT ST_Reclass(rast, 1, '[0-200]', '8BUI') FROM v;
+----
+invalid reclass expression '[0-200]'
+
+statement error
+SELECT ST_Reclass(rast, 1, 'a-b:1', '8BUI') FROM v;
+----
+invalid reclass expression
+
+statement error
+SELECT ST_Reclass(rast, 1, '', '8BUI') FROM v;
+----
+invalid reclass expression
+
+statement error
+SELECT ST_Reclass(rast, 1, '[0-200]:1 2', '8BUI') FROM v;
+----
+invalid reclass expression
+
+statement error
+SELECT ST_Reclass(rast, 1, '[0-200]:1', '9BUI') FROM v;
+----
+Unknown pixel type
+
+#----------------------------------------------------------------------------------------------------------------------
+# ST_ColorMap
+#----------------------------------------------------------------------------------------------------------------------
+
+# Three pixels: 0, 50, 100
+statement ok
+CREATE TABLE c AS SELECT ST_SetValue(ST_SetValue(ST_AddBand(ST_MakeEmptyRaster(3, 1, 0, 0, 1), '32BF', 0, -1), 2, 1, 50), 3, 1, 100) AS rast;
+
+# pseudocolor: blue at the minimum, green in the middle, red at the maximum, opaque
+query IIIIII
+SELECT ST_NumBands(r), ST_BandPixelType(r), ST_DumpValues(r, 1)::VARCHAR, ST_DumpValues(r, 2)::VARCHAR, ST_DumpValues(r, 3)::VARCHAR, ST_DumpValues(r, 4)::VARCHAR
+FROM (SELECT ST_ColorMap(rast, 1, 'pseudocolor') AS r FROM c);
+----
+4	8BUI	[[0.0, 0.0, 255.0]]	[[0.0, 255.0, 0.0]]	[[255.0, 0.0, 0.0]]	[[255.0, 255.0, 255.0]]
+
+# grayscale is the default and has one band
+query III
+SELECT ST_NumBands(r), ST_DumpValues(r)::VARCHAR, ST_DumpValues(ST_ColorMap(rast, 1, 'greyscale')) = ST_DumpValues(r) FROM (SELECT rast, ST_ColorMap(rast) AS r FROM c);
+----
+1	[[254.0, 127.0, 0.0]]	true
+
+query II
+SELECT ST_NumBands(ST_ColorMap(rast, 'fire')), ST_NumBands(ST_ColorMap(rast, 1, 'bluered', 'EXACT')) FROM c;
+----
+4	4
+
+# fire: black at the minimum, red in the middle
+query IIII
+SELECT ST_Value(r, 1, 1, 1)::INTEGER, ST_Value(r, 1, 2, 1)::INTEGER, ST_Value(r, 2, 2, 1)::INTEGER, ST_Value(r, 2, 3, 1)::INTEGER FROM (SELECT ST_ColorMap(rast, 'fire') AS r FROM c);
+----
+0	255	0	255
+
+# NODATA pixels take the nv colour: transparent black in the predefined colormaps
+query II
+SELECT ST_DumpValues(r, 1)::VARCHAR, ST_DumpValues(r, 4)::VARCHAR FROM (SELECT ST_ColorMap(ST_SetValue(rast, 2, 1, NULL), 'pseudocolor') AS r FROM c);
+----
+[[0.0, 0.0, 255.0]]	[[255.0, 0.0, 255.0]]
+
+# Custom colormap with absolute values, interpolated
+query IIII
+SELECT ST_NumBands(r), ST_DumpValues(r, 1)::VARCHAR, ST_DumpValues(r, 2)::VARCHAR, ST_DumpValues(r, 3)::VARCHAR
+FROM (SELECT ST_ColorMap(rast, 1, concat_ws(chr(10), '100 200 100 50', '0 0 0 0')) AS r FROM c);
+----
+3	[[0.0, 100.0, 200.0]]	[[0.0, 50.0, 100.0]]	[[0.0, 25.0, 50.0]]
+
+# Values beyond the entries take the colour of the closest entry
+query I
+SELECT ST_DumpValues(ST_ColorMap(rast, 1, concat_ws(chr(10), '60 200', '40 100')))::VARCHAR FROM c;
+----
+[[100.0, 150.0, 200.0]]
+
+# EXACT: only pixels equal to an entry; NEAREST: the closest entry
+query II
+SELECT ST_DumpValues(ST_ColorMap(rast, 1, concat_ws(chr(10), '100 200', '40 100'), 'EXACT'))::VARCHAR, ST_DumpValues(ST_ColorMap(rast, concat_ws(chr(10), '100 200', '40 100'), 'nearest'))::VARCHAR FROM c;
+----
+[[0.0, 0.0, 200.0]]	[[100.0, 100.0, 200.0]]
+
+# Percentages, other separators, an nv entry and blank lines
+query III
+SELECT ST_DumpValues(r, 1)::VARCHAR, ST_DumpValues(r, 2)::VARCHAR, ST_NumBands(r)
+FROM (SELECT ST_ColorMap(ST_SetValue(rast, 1, 1, NULL), 1, concat_ws(chr(10), '100%:10,20', '', '0%	30 40', 'nv 7 8')) AS r FROM c);
+----
+[[7.0, 30.0, 10.0]]	[[8.0, 40.0, 20.0]]	2
+
+statement error
+SELECT ST_ColorMap(rast, 1, 'rainbow') FROM c;
+----
+unknown colormap keyword 'rainbow'
+
+statement error
+SELECT ST_ColorMap(rast, 1, 'fire', 'SMOOTH') FROM c;
+----
+unknown method 'SMOOTH'
+
+statement error
+SELECT ST_ColorMap(rast, 1, '100 1 2 3 4 5') FROM c;
+----
+invalid colormap entry
+
+statement error
+SELECT ST_ColorMap(rast, 1, '100 300') FROM c;
+----
+invalid colour component '300'
+
+statement error
+SELECT ST_ColorMap(rast, 1, 'high 30') FROM c;
+----
+invalid colormap value 'high'
+
+statement error
+SELECT ST_ColorMap(rast, 1, 'nv 0 0 0') FROM c;
+----
+the colormap has no value entries
+
+statement error
+SELECT ST_ColorMap(rast, 2, 'fire') FROM c;
+----
+Band 2 is out of range
+
+#----------------------------------------------------------------------------------------------------------------------
+# ST_Grayscale
+#----------------------------------------------------------------------------------------------------------------------
+
+statement ok
+CREATE TABLE rgb AS SELECT rast FROM ST_ReadRaster('test/data/raster/rgb.tif');
+
+# Bands are 10, 20, 30, except green = 99 at (3, 3)
+query IIIII
+SELECT ST_NumBands(g), ST_BandPixelType(g), ST_Value(g, 1, 1)::INTEGER, ST_Value(g, 3, 3)::INTEGER, ST_Value(ST_Grayscale(rast, 3, 2, 1), 1, 1)::INTEGER FROM (SELECT rast, ST_Grayscale(rast) AS g FROM rgb);
+----
+1	8BUI	18	65	22
+
+query I
+SELECT ST_Value(ST_Grayscale(ST_AddBand(ST_AddBand(ST_AddBand(ST_MakeEmptyRaster(2, 2, 0, 0, 1), '16BUI', 60000), '16BUI', 60000), '16BUI', 60000)), 1, 1)::INTEGER;
+----
+255
+
+statement error
+SELECT ST_Grayscale(ST_Band(rast, [1, 2])) FROM rgb;
+----
+Band 3 is out of range
+
+#----------------------------------------------------------------------------------------------------------------------
+# ST_Tile
+#----------------------------------------------------------------------------------------------------------------------
+
+statement ok
+CREATE TABLE dem AS SELECT rast FROM ST_ReadRaster('test/data/raster/dem.tif');
+
+query IIII
+SELECT len(tiles), ST_MetaData(tiles[1])::VARCHAR, ST_Width(tiles[6]), ST_Height(tiles[6]) FROM (SELECT ST_Tile(rast, 12, 16) AS tiles FROM dem);
+----
+6	{'upperleftx': 150000.0, 'upperlefty': 170000.0, 'width': 12, 'height': 16, 'scalex': 10.0, 'scaley': -10.0, 'skewx': 0.0, 'skewy': 0.0, 'srid': 31370, 'numbands': 1}	8	8
+
+# The tiles partition the raster: same pixels, same values
+query III
+SELECT count(*), sum(ST_Width(tile) * ST_Height(tile)), bool_and(ST_SameAlignment(tile, rast)) FROM (SELECT rast, unnest(ST_Tile(rast, 12, 16)) AS tile FROM dem);
+----
+6	768	true
+
+query II
+SELECT count(*), bool_and(p.val = ST_Value(rast, p.geom)) FROM (SELECT rast, unnest(ST_PixelAsCentroids(tile)) AS p FROM (SELECT rast, unnest(ST_Tile(rast, 12, 16)) AS tile FROM dem));
+----
+767	true
+
+# Padded: every tile has the full size, the padding is NODATA
+query IIII
+SELECT count(*), min(ST_Width(tile)), min(ST_Height(tile)), sum(len(ST_PixelAsPoints(tile))) FROM (SELECT unnest(ST_Tile(rast, 12, 16, true)) AS tile FROM dem);
+----
+6	12	16	767
+
+query II
+SELECT ST_BandNoDataValue(tiles[6])::INTEGER, len(ST_PixelAsPoints(tiles[6])) FROM (SELECT ST_Tile(rast, 12, 16, true, -1) AS tiles FROM dem);
+----
+-1	64
+
+query II
+SELECT ST_BandNoDataValue(tiles[1])::INTEGER, ST_Width(tiles[6]) FROM (SELECT ST_Tile(rast, 12, 16, false, NULL) AS tiles FROM dem);
+----
+-9999	8
+
+# Selected bands
+query IIII
+SELECT len(ST_Tile(rast, 2, 4, 3)), ST_NumBands(ST_Tile(rast, 2, 4, 3)[1]), ST_Value(ST_Tile(rast, 2, 4, 3)[1], 1, 1)::INTEGER, ST_NumBands(ST_Tile(rast, [3, 1], 4, 3, true)[4]) FROM rgb;
+----
+4	1	20	2
+
+query I
+SELECT len(ST_Tile(rast, 100, 100)) FROM dem;
+----
+1
+
+statement error
+SELECT ST_Tile(rast, 0, 4) FROM dem;
+----
+the tile width and height must be positive
+
+statement error
+SELECT ST_Tile(rast, 4, 4, 4) FROM rgb;
+----
+Band 4 is out of range

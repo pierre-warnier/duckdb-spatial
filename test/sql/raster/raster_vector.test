@@ -1,0 +1,503 @@
+# name: test/sql/raster/raster_vector.test
+# group: [raster]
+
+require spatial
+
+# 32 x 24 pixels of 10 m, value 100 + 2x + 3y, pixel (5, 5) is NODATA
+statement ok
+CREATE TABLE dem AS SELECT rast FROM ST_ReadRaster('test/data/raster/dem.tif');
+
+# 4 x 4 pixels of 1 x 1, upper-left corner at (0, 4): left half 1, right half 2, pixel (1, 1) is NODATA
+statement ok
+CREATE TABLE h AS SELECT ST_SetValue(ST_SetValue(ST_AddBand(ST_MakeEmptyRaster(4, 4, 0, 4, 1, -1, 0, 0, 3857), '8BUI', 1, 0), ST_MakeEnvelope(2, 0, 4, 4), 2), 1, 1, NULL) AS rast;
+
+#----------------------------------------------------------------------------------------------------------------------
+# ST_AsRaster
+#----------------------------------------------------------------------------------------------------------------------
+
+query IIII
+SELECT ST_MetaData(r)::VARCHAR, ST_DumpValues(r)::VARCHAR, ST_BandPixelType(r), ST_BandNoDataValue(r)::INTEGER FROM (SELECT ST_AsRaster(ST_MakeEnvelope(0, 0, 2, 1), 1.0, 1.0, '8BUI', 7) AS r);
+----
+{'upperleftx': 0.0, 'upperlefty': 1.0, 'width': 2, 'height': 1, 'scalex': 1.0, 'scaley': -1.0, 'skewx': 0.0, 'skewy': 0.0, 'srid': 0, 'numbands': 1}	[[7.0, 7.0]]	8BUI	0
+
+# The rasterized area approaches the area of the geometry
+query II
+SELECT abs(ST_Count(r) * 0.01 - ST_Area(tri)) / ST_Area(tri) < 0.01, ST_Count(ST_AsRaster(tri, 0.1, 0.1, '8BUI', 1, 0, NULL, NULL, 0, 0, true)) > ST_Count(r)
+FROM (SELECT tri, ST_AsRaster(tri, 0.1, -0.1, '8BUI') AS r FROM (SELECT ST_GeomFromText('POLYGON ((0.1 0.1, 4.8 0.6, 2.2 4.4, 0.1 0.1))') AS tri));
+----
+true	true
+
+# Every pixel centre inside the geometry has the value, every other one is NODATA
+query II
+SELECT count(*), bool_and(ST_Contains(tri, p.geom) = (p.val = 3))
+FROM (SELECT tri, unnest(ST_PixelAsCentroids(ST_AsRaster(tri, 0.25, 0.25, '16BSI', 3, -1), 1, false)) AS p FROM (SELECT ST_GeomFromText('POLYGON ((0.1 0.1, 4.8 0.6, 2.2 4.4, 0.1 0.1))') AS tri));
+----
+342	true
+
+# Size in pixels
+query II
+SELECT ST_MetaData(r)::VARCHAR, ST_Count(r) FROM (SELECT ST_AsRaster(ST_MakeEnvelope(0, 0, 2, 1), 4, 2, '8BUI') AS r);
+----
+{'upperleftx': 0.0, 'upperlefty': 1.0, 'width': 4, 'height': 2, 'scalex': 0.5, 'scaley': -0.5, 'skewx': 0.0, 'skewy': 0.0, 'srid': 0, 'numbands': 1}	8
+
+# A given upper-left corner, and a grid point
+query II
+SELECT ST_MetaData(r)::VARCHAR, ST_DumpValues(r)::VARCHAR FROM (SELECT ST_AsRaster(ST_MakeEnvelope(0, 0, 2, 1), 1.0, 1.0, '8BUI', 1, 0, -1, 3) AS r);
+----
+{'upperleftx': -1.0, 'upperlefty': 3.0, 'width': 3, 'height': 3, 'scalex': 1.0, 'scaley': -1.0, 'skewx': 0.0, 'skewy': 0.0, 'srid': 0, 'numbands': 1}	[[NULL, NULL, NULL], [NULL, NULL, NULL], [NULL, 1.0, 1.0]]
+
+query II
+SELECT ST_MetaData(r)::VARCHAR, ST_MetaData(ST_AsRaster(ST_MakeEnvelope(0, 0, 2, 1), 1.0, 1.0, 10.5, -7.5, '8BUI', 1, 0, 0, 0, false)) = ST_MetaData(r)
+FROM (SELECT ST_AsRaster(ST_MakeEnvelope(0, 0, 2, 1), 1.0, 1.0, 0.5, 0.5, '8BUI') AS r);
+----
+{'upperleftx': -0.5, 'upperlefty': 1.5, 'width': 3, 'height': 2, 'scalex': 1.0, 'scaley': -1.0, 'skewx': 0.0, 'skewy': 0.0, 'srid': 0, 'numbands': 1}	true
+
+query II
+SELECT ST_Width(ST_AsRaster(ST_MakeEnvelope(0, 0, 2, 1), 4, 2, 0.25, 0.25, '8BUI')), ST_UpperLeftX(ST_AsRaster(ST_MakeEnvelope(0, 0, 2, 1), 4, 2, '8BUI', 1, 0, -1, 1))::VARCHAR;
+----
+5	-1.0
+
+# On the grid of a reference raster, with its coordinate system
+query IIII
+SELECT ST_SameAlignment(r, rast), ST_SRID(r), ST_MetaData(r)::VARCHAR, ST_DumpValues(r)::VARCHAR FROM (SELECT rast, ST_AsRaster(ST_MakeEnvelope(1.2, 1.2, 2.8, 2.8), rast) AS r FROM h);
+----
+true	3857	{'upperleftx': 1.0, 'upperlefty': 3.0, 'width': 2, 'height': 2, 'scalex': 1.0, 'scaley': -1.0, 'skewx': 0.0, 'skewy': 0.0, 'srid': 3857, 'numbands': 1}	[[1.0, 1.0], [1.0, 1.0]]
+
+query III
+SELECT ST_BandPixelType(r), ST_BandNoDataValue(r)::INTEGER, abs(ST_Value(r, 1, 1) - 2.5) < 1e-9 FROM (SELECT ST_AsRaster(ST_MakeEnvelope(1.2, 1.2, 2.8, 2.8), rast, '32BF', 2.5, -9999, true) AS r FROM h);
+----
+32BF	-9999	true
+
+# Without a NODATA value the background is 0
+query II
+SELECT ST_BandNoDataValue(r) IS NULL, ST_DumpValues(r)::VARCHAR FROM (SELECT ST_AsRaster(ST_GeomFromText('LINESTRING (0.5 0.5, 2.5 0.5)'), 1.0, 1.0, '8BUI', 9, NULL, 0, 2) AS r);
+----
+true	[[0.0, 0.0, 0.0], [9.0, 9.0, 9.0]]
+
+# A point is one pixel
+query II
+SELECT ST_Width(r) * ST_Height(r), ST_Value(r, ST_Point(3.3, 4.4))::INTEGER FROM (SELECT ST_AsRaster(ST_Point(3.3, 4.4), 0.5, 0.5, '8BUI', 8) AS r);
+----
+1	8
+
+query I
+SELECT ST_Width(ST_AsRaster(ST_Point(3.3, 4.4), 3, 2, '8BUI'));
+----
+3
+
+query II
+SELECT ST_AsRaster(ST_GeomFromText('POLYGON EMPTY'), 1.0, 1.0, '8BUI') IS NULL, ST_AsRaster(NULL::GEOMETRY, 1.0, 1.0, '8BUI') IS NULL;
+----
+true	true
+
+statement error
+SELECT ST_AsRaster(ST_MakeEnvelope(0, 0, 2, 1), 0.0, 1.0, '8BUI');
+----
+the pixel size cannot be 0
+
+statement error
+SELECT ST_AsRaster(ST_MakeEnvelope(0, 0, 2, 1), 0, 1, '8BUI');
+----
+the width and height must be positive
+
+statement error
+SELECT ST_AsRaster(ST_MakeEnvelope(0, 0, 2, 1), 1.0, 1.0, 'BYTE');
+----
+Unknown pixel type 'BYTE'
+
+statement error
+SELECT ST_AsRaster(ST_MakeEnvelope(0, 0, 2, 1), 1e-9, 1e-9, '8BUI');
+----
+outside of the supported range
+
+#----------------------------------------------------------------------------------------------------------------------
+# ST_DumpAsPolygons
+#----------------------------------------------------------------------------------------------------------------------
+
+query II
+SELECT ST_AsText(p.geom), p.val::INTEGER FROM (SELECT unnest(ST_DumpAsPolygons(rast)) AS p FROM h) ORDER BY p.val;
+----
+POLYGON ((1 4, 1 3, 0 3, 0 0, 2 0, 2 4, 1 4))	1
+POLYGON ((2 4, 2 0, 4 0, 4 4, 2 4))	2
+
+# With the NODATA pixel
+query II
+SELECT ST_AsText(p.geom), p.val::INTEGER FROM (SELECT unnest(ST_DumpAsPolygons(rast, 1, false)) AS p FROM h) ORDER BY p.val;
+----
+POLYGON ((0 4, 0 3, 1 3, 1 4, 0 4))	0
+POLYGON ((1 4, 1 3, 0 3, 0 0, 2 0, 2 4, 1 4))	1
+POLYGON ((2 4, 2 0, 4 0, 4 4, 2 4))	2
+
+# The polygons cover exactly the valid pixels, and every polygon carries the value of its pixels
+query IIII
+SELECT count(*), abs(sum(ST_Area(p.geom)) - 767 * 100) < 1e-6, bool_and(p.val = ST_Value(rast, ST_PointOnSurface(p.geom))), count(DISTINCT p.val) = (SELECT len(ST_ValueCount(rast)) FROM dem)
+FROM (SELECT rast, unnest(ST_DumpAsPolygons(rast)) AS p FROM dem);
+----
+767	true	true	true
+
+# Areas per value against the value counts
+query I
+SELECT bool_and(abs(area - n * 100) < 1e-6)
+FROM (SELECT p.val AS val, sum(ST_Area(p.geom)) AS area FROM (SELECT unnest(ST_DumpAsPolygons(rast)) AS p FROM dem) GROUP BY val) a
+JOIN (SELECT v.value AS val, v.count AS n FROM (SELECT unnest(ST_ValueCount(rast)) AS v FROM dem)) b USING (val);
+----
+true
+
+# Pixels that only touch at a corner are separate polygons
+query I
+SELECT len(ST_DumpAsPolygons(ST_SetValue(ST_SetValue(ST_AddBand(ST_MakeEmptyRaster(2, 2, 0, 2, 1), '8BUI', 0, 0), 1, 1, 5), 2, 2, 5)));
+----
+2
+
+# The identity georeference, a floating-point band, another band
+query II
+SELECT ST_AsText(p.geom), p.val::VARCHAR FROM (SELECT unnest(ST_DumpAsPolygons(ST_AddBand(ST_MakeEmptyRaster(2, 1, 0, 0, 1, 1, 0, 0), '64BF', 0.5))) AS p);
+----
+POLYGON ((0 0, 0 1, 2 1, 2 0, 0 0))	0.5
+
+query II
+SELECT len(ST_DumpAsPolygons(rast, 2)), len(ST_DumpAsPolygons(rast, 3, true)) FROM ST_ReadRaster('test/data/raster/rgb.tif');
+----
+2	1
+
+query I
+SELECT ST_DumpAsPolygons(ST_AddBand(ST_MakeEmptyRaster(2, 2, 0, 2, 1), '8BUI', 3, 3))::VARCHAR;
+----
+[]
+
+statement error
+SELECT ST_DumpAsPolygons(rast, 2) FROM h;
+----
+Band 2 is out of range
+
+#----------------------------------------------------------------------------------------------------------------------
+# ST_Polygon
+#----------------------------------------------------------------------------------------------------------------------
+
+query I
+SELECT ST_AsText(ST_Polygon(rast)) FROM h;
+----
+POLYGON ((1 4, 1 3, 0 3, 0 0, 4 0, 4 4, 1 4))
+
+# The NODATA pixel in the middle of the plane is a hole
+query IIII
+SELECT ST_GeometryType(g), abs(ST_Area(g) - 767 * 100) < 1e-6, ST_NInteriorRings(g), ST_Equals(ST_Envelope(g), ST_Envelope(rast)) FROM (SELECT rast, ST_Polygon(rast, 1) AS g FROM dem);
+----
+POLYGON	true	1	true
+
+# Separate areas make a multipolygon
+query III
+SELECT ST_GeometryType(g), ST_NumGeometries(g), ST_Area(g)::INTEGER FROM (SELECT ST_Polygon(ST_SetValue(ST_SetValue(ST_AddBand(ST_MakeEmptyRaster(3, 3, 0, 3, 1), '8BUI', 0, 0), 1, 1, 5), 3, 3, 7)) AS g);
+----
+MULTIPOLYGON	2	2
+
+# A band without NODATA value is valid everywhere; a band that is all NODATA has no polygon
+query II
+SELECT ST_AsText(ST_Polygon(ST_AddBand(ST_MakeEmptyRaster(2, 2, 0, 2, 1), '8BUI', 3))), ST_Polygon(ST_AddBand(ST_MakeEmptyRaster(2, 2, 0, 2, 1), '8BUI', 3, 3)) IS NULL;
+----
+POLYGON ((0 2, 2 2, 2 0, 0 0, 0 2))	true
+
+statement error
+SELECT ST_Polygon(ST_MakeEmptyRaster(2, 2, 0, 2, 1));
+----
+Band 1 is out of range
+
+# The geometry function of the same name is untouched
+query I
+SELECT ST_AsText(ST_Polygon(ST_GeomFromText('LINESTRING (0 0, 1 0, 1 1, 0 0)')));
+----
+POLYGON ((0 0, 1 0, 1 1, 0 0))
+
+#----------------------------------------------------------------------------------------------------------------------
+# ST_Intersects
+#----------------------------------------------------------------------------------------------------------------------
+
+# Inside, outside, touching the edge, in the NODATA pixel
+query IIII
+SELECT ST_Intersects(rast, ST_Point(2.5, 2.5)), ST_Intersects(rast, ST_Point(5, 5)), ST_Intersects(rast, ST_Point(4, 2)), ST_Intersects(rast, ST_Point(0.5, 3.5)) FROM h;
+----
+true	false	true	true
+
+# With a band only the pixels that are not NODATA count
+query IIIII
+SELECT ST_Intersects(rast, ST_Point(0.5, 3.5), 1), ST_Intersects(rast, 1, ST_Point(0.5, 3.5)), ST_Intersects(ST_Point(0.5, 3.5), rast, 1), ST_Intersects(rast, ST_Point(2.5, 2.5), 1), ST_Intersects(rast, ST_Point(0.5, 3.5), NULL) FROM h;
+----
+false	false	false	true	true
+
+query III
+SELECT ST_Intersects(ST_MakeEnvelope(-1, 3.2, 0.8, 5), rast), ST_Intersects(ST_MakeEnvelope(-1, 3.2, 0.8, 5), rast, 1), ST_Intersects(ST_MakeEnvelope(-1, 2.5, 0.8, 5), rast, 1) FROM h;
+----
+true	false	true
+
+query II
+SELECT ST_Intersects(rast, ST_GeomFromText('POLYGON EMPTY')), ST_Intersects(rast, NULL::GEOMETRY) FROM h;
+----
+false	NULL
+
+# Rasters: overlapping, apart, sharing an edge, overlapping only over a NODATA pixel (whose edges still touch the
+# valid area, unless the other raster lies strictly inside it)
+query IIII
+SELECT ST_Intersects(rast, ST_SetUpperLeft(rast, 3, 6)), ST_Intersects(rast, ST_SetUpperLeft(rast, 10, 10)), ST_Intersects(rast, ST_SetUpperLeft(rast, 4, 4)), ST_Intersects(rast, ST_SetUpperLeft(rast, -3, 7)) FROM h;
+----
+true	false	true	true
+
+query IIII
+SELECT ST_Intersects(rast, 1, ST_SetUpperLeft(rast, 3, 6), 1), ST_Intersects(rast, 1, ST_SetUpperLeft(rast, 10, 10), 1), ST_Intersects(rast, 1, ST_SetUpperLeft(rast, -3, 7), 1), ST_Intersects(rast, 1, ST_SetUpperLeft(rast, -3.5, 7.5), 1) FROM h;
+----
+true	false	true	false
+
+# Not aligned
+query I
+SELECT ST_Intersects(rast, 1, ST_SetUpperLeft(ST_SetScale(rast, 0.3, -0.3), 0.35, 3.1), 1) FROM h;
+----
+true
+
+statement error
+SELECT ST_Intersects(rast, ST_SetSRID(rast, 4326)) FROM h;
+----
+the rasters have different coordinate systems
+
+statement error
+SELECT ST_Intersects(rast, 3, rast, 1) FROM h;
+----
+Band 3 is out of range
+
+# The geometry predicates of the same names are untouched, also as join conditions
+query II
+SELECT ST_Intersects(ST_Point(1, 1), ST_MakeEnvelope(0, 0, 2, 2)), ST_Contains(ST_MakeEnvelope(0, 0, 2, 2), ST_Point(1, 1));
+----
+true	true
+
+query I
+SELECT count(*) FROM (SELECT ST_Point(x, x) AS g FROM range(10) t(x)) a JOIN (SELECT ST_MakeEnvelope(2.5, 2.5, 6.5, 6.5) AS box) b ON ST_Intersects(a.g, b.box);
+----
+4
+
+# A raster in a join condition
+query I
+SELECT count(*) FROM (SELECT ST_Point(x + 0.5, x + 0.5) AS g FROM range(10) t(x)) a JOIN h ON ST_Intersects(h.rast, a.g, 1);
+----
+4
+
+#----------------------------------------------------------------------------------------------------------------------
+# ST_Contains, ST_Within, ST_Touches, ST_Overlaps
+#----------------------------------------------------------------------------------------------------------------------
+
+# inner: the 2 x 2 pixels in the middle of h
+query IIIIIIII
+SELECT ST_Contains(rast, mid), ST_Contains(mid, rast), ST_Within(mid, rast), ST_Within(rast, mid), ST_Overlaps(rast, mid), ST_Touches(rast, mid), ST_Contains(rast, rast), ST_Within(rast, rast)
+FROM h, (SELECT ST_AddBand(ST_MakeEmptyRaster(2, 2, 1, 3, 1, -1, 0, 0, 3857), '8BUI', 1, 0) AS mid);
+----
+true	false	true	false	false	false	true	true
+
+# Shifted copies: by half its width, by its width, far away
+query IIIIII
+SELECT ST_Overlaps(rast, ST_SetUpperLeft(rast, 2, 4)), ST_Touches(rast, ST_SetUpperLeft(rast, 2, 4)), ST_Overlaps(rast, ST_SetUpperLeft(rast, 4, 4)), ST_Touches(rast, ST_SetUpperLeft(rast, 4, 4)),
+       ST_Touches(rast, ST_SetUpperLeft(rast, 40, 4)), ST_Contains(rast, ST_SetUpperLeft(rast, 2, 4)) FROM h;
+----
+true	false	false	true	false	false
+
+# With bands: corner holds the NODATA pixel of h, so the valid area of h does not contain it, and only touches it
+query IIIIII
+SELECT ST_Contains(rast, corner), ST_Contains(rast, 1, corner, 1), ST_Within(corner, 1, rast, 1), ST_Touches(rast, 1, corner, 1), ST_Overlaps(rast, 1, corner, 1), ST_Overlaps(rast, 1, ST_SetUpperLeft(rast, 2, 4), 1)
+FROM h, (SELECT ST_AddBand(ST_MakeEmptyRaster(1, 1, 0, 4, 1, -1, 0, 0, 3857), '8BUI', 1, 0) AS corner);
+----
+true	false	false	true	false	true
+
+# A band that is all NODATA has no relationship with anything
+query III
+SELECT ST_Contains(rast, 1, ST_SetBandNoDataValue(rast, 1), 1), ST_Intersects(rast, 1, ST_MapAlgebra(rast, '8BUI', 'NULL'), 1), ST_Within(ST_MapAlgebra(rast, '8BUI', 'NULL'), 1, rast, 1) FROM h;
+----
+false	false	false
+
+statement error
+SELECT ST_Contains(rast, ST_SetSRID(rast, 4326)) FROM h;
+----
+the rasters have different coordinate systems
+
+statement error
+SELECT ST_Overlaps(rast, 1, rast, 2) FROM h;
+----
+Band 2 is out of range
+
+#----------------------------------------------------------------------------------------------------------------------
+# ST_Intersection
+#----------------------------------------------------------------------------------------------------------------------
+
+# A rectangle across both halves of h
+query II
+SELECT ST_Area(p.geom)::VARCHAR, p.val::INTEGER FROM (SELECT unnest(ST_Intersection(rast, ST_MakeEnvelope(1.5, 1, 3, 2))) AS p FROM h) ORDER BY p.val;
+----
+0.5	1
+1.0	2
+
+query II
+SELECT ST_Intersection(rast, 1, g) = ST_Intersection(rast, g), ST_Intersection(g, rast) = ST_Intersection(g, rast, 1) FROM h, (SELECT ST_MakeEnvelope(1.5, 1, 3, 2) AS g);
+----
+true	true
+
+query I
+SELECT ST_Equals(ST_Union_Agg(p.geom), ST_MakeEnvelope(1.5, 1, 3, 2)) FROM (SELECT unnest(ST_Intersection(ST_MakeEnvelope(1.5, 1, 3, 2), rast)) AS p FROM h);
+----
+true
+
+# Over the NODATA pixel and beyond the raster: only the part over valid pixels is returned
+query III
+SELECT count(*), abs(sum(ST_Area(p.geom)) - (3 - 1)) < 1e-9, min(p.val)::INTEGER FROM (SELECT unnest(ST_Intersection(rast, ST_MakeEnvelope(-5, 2, 1.5, 9))) AS p FROM h);
+----
+1	true	1
+
+# A geometry that only shares an edge with an area of pixels gets that edge, as in PostGIS
+query II
+SELECT ST_GeometryType(p.geom), p.val::INTEGER FROM (SELECT unnest(ST_Intersection(rast, ST_MakeEnvelope(0, 0, 2, 1))) AS p FROM h) ORDER BY p.val;
+----
+POLYGON	1
+LINESTRING	2
+
+# The parts add up to the geometry where the raster is valid
+query II
+SELECT abs(sum(ST_Area(p.geom)) - ST_Area(any_value(g))) < 1e-6, bool_and(p.val = ST_Value(rast, ST_PointOnSurface(p.geom)))
+FROM (SELECT rast, g, unnest(ST_Intersection(rast, g)) AS p FROM dem, (SELECT ST_Buffer(ST_Point(150200, 169850), 55.5) AS g));
+----
+true	true
+
+# Lines and points
+query II
+SELECT sum(ST_Length(p.geom))::VARCHAR, count(DISTINCT p.val) FROM (SELECT unnest(ST_Intersection(rast, ST_GeomFromText('LINESTRING (0.5 1.5, 3.5 1.5)'))) AS p FROM h);
+----
+3.0	2
+
+query II
+SELECT ST_AsText(p.geom), p.val::INTEGER FROM (SELECT unnest(ST_Intersection(rast, ST_Point(3.5, 0.5))) AS p FROM h);
+----
+POINT (3.5 0.5)	2
+
+# Nothing in common
+query III
+SELECT ST_Intersection(rast, ST_MakeEnvelope(10, 10, 12, 12))::VARCHAR, ST_Intersection(rast, ST_Point(0.5, 3.5))::VARCHAR, ST_Intersection(rast, ST_GeomFromText('POLYGON EMPTY'))::VARCHAR FROM h;
+----
+[]	[]	[]
+
+statement error
+SELECT ST_Intersection(rast, 2, ST_Point(1, 1)) FROM h;
+----
+Band 2 is out of range
+
+# The geometry function of the same name is untouched
+query I
+SELECT ST_Area(ST_Intersection(ST_MakeEnvelope(0, 0, 2, 2), ST_MakeEnvelope(1, 1, 3, 3)))::VARCHAR;
+----
+1.0
+
+#----------------------------------------------------------------------------------------------------------------------
+# ST_Contour
+#----------------------------------------------------------------------------------------------------------------------
+
+# On the plane, every vertex of a contour line is at the elevation of the contour. The outer half pixel is left out:
+# there the surface is the value of the outermost pixel centres
+query IIIII
+SELECT c.id, c.value::INTEGER, ST_GeometryType(c.geom), len(pts) > 20, list_aggregate([abs(100 + 2 * ((ST_X(pt) - 150000) / 10 + 0.5) + 3 * ((170000 - ST_Y(pt)) / 10 + 0.5) - c.value) < 1e-3 FOR pt IN pts], 'bool_and')
+FROM (SELECT c, [pt FOR pt IN [ST_PointN(c.geom, i::INTEGER) FOR i IN range(1, ST_NPoints(c.geom) + 1)] IF ST_X(pt) BETWEEN 150005.01 AND 150314.99 AND ST_Y(pt) BETWEEN 169765.01 AND 169994.99] AS pts
+      FROM (SELECT unnest(ST_Contour(rast, 1, 50.0)) AS c FROM dem)) ORDER BY c.id;
+----
+0	150	LINESTRING	true	true
+1	200	LINESTRING	true	true
+
+query II
+SELECT len(ST_Contour(rast)), len(ST_Contour(rast, 1)) FROM dem;
+----
+1	1
+
+# Base, fixed levels. The 125 contour is cut in two by the NODATA pixel, whose value would be 125
+query I
+SELECT [c.value::INTEGER FOR c IN ST_Contour(rast, 1, 50.0, 25.0)]::VARCHAR FROM dem;
+----
+[125, 125, 175, 225]
+
+query II
+SELECT [c.value::INTEGER FOR c IN ST_Contour(rast, 1, 100.0, 0.0, [110.0, 180.0])]::VARCHAR, len(ST_Contour(rast, 1, 50.0, 0.0, []::DOUBLE[])) FROM dem;
+----
+[110, 180]	2
+
+# Polygons between the levels: together they cover the valid pixel centres' extent
+query III
+SELECT count(*), bool_and(ST_GeometryType(c.geom) IN ('POLYGON', 'MULTIPOLYGON')), list(c.value::INTEGER ORDER BY c.id)[2:3]::VARCHAR
+FROM (SELECT unnest(ST_Contour(rast, 1, 50.0, 0.0, NULL, true)) AS c FROM dem);
+----
+3	true	[150, 200]
+
+query I
+SELECT ST_Contour(ST_AddBand(ST_MakeEmptyRaster(3, 3, 0, 3, 1), '32BF', 7))::VARCHAR;
+----
+[]
+
+statement error
+SELECT ST_Contour(rast, 1, 0.0) FROM dem;
+----
+the level interval must be greater than 0
+
+statement error
+SELECT ST_Contour(rast, 2) FROM dem;
+----
+Band 2 is out of range
+
+#----------------------------------------------------------------------------------------------------------------------
+# ST_InterpolateRaster
+#----------------------------------------------------------------------------------------------------------------------
+
+query I
+SELECT ST_DumpValues(ST_InterpolateRaster(ST_GeomFromText('MULTIPOINT Z ((0.5 0.5 10), (1.5 0.5 20))'), 'nearest', ST_AddBand(ST_MakeEmptyRaster(2, 1, 0, 1, 1), '32BF')))::VARCHAR;
+----
+[[10.0, 20.0]]
+
+# Nearest neighbour from the four corners of a 4 x 4 raster: each quadrant takes the value of its corner
+query III
+SELECT ST_DumpValues(r)::VARCHAR, ST_MetaData(r) = ST_MetaData(rast), ST_BandPixelType(r)
+FROM (SELECT rast, ST_InterpolateRaster(ST_GeomFromText('MULTIPOINT Z ((0 4 1), (4 4 2), (0 0 3), (4 0 4))'), 'nearest', rast) AS r FROM h);
+----
+[[1.0, 1.0, 2.0, 2.0], [1.0, 1.0, 2.0, 2.0], [3.0, 3.0, 4.0, 4.0], [3.0, 3.0, 4.0, 4.0]]	true	8BUI
+
+# Inverse distance weighting: exact at the points, between the extremes elsewhere, symmetric
+query IIII
+SELECT abs(ST_Value(r, 1, 1) - 10) < 1e-6, abs(ST_Value(r, 5, 1) - 20) < 1e-6, abs(ST_Value(r, 3, 1) - 15) < 1e-6, ST_Value(r, 2, 1) BETWEEN 10 AND 15
+FROM (SELECT ST_InterpolateRaster(ST_GeomFromText('MULTIPOINT Z ((0.5 0.5 10), (4.5 0.5 20))'), 'invdist:power:2.0', ST_AddBand(ST_MakeEmptyRaster(5, 1, 0, 1, 1), '64BF')) AS r);
+----
+true	true	true	true
+
+# The mean of all points
+query I
+SELECT ST_DumpValues(ST_InterpolateRaster(ST_GeomFromText('LINESTRING Z (0 0 10, 1 1 20, 2 0 60)'), 'average', ST_AddBand(ST_MakeEmptyRaster(2, 1, 0, 1, 1), '32BF')))::VARCHAR;
+----
+[[30.0, 30.0]]
+
+# Only the chosen band changes
+query III
+SELECT ST_NumBands(r), ST_Value(r, 1, 1, 1)::INTEGER, ST_Value(r, 2, 1, 1)::INTEGER
+FROM (SELECT ST_InterpolateRaster(ST_GeomFromText('POINT Z (5 50 77)'), 'nearest', rast, 2) AS r FROM ST_ReadRaster('test/data/raster/rgb.tif'));
+----
+3	10	77
+
+statement error
+SELECT ST_InterpolateRaster(ST_GeomFromText('MULTIPOINT ((0.5 0.5), (1.5 0.5))'), 'nearest', rast) FROM h;
+----
+the geometry must have Z values
+
+statement error
+SELECT ST_InterpolateRaster(ST_GeomFromText('POINT Z (1 1 1)'), 'splines', rast) FROM h;
+----
+invalid interpolation options 'splines'
+
+statement error
+SELECT ST_InterpolateRaster(ST_GeomFromText('POINT Z (1 1 1)'), 'nearest', rast, 2) FROM h;
+----
+Band 2 is out of range
+
+statement error
+SELECT ST_InterpolateRaster(ST_GeomFromText('POINT Z (1 1 1)'), 'nearest', ST_SetSkew(rast, 0.1, 0.1)) FROM h;
+----
+the raster must not be skewed
+
+query I
+SELECT ST_InterpolateRaster(NULL::GEOMETRY, 'nearest', rast) IS NULL FROM h;
+----
+true

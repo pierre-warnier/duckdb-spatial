@@ -1,0 +1,346 @@
+# name: test/sql/raster/raster_statistics.test
+# group: [raster]
+
+require spatial
+
+# 32 x 24 pixels, value 100 + 2x + 3y, pixel (5, 5) is NODATA (-9999)
+statement ok
+CREATE TABLE dem AS SELECT rast FROM ST_ReadRaster('test/data/raster/dem.tif');
+
+# The same pixels as rows, NODATA included as NULL
+statement ok
+CREATE TABLE pixels AS
+SELECT x, y, row[x] AS val
+FROM (SELECT y, row, unnest(generate_series(1, len(row))) AS x
+      FROM (SELECT unnest(generate_series(1, len(vals))) AS y, unnest(vals) AS row FROM (SELECT ST_DumpValues(rast) AS vals FROM dem)));
+
+query II
+SELECT count(*), count(val) FROM pixels;
+----
+768	767
+
+#----------------------------------------------------------------------------------------------------------------------
+# ST_SummaryStats and ST_Count against plain SQL over the dumped values
+#----------------------------------------------------------------------------------------------------------------------
+
+query IIIIII
+SELECT s.count = (SELECT count(val) FROM pixels),
+       abs(s.sum - (SELECT sum(val) FROM pixels)) < 1e-6,
+       abs(s.mean - (SELECT avg(val) FROM pixels)) < 1e-9,
+       abs(s.stddev - (SELECT stddev_pop(val) FROM pixels)) < 1e-9,
+       s.min = (SELECT min(val) FROM pixels),
+       s.max = (SELECT max(val) FROM pixels)
+FROM (SELECT ST_SummaryStats(rast) AS s FROM dem);
+----
+true	true	true	true	true	true
+
+query IIII
+SELECT (ST_SummaryStats(rast)).count, (ST_SummaryStats(rast)).min::INTEGER, (ST_SummaryStats(rast)).max::INTEGER, (ST_SummaryStats(rast)).sum::BIGINT FROM dem;
+----
+767	105	236	130819
+
+query II
+SELECT ST_SummaryStats(rast, 1) = ST_SummaryStats(rast), ST_SummaryStats(rast, 1, true) = ST_SummaryStats(rast, true) FROM dem;
+----
+true	true
+
+# NODATA included
+query IIII
+SELECT s.count, s.min::INTEGER, abs(s.mean - (SELECT avg(coalesce(val, -9999)) FROM pixels)) < 1e-9, abs(s.stddev - (SELECT stddev_pop(coalesce(val, -9999)) FROM pixels)) < 1e-6
+FROM (SELECT ST_SummaryStats(rast, 1, false) AS s FROM dem);
+----
+768	-9999	true	true
+
+query I
+SELECT ST_SummaryStats(rast, false) = ST_SummaryStats(rast, 1, false) FROM dem;
+----
+true
+
+# Nothing to count
+query I
+SELECT ST_SummaryStats(ST_AddBand(ST_MakeEmptyRaster(2, 2, 0, 0, 1), '8BUI', 3, 3))::VARCHAR;
+----
+{'count': 0, 'sum': NULL, 'mean': NULL, 'stddev': NULL, 'min': NULL, 'max': NULL}
+
+query I
+SELECT ST_SummaryStats(ST_SetValue(ST_AddBand(ST_MakeEmptyRaster(2, 1, 0, 0, 1), '8BUI', 1), 1, 1, 5))::VARCHAR;
+----
+{'count': 2, 'sum': 6.0, 'mean': 3.0, 'stddev': 2.0, 'min': 1.0, 'max': 5.0}
+
+statement error
+SELECT ST_SummaryStats(rast, 2) FROM dem;
+----
+Band 2 is out of range
+
+query IIIII
+SELECT ST_Count(rast), ST_Count(rast, 1), ST_Count(rast, 1, false), ST_Count(rast, false), ST_Count(rast, true) FROM dem;
+----
+767	767	768	768	767
+
+statement error
+SELECT ST_Count(ST_MakeEmptyRaster(rast)) FROM dem;
+----
+Band 1 is out of range
+
+# Other bands
+query III
+SELECT (ST_SummaryStats(rast, 2)).mean > 20, (ST_SummaryStats(rast, 2)).max::INTEGER, ST_Count(rast, 3) FROM ST_ReadRaster('test/data/raster/rgb.tif');
+----
+true	99	48
+
+#----------------------------------------------------------------------------------------------------------------------
+# ST_Quantile
+#----------------------------------------------------------------------------------------------------------------------
+
+query IIIII
+SELECT abs(ST_Quantile(rast, 0.5) - (SELECT quantile_cont(val, 0.5) FROM pixels)) < 1e-9,
+       abs(ST_Quantile(rast, 1, 0.1) - (SELECT quantile_cont(val, 0.1) FROM pixels)) < 1e-9,
+       abs(ST_Quantile(rast, 1, true, 0.937) - (SELECT quantile_cont(val, 0.937) FROM pixels)) < 1e-9,
+       ST_Quantile(rast, 0.0) = (SELECT min(val) FROM pixels),
+       ST_Quantile(rast, true, 1.0) = (SELECT max(val) FROM pixels)
+FROM dem;
+----
+true	true	true	true	true
+
+query II
+SELECT ST_Quantile(rast, false, 0.0)::INTEGER, ST_Quantile(rast, 1, false, 0.0)::INTEGER FROM dem;
+----
+-9999	-9999
+
+# The default is the five quartiles
+query II
+SELECT [q.quantile::VARCHAR FOR q IN ST_Quantile(rast)]::VARCHAR,
+       list_aggregate([abs(z[1] - z[2]) < 1e-9 FOR z IN list_zip([q.value FOR q IN ST_Quantile(rast)], (SELECT quantile_cont(val, [0, 0.25, 0.5, 0.75, 1]) FROM pixels))], 'bool_and')
+FROM dem;
+----
+[0.0, 0.25, 0.5, 0.75, 1.0]	true
+
+query II
+SELECT ST_Quantile(rast, 1) = ST_Quantile(rast), ST_Quantile(rast, 1, true) = ST_Quantile(rast, 1, true, NULL::DOUBLE[]) FROM dem;
+----
+true	true
+
+# A list of quantiles comes back sorted
+query I
+SELECT [q.quantile::VARCHAR FOR q IN ST_Quantile(rast, [0.9, 0.1])] FROM dem;
+----
+[0.1, 0.9]
+
+query III
+SELECT ST_Quantile(rast, [0.1, 0.9]) = ST_Quantile(rast, 1, [0.9, 0.1]), ST_Quantile(rast, 1, true, [0.1, 0.9]) = ST_Quantile(rast, [0.1, 0.9]),
+       abs(ST_Quantile(rast, [0.1, 0.9])[2].value - ST_Quantile(rast, 0.9)) < 1e-12
+FROM dem;
+----
+true	true	true
+
+query II
+SELECT ST_Quantile(ST_AddBand(ST_MakeEmptyRaster(2, 2, 0, 0, 1), '8BUI', 3, 3), 0.5) IS NULL, ST_Quantile(ST_AddBand(ST_MakeEmptyRaster(2, 2, 0, 0, 1), '8BUI', 3, 3), [0.5])::VARCHAR;
+----
+true	[{'quantile': 0.5, 'value': NULL}]
+
+statement error
+SELECT ST_Quantile(rast, 1.5) FROM dem;
+----
+the quantile must be between 0 and 1
+
+statement error
+SELECT ST_Quantile(rast, [0.5, -0.1]) FROM dem;
+----
+the quantile must be between 0 and 1
+
+#----------------------------------------------------------------------------------------------------------------------
+# ST_ValueCount
+#----------------------------------------------------------------------------------------------------------------------
+
+query I
+SELECT ST_ValueCount(rast) = (SELECT list({'value': val, 'count': n} ORDER BY val) FROM (SELECT val, count(*) AS n FROM pixels WHERE val IS NOT NULL GROUP BY val)) FROM dem;
+----
+true
+
+query II
+SELECT len(ST_ValueCount(rast, 1, false)) = (SELECT count(DISTINCT val) + 1 FROM pixels), ST_ValueCount(rast, 1, false)[1]::VARCHAR FROM dem;
+----
+true	{'value': -9999.0, 'count': 1}
+
+# 150 = 100 + 2x + 3y has 8 solutions in the raster
+query IIIIII
+SELECT ST_ValueCount(rast, 150.0), ST_ValueCount(rast, 1, 150.0), ST_ValueCount(rast, 1, true, 150.0), ST_ValueCount(rast, 1, 105), ST_ValueCount(rast, 1, 5000.0), (SELECT count(*) FROM pixels WHERE val = 150) FROM dem;
+----
+8	8	8	1	0	8
+
+query III
+SELECT ST_ValueCount(rast, -9999.0), ST_ValueCount(rast, 1, false, -9999.0), ST_ValueCount(rast, 1, true, -9999.0) FROM dem;
+----
+0	1	0
+
+query I
+SELECT ST_ValueCount(rast, [150, 5000, 105])::VARCHAR FROM dem;
+----
+[{'value': 150.0, 'count': 8}, {'value': 5000.0, 'count': 0}, {'value': 105.0, 'count': 1}]
+
+query II
+SELECT ST_ValueCount(rast, 1, [150.0]) = ST_ValueCount(rast, [150.0]), ST_ValueCount(rast, 1, true, [150.0], 0) = ST_ValueCount(rast, [150.0]) FROM dem;
+----
+true	true
+
+# Rounded to tens
+query II
+SELECT ST_ValueCount(rast, 1, true, NULL::DOUBLE[], 10.0) = (SELECT list({'value': v, 'count': n} ORDER BY v) FROM (SELECT round(val / 10) * 10 AS v, count(*) AS n FROM pixels WHERE val IS NOT NULL GROUP BY v)),
+       ST_ValueCount(rast, 1, 152.0, 10.0) = (SELECT count(*) FROM pixels WHERE round(val / 10) * 10 = 150)
+FROM dem;
+----
+true	true
+
+query II
+SELECT ST_ValueCount(rast, [152.0], 10.0)::VARCHAR = ST_ValueCount(rast, 1, [150.0], 10.0)::VARCHAR, ST_ValueCount(rast, 152.0, 10.0) = ST_ValueCount(rast, 1, true, 148.0, 10.0) FROM dem;
+----
+true	true
+
+statement error
+SELECT ST_ValueCount(rast, 4) FROM dem;
+----
+Band 4 is out of range
+
+#----------------------------------------------------------------------------------------------------------------------
+# ST_Histogram
+#----------------------------------------------------------------------------------------------------------------------
+
+# Four equal bins over [105, 236]: the counts are those of width_bucket-like binning in SQL, the last bin is closed
+query IIII
+SELECT h.min::VARCHAR, h.max::VARCHAR, h.count = (SELECT count(*) FROM pixels WHERE val >= h.min AND (val < h.max OR (h.max = 236 AND val = 236))), abs(h.percent - h.count / 767.0) < 1e-12
+FROM (SELECT unnest(ST_Histogram(rast, 1, 4)) AS h FROM dem) ORDER BY h.min;
+----
+105.0	137.75	true	true
+137.75	170.5	true	true
+170.5	203.25	true	true
+203.25	236.0	true	true
+
+query II
+SELECT sum(h.count), abs(sum(h.percent) - 1) < 1e-12 FROM (SELECT unnest(ST_Histogram(rast, 1, 4)) AS h FROM dem);
+----
+767	true
+
+# The default number of bins follows Sturges' formula: ceil(log2(767) + 1) = 11
+query III
+SELECT len(ST_Histogram(rast)), len(ST_Histogram(rast, 1)), len(ST_Histogram(rast, 1, true, 0)) FROM dem;
+----
+11	11	11
+
+# Square-root choice below 30 values
+query I
+SELECT len(ST_Histogram(ST_Band(rast, 1))) FROM ST_ReadRaster('test/data/raster/rgb.tif', 4, 4) LIMIT 1;
+----
+1
+
+query II
+SELECT len(h), h[1].count FROM (SELECT ST_Histogram(ST_SetValue(ST_SetValue(ST_AddBand(ST_MakeEmptyRaster(3, 3, 0, 0, 1), '8BUI', 1), 1, 1, 4), 2, 2, 10)) AS h);
+----
+3	7
+
+# NODATA included: the value range starts at -9999
+query II
+SELECT h[1].min::INTEGER, sum(b.count) FROM (SELECT h, unnest(h) AS b FROM (SELECT ST_Histogram(rast, 1, false, 5) AS h FROM dem)) GROUP BY h;
+----
+-9999	768
+
+# Closed on the right: listed from the top, the counts are those of (min, max]
+query III
+SELECT h.min::VARCHAR, h.max::VARCHAR, h.count = (SELECT count(*) FROM pixels WHERE val <= h.max AND (val > h.min OR (h.min = 105 AND val = 105)))
+FROM (SELECT unnest(ST_Histogram(rast, 1, 4, true)) AS h FROM dem);
+----
+203.25	236.0	true
+170.5	203.25	true
+137.75	170.5	true
+105.0	137.75	true
+
+query II
+SELECT ST_Histogram(rast, 1, true, 4, true) = ST_Histogram(rast, 1, 4, true), ST_Histogram(rast, 1, true, 4, NULL, false) = ST_Histogram(rast, 1, 4) FROM dem;
+----
+true	true
+
+# Given bin widths: 50 wide from 105 up, the last bin reaches the maximum
+query I
+SELECT [(b.min::INTEGER, b.max::INTEGER) FOR b IN ST_Histogram(rast, 1, 0, [50.0])]::VARCHAR FROM dem;
+----
+[(105, 155), (155, 205), (205, 255)]
+
+query I
+SELECT [(b.min::INTEGER, b.max::INTEGER) FOR b IN ST_Histogram(rast, 1, 3, [20.0, 40.0], false)]::VARCHAR FROM dem;
+----
+[(105, 125), (125, 165), (165, 236)]
+
+query I
+SELECT ST_Histogram(ST_AddBand(ST_MakeEmptyRaster(2, 2, 0, 0, 1), '8BUI', 3, 3))::VARCHAR;
+----
+[]
+
+query I
+SELECT ST_Histogram(ST_AddBand(ST_MakeEmptyRaster(2, 2, 0, 0, 1), '8BUI', 3))::VARCHAR;
+----
+[{'min': 3.0, 'max': 3.0, 'count': 4, 'percent': 1.0}]
+
+statement error
+SELECT ST_Histogram(rast, 1, 3, [20.0, -1.0]) FROM dem;
+----
+the bin widths must be greater than 0
+
+statement error
+SELECT ST_Histogram(rast, 2) FROM dem;
+----
+Band 2 is out of range
+
+#----------------------------------------------------------------------------------------------------------------------
+# ST_SummaryStatsAgg
+#----------------------------------------------------------------------------------------------------------------------
+
+statement ok
+CREATE TABLE tiles AS SELECT x, y, rast FROM ST_ReadRaster('test/data/raster/dem.tif', 5, 7);
+
+# Over all tiles: the statistics of the whole raster
+query IIIIII
+SELECT s.count = t.count, abs(s.sum - t.sum) < 1e-6, abs(s.mean - t.mean) < 1e-9, abs(s.stddev - t.stddev) < 1e-9, s.min = t.min, s.max = t.max
+FROM (SELECT ST_SummaryStatsAgg(rast) AS s FROM tiles), (SELECT ST_SummaryStats(rast) AS t FROM dem);
+----
+true	true	true	true	true	true
+
+query II
+SELECT ST_SummaryStatsAgg(rast, 1) = ST_SummaryStatsAgg(rast), (ST_SummaryStatsAgg(rast, 1, false)).count FROM tiles;
+----
+true	768
+
+query I
+SELECT abs((ST_SummaryStatsAgg(rast, 1, false)).stddev - (SELECT stddev_pop(coalesce(val, -9999)) FROM pixels)) < 1e-6 FROM tiles;
+----
+true
+
+# Grouped, compared with the scalar function on each tile
+query II
+SELECT count(*), bool_and(agg.count = one.count AND abs(agg.mean - one.mean) < 1e-9 AND abs(agg.stddev - one.stddev) < 1e-9 AND agg.min = one.min AND agg.max = one.max)
+FROM (SELECT x, y, ST_SummaryStatsAgg(rast) AS agg, ST_SummaryStats(any_value(rast)) AS one FROM tiles GROUP BY x, y);
+----
+28	true
+
+# Per tile column, compared with the pixels
+query II
+SELECT count(*), bool_and(agg.count = n AND abs(agg.mean - mean) < 1e-9 AND abs(agg.stddev - sd) < 1e-9)
+FROM (SELECT x, ST_SummaryStatsAgg(rast) AS agg FROM tiles GROUP BY x) a
+JOIN (SELECT (x - 1) // 5 AS tx, count(val) AS n, avg(val) AS mean, stddev_pop(val) AS sd FROM pixels GROUP BY tx) p ON a.x = p.tx;
+----
+7	true
+
+# NULL rasters are skipped, an empty group counts nothing
+query II
+SELECT (ST_SummaryStatsAgg(CASE WHEN x = 0 THEN rast END)).count, (ST_SummaryStatsAgg(rast) FILTER (WHERE x < 0))::VARCHAR FROM tiles;
+----
+119	{'count': 0, 'sum': NULL, 'mean': NULL, 'stddev': NULL, 'min': NULL, 'max': NULL}
+
+# As a window function
+query I
+SELECT bool_and(total = 767) FROM (SELECT (ST_SummaryStatsAgg(rast) OVER ()).count AS total FROM tiles);
+----
+true
+
+statement error
+SELECT ST_SummaryStatsAgg(rast, 2) FROM tiles;
+----
+Band 2 is out of range

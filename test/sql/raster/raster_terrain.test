@@ -1,0 +1,211 @@
+# name: test/sql/raster/raster_terrain.test
+# group: [raster]
+
+require spatial
+
+# A plane: 32 x 24 pixels of 10 m, elevation 100 + 2x + 3y, so it rises 0.2 m per metre to the east and 0.3 m per
+# metre to the south. Pixel (5, 5) is NODATA.
+statement ok
+CREATE TABLE dem AS SELECT rast FROM ST_ReadRaster('test/data/raster/dem.tif');
+
+# Interior pixels that are not next to the NODATA pixel
+statement ok
+CREATE MACRO interior(p) AS p.x BETWEEN 2 AND 31 AND p.y BETWEEN 2 AND 23 AND NOT (p.x BETWEEN 4 AND 6 AND p.y BETWEEN 4 AND 6);
+
+#----------------------------------------------------------------------------------------------------------------------
+# ST_Slope: constant on a plane
+#----------------------------------------------------------------------------------------------------------------------
+
+query III
+SELECT count(*), bool_and(abs(p.val - degrees(atan(sqrt(0.2 * 0.2 + 0.3 * 0.3)))) < 1e-4), abs(min(p.val) - 19.8264) < 1e-3
+FROM (SELECT unnest(ST_PixelAsPoints(ST_Slope(rast))) AS p FROM dem) WHERE interior(p);
+----
+651	true	true
+
+query III
+SELECT ST_MetaData(s) = ST_MetaData(rast), ST_BandPixelType(s), ST_BandNoDataValue(s)::INTEGER FROM (SELECT rast, ST_Slope(rast) AS s FROM dem);
+----
+true	32BF	-9999
+
+# Only the NODATA pixel is NODATA: its neighbours and the border are computed
+query III
+SELECT 768 - len(ST_PixelAsPoints(s)), ST_Value(s, 5, 5) IS NULL, ST_Value(s, 4, 5) BETWEEN 5 AND 40 FROM (SELECT ST_Slope(rast) AS s FROM dem);
+----
+1	true	true
+
+# Units and scale
+query II
+SELECT bool_and(abs(p.val - atan(sqrt(0.13))) < 1e-6), count(*) FROM (SELECT unnest(ST_PixelAsPoints(ST_Slope(rast, 1, '64BF', 'RADIANS'))) AS p FROM dem) WHERE interior(p);
+----
+true	651
+
+query I
+SELECT bool_and(abs(p.val - 100 * sqrt(0.13)) < 1e-3) FROM (SELECT unnest(ST_PixelAsPoints(ST_Slope(rast, 1, '32BF', 'percent'))) AS p FROM dem) WHERE interior(p);
+----
+true
+
+query I
+SELECT bool_and(abs(p.val - degrees(atan(sqrt(0.13) / 10))) < 1e-4) FROM (SELECT unnest(ST_PixelAsPoints(ST_Slope(rast, 1, '32BF', 'DEGREES', 10.0))) AS p FROM dem) WHERE interior(p);
+----
+true
+
+query I
+SELECT bool_and(abs(p.val - degrees(atan(sqrt(0.13)))) < 1e-4) FROM (SELECT unnest(ST_PixelAsPoints(ST_Slope(rast, 1, '32BF', 'DEGREES', 1.0, false))) AS p FROM dem) WHERE interior(p);
+----
+true
+
+# Integer pixel types round, and use their largest value as NODATA
+query IIII
+SELECT ST_BandPixelType(s), ST_BandNoDataValue(s)::INTEGER, ST_Value(s, 10, 10)::INTEGER, ST_Value(s, 5, 5) FROM (SELECT ST_Slope(rast, 1, '8BUI') AS s FROM dem);
+----
+8BUI	255	20	NULL
+
+query II
+SELECT ST_BandNoDataValue(s)::INTEGER, ST_Value(s, 10, 10)::INTEGER FROM (SELECT ST_Slope(rast, 1, '16BSI') AS s FROM dem);
+----
+-9999	20
+
+# A flat raster has no slope
+query I
+SELECT bool_and(p.val = 0) FROM (SELECT unnest(ST_PixelAsPoints(ST_Slope(ST_AddBand(ST_MakeEmptyRaster(5, 5, 0, 5, 1), '32BF', 4)))) AS p);
+----
+true
+
+statement error
+SELECT ST_Slope(rast, 1, '32BF', 'GRADIANS') FROM dem;
+----
+Unknown units 'GRADIANS'
+
+statement error
+SELECT ST_Slope(rast, 2) FROM dem;
+----
+Band 2 is out of range
+
+statement error
+SELECT ST_Slope(rast, 1, '32BF', 'DEGREES', 1.0, true) FROM dem;
+----
+interpolate_nodata is not supported
+
+#----------------------------------------------------------------------------------------------------------------------
+# ST_Aspect: the plane faces north-north-west, atan2(-0.2, 0.3) clockwise from north
+#----------------------------------------------------------------------------------------------------------------------
+
+query II
+SELECT count(*), bool_and(abs(p.val - (360 + degrees(atan2(-0.2, 0.3)))) < 1e-3) FROM (SELECT unnest(ST_PixelAsPoints(ST_Aspect(rast))) AS p FROM dem) WHERE interior(p);
+----
+651	true
+
+query I
+SELECT bool_and(abs(p.val - radians(360 + degrees(atan2(-0.2, 0.3)))) < 1e-5) FROM (SELECT unnest(ST_PixelAsPoints(ST_Aspect(rast, 1, '64BF', 'RADIANS'))) AS p FROM dem) WHERE interior(p);
+----
+true
+
+# Planes facing the four cardinal directions
+statement ok
+CREATE TABLE ramps AS
+SELECT 'west' AS facing, ST_SetValue(ST_SetValue(ST_AddBand(ST_MakeEmptyRaster(3, 3, 0, 3, 1), '32BF'), ST_MakeEnvelope(1, 0, 2, 3), 1), ST_MakeEnvelope(2, 0, 3, 3), 2) AS rast
+UNION ALL SELECT 'east', ST_SetValue(ST_SetValue(ST_AddBand(ST_MakeEmptyRaster(3, 3, 0, 3, 1), '32BF'), ST_MakeEnvelope(1, 0, 2, 3), 1), ST_MakeEnvelope(0, 0, 1, 3), 2)
+UNION ALL SELECT 'south', ST_SetValue(ST_SetValue(ST_AddBand(ST_MakeEmptyRaster(3, 3, 0, 3, 1), '32BF'), ST_MakeEnvelope(0, 1, 3, 2), 1), ST_MakeEnvelope(0, 2, 3, 3), 2)
+UNION ALL SELECT 'north', ST_SetValue(ST_SetValue(ST_AddBand(ST_MakeEmptyRaster(3, 3, 0, 3, 1), '32BF'), ST_MakeEnvelope(0, 1, 3, 2), 1), ST_MakeEnvelope(0, 0, 3, 1), 2);
+
+query III
+SELECT facing, ST_Value(ST_Aspect(rast), 2, 2)::INTEGER, round(ST_Value(ST_Slope(rast), 2, 2), 3)::VARCHAR FROM ramps ORDER BY facing;
+----
+east	90	45.0
+north	0	45.0
+south	180	45.0
+west	270	45.0
+
+# Flat pixels are -1, not NODATA
+query II
+SELECT bool_and(p.val = -1), count(*) FROM (SELECT unnest(ST_PixelAsPoints(ST_Aspect(ST_AddBand(ST_MakeEmptyRaster(5, 5, 0, 5, 1), '32BF', 4)))) AS p);
+----
+true	25
+
+query II
+SELECT 768 - len(ST_PixelAsPoints(a)), ST_Value(a, 5, 5) IS NULL FROM (SELECT ST_Aspect(rast) AS a FROM dem);
+----
+1	true
+
+statement error
+SELECT ST_Aspect(rast, 1, '32BF', 'PERCENT') FROM dem;
+----
+Unknown units 'PERCENT'
+
+#----------------------------------------------------------------------------------------------------------------------
+# ST_Hillshade
+#----------------------------------------------------------------------------------------------------------------------
+
+# A flat surface lit from 45 degrees: 255 * sin(45 degrees), quantised to 8 bits
+query II
+SELECT bool_and(abs(p.val - 255 * sin(radians(45))) < 1.5), count(*) FROM (SELECT unnest(ST_PixelAsPoints(ST_Hillshade(ST_AddBand(ST_MakeEmptyRaster(5, 5, 0, 5, 1), '32BF', 4)))) AS p);
+----
+true	25
+
+# Light from straight above lights a flat surface fully; max_bright scales the result
+query II
+SELECT abs(ST_Value(ST_Hillshade(flat, 1, '32BF', 315, 90), 3, 3) - 255) < 1e-6, abs(ST_Value(ST_Hillshade(flat, 1, '32BF', 315, 90, 100), 3, 3) - 100) < 1e-6
+FROM (SELECT ST_AddBand(ST_MakeEmptyRaster(5, 5, 0, 5, 1), '32BF', 4) AS flat);
+----
+true	true
+
+# The plane faces north-north-west: brighter than flat when lit from the north-west, darker from the south-east
+query III
+SELECT ST_Value(ST_Hillshade(rast), 10, 10) > 255 * sin(radians(45)) + 5, ST_Value(ST_Hillshade(rast, 1, '32BF', 135), 10, 10) < 255 * sin(radians(45)) - 5,
+       abs(ST_Value(ST_Hillshade(rast), 10, 10) - 255 * (cos(radians(45)) * cos(atan(sqrt(0.13))) + sin(radians(45)) * sin(atan(sqrt(0.13))) * cos(radians(315 - (360 + degrees(atan2(-0.2, 0.3))))))) < 3
+FROM dem;
+----
+true	true	true
+
+query III
+SELECT ST_BandPixelType(h), ST_BandNoDataValue(h)::INTEGER, 768 - len(ST_PixelAsPoints(h)) FROM (SELECT ST_Hillshade(rast, 1, '8BUI', 315, 45, 200, 1.0, false) AS h FROM dem);
+----
+8BUI	255	1
+
+statement error
+SELECT ST_Hillshade(rast, 1, '32BF', 315, 45, 255, 1.0, true) FROM dem;
+----
+interpolate_nodata is not supported
+
+#----------------------------------------------------------------------------------------------------------------------
+# ST_TPI, ST_TRI, ST_Roughness
+#----------------------------------------------------------------------------------------------------------------------
+
+# On the plane: every pixel is the mean of its neighbours; the neighbours differ by 2, 2, 3, 3, 5, 5, 1, 1; the
+# neighbourhood spans 2 * 2 + 2 * 3
+query IIII
+SELECT count(*), bool_and(abs(tpi) < 1e-4), bool_and(abs(tri - 22.0 / 8) < 1e-4), bool_and(abs(roughness - 10) < 1e-4)
+FROM (SELECT p.x AS x, p.y AS y, p.val AS tpi, ST_Value(tri, p.x, p.y) AS tri, ST_Value(roughness, p.x, p.y) AS roughness, p
+      FROM (SELECT ST_TRI(rast) AS tri, ST_Roughness(rast) AS roughness, unnest(ST_PixelAsPoints(ST_TPI(rast))) AS p FROM dem))
+WHERE interior(p);
+----
+651	true	true	true
+
+# A single spike of 9 on a floor of 1
+query III
+SELECT ST_Value(ST_TPI(spike), 2, 2)::INTEGER, ST_Value(ST_TRI(spike), 2, 2)::INTEGER, ST_Value(ST_Roughness(spike), 2, 2)::INTEGER
+FROM (SELECT ST_SetValue(ST_AddBand(ST_MakeEmptyRaster(3, 3, 0, 3, 1), '32BF', 1), 2, 2, 9) AS spike);
+----
+8	8	8
+
+query IIIIII
+SELECT ST_BandPixelType(ST_TPI(rast, 1, '64BF')), ST_BandPixelType(ST_TRI(rast, 1, '16BSI', false)), ST_BandPixelType(ST_Roughness(rast, 1)),
+       768 - len(ST_PixelAsPoints(ST_TPI(rast))), 768 - len(ST_PixelAsPoints(ST_TRI(rast))), 768 - len(ST_PixelAsPoints(ST_Roughness(rast)))
+FROM dem;
+----
+64BF	16BSI	32BF	1	1	1
+
+statement error
+SELECT ST_TPI(rast, 1, '32BF', true) FROM dem;
+----
+interpolate_nodata is not supported
+
+statement error
+SELECT ST_TRI(rast, 3) FROM dem;
+----
+Band 3 is out of range
+
+statement error
+SELECT ST_Roughness(rast, 1, 'FLOAT') FROM dem;
+----
+Unknown pixel type 'FLOAT'

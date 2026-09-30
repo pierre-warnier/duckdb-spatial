@@ -1,0 +1,325 @@
+# name: test/sql/raster/raster_pixels.test
+# group: [raster]
+
+require spatial
+
+# 4 x 3 pixels of 2 x 2 world units, upper-left corner at (100, 200)
+statement ok
+CREATE TABLE t AS SELECT ST_AddBand(ST_MakeEmptyRaster(4, 3, 100, 200, 2, -2, 0, 0, 31370), '16BSI', 7, -1) AS rast;
+
+statement ok
+CREATE TABLE s AS SELECT ST_MakeEmptyRaster(2, 2, 0, 0, 3, -3, 4, 4) AS rast;
+
+#----------------------------------------------------------------------------------------------------------------------
+# Coordinates
+#----------------------------------------------------------------------------------------------------------------------
+
+query III
+SELECT ST_RasterToWorldCoord(rast, 1, 1)::VARCHAR, ST_RasterToWorldCoord(rast, 2, 3)::VARCHAR, ST_RasterToWorldCoord(rast, 0, 0)::VARCHAR FROM t;
+----
+{'longitude': 100.0, 'latitude': 200.0}	{'longitude': 102.0, 'latitude': 196.0}	{'longitude': 98.0, 'latitude': 202.0}
+
+query IIII
+SELECT ST_RasterToWorldCoordX(rast, 2)::VARCHAR, ST_RasterToWorldCoordX(rast, 2, 3)::VARCHAR, ST_RasterToWorldCoordY(rast, 3)::VARCHAR, ST_RasterToWorldCoordY(rast, 2, 3)::VARCHAR FROM t;
+----
+102.0	102.0	196.0	196.0
+
+query III
+SELECT ST_RasterToWorldCoord(rast, 2, 2)::VARCHAR, ST_RasterToWorldCoordX(rast, 2, 2)::VARCHAR, ST_RasterToWorldCoordY(rast, 2, 2)::VARCHAR FROM s;
+----
+{'longitude': 7.0, 'latitude': 1.0}	7.0	1.0
+
+statement error
+SELECT ST_RasterToWorldCoordX(rast, 2) FROM s;
+----
+The raster is skewed
+
+statement error
+SELECT ST_RasterToWorldCoordY(rast, 2) FROM s;
+----
+The raster is skewed
+
+# World to raster: inside a pixel, on a pixel corner, outside of the raster
+query III
+SELECT ST_WorldToRasterCoord(rast, 103, 195)::VARCHAR, ST_WorldToRasterCoord(rast, 102, 198)::VARCHAR, ST_WorldToRasterCoord(rast, 99, 201)::VARCHAR FROM t;
+----
+{'columnx': 2, 'rowy': 3}	{'columnx': 2, 'rowy': 2}	{'columnx': 0, 'rowy': 0}
+
+query IIIIII
+SELECT ST_WorldToRasterCoordX(rast, 103, 195), ST_WorldToRasterCoordX(rast, 103), ST_WorldToRasterCoordX(rast, ST_Point(103, 195)),
+       ST_WorldToRasterCoordY(rast, 103, 195), ST_WorldToRasterCoordY(rast, 195), ST_WorldToRasterCoordY(rast, ST_Point(103, 195)) FROM t;
+----
+2	2	2	3	3	3
+
+query II
+SELECT ST_WorldToRasterCoord(rast, ST_Point(103, 195))::VARCHAR, ST_WorldToRasterCoord(rast, 7.5, 1)::VARCHAR FROM t;
+----
+{'columnx': 2, 'rowy': 3}	{'columnx': -46, 'rowy': 100}
+
+query II
+SELECT ST_WorldToRasterCoord(rast, 7.5, 1)::VARCHAR, ST_WorldToRasterCoordX(rast, 7.5, 1) FROM s;
+----
+{'columnx': 2, 'rowy': 2}	2
+
+statement error
+SELECT ST_WorldToRasterCoordX(rast, 7.5) FROM s;
+----
+The raster is skewed
+
+statement error
+SELECT ST_WorldToRasterCoord(rast, ST_GeomFromText('LINESTRING (0 0, 1 1)')) FROM t;
+----
+The geometry must be a POINT
+
+query I
+SELECT ST_WorldToRasterCoord(rast, ST_GeomFromText('POINT EMPTY')) IS NULL FROM t;
+----
+true
+
+# A georeference that cannot be inverted is rejected when it is set
+statement error
+SELECT ST_MakeEmptyRaster(2, 2, 0, 0, 0, 0, 0, 0);
+----
+not invertible
+
+statement error
+SELECT ST_SetScale(rast, 0) FROM t;
+----
+not invertible
+
+statement error
+SELECT ST_SetSkew(rast, 2, -2) FROM t;
+----
+not invertible
+
+# Round trip over every pixel
+query I
+SELECT bool_and(ST_WorldToRasterCoordX(rast, ST_RasterToWorldCoordX(rast, x, y) + 0.5, ST_RasterToWorldCoordY(rast, x, y) - 0.5) = x
+            AND ST_WorldToRasterCoordY(rast, ST_RasterToWorldCoordX(rast, x, y) + 0.5, ST_RasterToWorldCoordY(rast, x, y) - 0.5) = y)
+FROM t, (SELECT x::INTEGER AS x FROM range(1, 5) c(x)), (SELECT y::INTEGER AS y FROM range(1, 4) r(y));
+----
+true
+
+#----------------------------------------------------------------------------------------------------------------------
+# ST_Value and ST_SetValue
+#----------------------------------------------------------------------------------------------------------------------
+
+query IIIII
+SELECT ST_Value(rast, 1, 1)::INTEGER, ST_Value(rast, 1, 4, 3)::INTEGER, ST_Value(rast, 5, 1), ST_Value(rast, 0, 1), ST_Value(rast, 1, 4) FROM t;
+----
+7	7	NULL	NULL	NULL
+
+statement error
+SELECT ST_Value(rast, 2, 1, 1) FROM t;
+----
+Band 2 is out of range
+
+statement ok
+CREATE TABLE edited AS SELECT ST_SetValue(ST_SetValue(rast, 2, 3, 42), 1, 1, NULL) AS rast FROM t;
+
+query I
+SELECT ST_DumpValues(rast)::VARCHAR FROM edited;
+----
+[[NULL, 7.0, 7.0, 7.0], [7.0, 7.0, 7.0, 7.0], [7.0, 42.0, 7.0, 7.0]]
+
+query I
+SELECT ST_DumpValues(rast, 1, false)::VARCHAR FROM edited;
+----
+[[-1.0, 7.0, 7.0, 7.0], [7.0, 7.0, 7.0, 7.0], [7.0, 42.0, 7.0, 7.0]]
+
+query IIIIII
+SELECT ST_Value(rast, 2, 3)::INTEGER, ST_Value(rast, 1, 1), ST_Value(rast, 1, 1, false)::INTEGER, ST_Value(rast, 1, 1, 1, false)::INTEGER, ST_Value(rast, 1, 1, 1, true), ST_Value(rast, 1, 2, 3, true)::INTEGER FROM edited;
+----
+42	NULL	-1	-1	NULL	42
+
+# By point: inside a pixel, NODATA pixel, outside of the raster, empty point
+query IIIIII
+SELECT ST_Value(rast, ST_Point(103, 195))::INTEGER, ST_Value(rast, 1, ST_Point(103.9, 194.1))::INTEGER, ST_Value(rast, ST_Point(100.5, 199.5)), ST_Value(rast, ST_Point(100.5, 199.5), false)::INTEGER,
+       ST_Value(rast, ST_Point(99, 199)), ST_Value(rast, ST_GeomFromText('POINT EMPTY')) FROM edited;
+----
+42	42	NULL	-1	NULL	NULL
+
+statement error
+SELECT ST_Value(rast, ST_GeomFromText('LINESTRING (0 0, 1 1)')) FROM t;
+----
+The geometry must be a POINT
+
+# The input raster is not modified
+query I
+SELECT ST_DumpValues(rast)::VARCHAR FROM t;
+----
+[[7.0, 7.0, 7.0, 7.0], [7.0, 7.0, 7.0, 7.0], [7.0, 7.0, 7.0, 7.0]]
+
+# With a band number
+query II
+SELECT ST_Value(r, 1, 1, 1)::INTEGER, ST_Value(r, 2, 1, 1)::INTEGER FROM (SELECT ST_SetValue(ST_AddBand(rast, '16BSI', 3), 2, 1, 1, 8) AS r FROM t);
+----
+7	8
+
+# Values are clamped to the pixel type
+query II
+SELECT ST_Value(ST_SetValue(rast, 1, 1, 100000), 1, 1)::INTEGER, ST_Value(ST_SetValue(rast, 1, 1, -100000.0), 1, 1)::INTEGER FROM t;
+----
+32767	-32768
+
+statement error
+SELECT ST_SetValue(rast, 5, 1, 1) FROM t;
+----
+pixel (5, 1) is outside of the 4 x 3 raster
+
+statement error
+SELECT ST_SetValue(rast, 1, 0, 1) FROM t;
+----
+is outside of
+
+statement error
+SELECT ST_SetValue(rast, 2, 1, 1, 1) FROM t;
+----
+Band 2 is out of range
+
+statement error
+SELECT ST_SetValue(ST_SetBandNoDataValue(rast, NULL), 1, 1, NULL) FROM t;
+----
+band 1 has no NODATA value
+
+# By geometry: a polygon sets the pixels whose centre it contains
+query I
+SELECT ST_DumpValues(ST_SetValue(rast, ST_MakeEnvelope(100, 196, 104, 200), 9))::VARCHAR FROM t;
+----
+[[9.0, 9.0, 7.0, 7.0], [9.0, 9.0, 7.0, 7.0], [7.0, 7.0, 7.0, 7.0]]
+
+query I
+SELECT ST_DumpValues(ST_SetValue(rast, 1, ST_Point(103, 195), 9))::VARCHAR FROM t;
+----
+[[7.0, 7.0, 7.0, 7.0], [7.0, 7.0, 7.0, 7.0], [7.0, 9.0, 7.0, 7.0]]
+
+query I
+SELECT ST_DumpValues(ST_SetValue(rast, ST_GeomFromText('LINESTRING (100.5 199, 107.5 199)'), NULL))::VARCHAR FROM t;
+----
+[[NULL, NULL, NULL, NULL], [7.0, 7.0, 7.0, 7.0], [7.0, 7.0, 7.0, 7.0]]
+
+# A geometry outside of the raster, or an empty one, changes nothing
+query II
+SELECT ST_DumpValues(ST_SetValue(rast, ST_MakeEnvelope(0, 0, 10, 10), 9)) = ST_DumpValues(rast), ST_DumpValues(ST_SetValue(rast, ST_GeomFromText('POLYGON EMPTY'), 9)) = ST_DumpValues(rast) FROM t;
+----
+true	true
+
+#----------------------------------------------------------------------------------------------------------------------
+# ST_NearestValue
+#----------------------------------------------------------------------------------------------------------------------
+
+statement ok
+CREATE TABLE n AS SELECT ST_SetValue(ST_SetBandNoDataValue(rast, 7), 4, 3, 9) AS rast FROM t;
+
+query IIIII
+SELECT ST_NearestValue(rast, 1, 1)::INTEGER, ST_NearestValue(rast, 1, 1, false)::INTEGER, ST_NearestValue(rast, 4, 3)::INTEGER, ST_NearestValue(rast, 1, 1, 1)::INTEGER, ST_NearestValue(rast, 1, 1, 1, false)::INTEGER FROM n;
+----
+9	7	9	9	7
+
+query IIII
+SELECT ST_NearestValue(rast, ST_Point(101, 199))::INTEGER, ST_NearestValue(rast, ST_Point(101, 199), false)::INTEGER, ST_NearestValue(rast, 1, ST_Point(-1000, 5000))::INTEGER, ST_NearestValue(rast, 1, ST_Point(101, 199), true)::INTEGER FROM n;
+----
+9	7	9	9
+
+# The closest of two valid pixels wins
+query II
+SELECT ST_NearestValue(r, 2, 1)::INTEGER, ST_NearestValue(r, 4, 2)::INTEGER FROM (SELECT ST_SetValue(rast, 1, 1, 3) AS r FROM n);
+----
+3	9
+
+query II
+SELECT ST_NearestValue(ST_SetBandNoDataValue(rast, 7), 1, 1) IS NULL, ST_NearestValue(rast, ST_GeomFromText('POINT EMPTY')) IS NULL FROM t;
+----
+true	true
+
+statement error
+SELECT ST_NearestValue(rast, 3, 1, 1) FROM n;
+----
+Band 3 is out of range
+
+#----------------------------------------------------------------------------------------------------------------------
+# Pixels as geometries
+#----------------------------------------------------------------------------------------------------------------------
+
+query III
+SELECT ST_AsText(ST_PixelAsPoint(rast, 2, 3)), ST_AsText(ST_PixelAsCentroid(rast, 2, 3)), ST_AsText(ST_PixelAsPolygon(rast, 2, 3)) FROM t;
+----
+POINT (102 196)	POINT (103 195)	POLYGON ((102 196, 104 196, 104 194, 102 194, 102 196))
+
+query III
+SELECT ST_AsText(ST_PixelAsPoint(rast, 2, 2)), ST_AsText(ST_PixelAsCentroid(rast, 2, 2)), ST_AsText(ST_PixelAsPolygon(rast, 2, 2)) FROM s;
+----
+POINT (7 1)	POINT (10.5 1.5)	POLYGON ((7 1, 10 5, 14 2, 11 -2, 7 1))
+
+# Pixels outside of the raster are extrapolated
+query I
+SELECT ST_AsText(ST_PixelAsPoint(rast, 0, 10)) FROM t;
+----
+POINT (98 182)
+
+query III
+SELECT len(ST_PixelAsPolygons(rast)), len(ST_PixelAsPoints(rast)), len(ST_PixelAsCentroids(rast)) FROM t;
+----
+12	12	12
+
+statement error
+SELECT ST_PixelAsPolygons(ST_MakeEmptyRaster(rast)) FROM t;
+----
+Band 1 is out of range
+
+query IIII
+SELECT count(*), sum(ST_Area(p.geom))::INTEGER, sum(p.val)::INTEGER, bool_and(ST_Equals(p.geom, ST_PixelAsPolygon(rast, p.x, p.y)))
+FROM (SELECT rast, unnest(ST_PixelAsPolygons(rast)) AS p FROM t);
+----
+12	48	84	true
+
+# NODATA pixels are left out unless asked for
+query IIII
+SELECT ST_AsText(p.geom), p.val::INTEGER, p.x, p.y FROM (SELECT unnest(ST_PixelAsPoints(rast)) AS p FROM n);
+----
+POINT (106 196)	9	4	3
+
+query IIII
+SELECT ST_AsText(p.geom), p.val::INTEGER, p.x, p.y FROM (SELECT unnest(ST_PixelAsCentroids(rast, 1)) AS p FROM n);
+----
+POINT (107 195)	9	4	3
+
+query II
+SELECT len(ST_PixelAsPolygons(rast, 1, false)), len(ST_PixelAsPolygons(rast, 1, true)) FROM n;
+----
+12	1
+
+query II
+SELECT count(*), bool_and(ST_Equals(p.geom, ST_PixelAsCentroid(rast, p.x, p.y)))
+FROM (SELECT rast, unnest(ST_PixelAsCentroids(rast, 1, false)) AS p FROM n);
+----
+12	true
+
+#----------------------------------------------------------------------------------------------------------------------
+# ST_DumpValues
+#----------------------------------------------------------------------------------------------------------------------
+
+query III
+SELECT ST_DumpValues(rast)::VARCHAR, ST_DumpValues(rast, 1)::VARCHAR, ST_DumpValues(rast, 1, false)::VARCHAR FROM n;
+----
+[[NULL, NULL, NULL, NULL], [NULL, NULL, NULL, NULL], [NULL, NULL, NULL, 9.0]]	[[NULL, NULL, NULL, NULL], [NULL, NULL, NULL, NULL], [NULL, NULL, NULL, 9.0]]	[[7.0, 7.0, 7.0, 7.0], [7.0, 7.0, 7.0, 7.0], [7.0, 7.0, 7.0, 9.0]]
+
+query III
+SELECT len(ST_DumpValues(rast)), len(ST_DumpValues(rast)[1]), ST_DumpValues(rast)[3][4]::INTEGER FROM n;
+----
+3	4	9
+
+statement error
+SELECT ST_DumpValues(rast, 2) FROM n;
+----
+Band 2 is out of range
+
+# Several rows in one chunk, with NULLs in between
+query II
+SELECT i, ST_DumpValues(CASE WHEN i % 2 = 0 THEN ST_SetValue(rast, 1, 1, i) END)[1][1]::INTEGER FROM t, range(5) r(i) ORDER BY i;
+----
+0	0
+1	NULL
+2	2
+3	NULL
+4	4

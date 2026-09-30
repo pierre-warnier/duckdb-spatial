@@ -1,8 +1,8 @@
 # DuckDB Spatial Extension (Enhanced Fork)
 
-This fork of [duckdb/duckdb-spatial](https://github.com/duckdb/duckdb-spatial) extends the DuckDB spatial extension with **119 additional functions**, a **native KNN spatial join operator**, a **GEOGRAPHY type**, **PostGIS-style topologies**, **DBSCAN/K-means clustering**, and significant **performance optimizations** to the spatial join pipeline. The goal is PostGIS parity and SedonaDB-competitive performance within DuckDB's analytical engine.
+This fork of [duckdb/duckdb-spatial](https://github.com/duckdb/duckdb-spatial) extends the DuckDB spatial extension with **197 additional functions**, a **native KNN spatial join operator**, a **GEOGRAPHY type**, a **RASTER type**, **PostGIS-style topologies**, **DBSCAN/K-means clustering**, and significant **performance optimizations** to the spatial join pipeline. The goal is PostGIS parity and SedonaDB-competitive performance within DuckDB's analytical engine.
 
-**284 documented functions** (vs. 165 upstream) | **196 tests / 6710 assertions** | Synced with upstream v1.5-variegata
+**362 documented functions** (vs. 165 upstream) | **212 tests / 8309 assertions** | Synced with upstream v1.5-variegata
 
 **Table of contents**
 - [What's new in this fork](#whats-new-in-this-fork)
@@ -49,6 +49,24 @@ SELECT ST_Buffer(geog, 500), ST_DWithin(geog, ST_GeogPoint(4.3517, 50.8503), 100
 - Joins on geography predicates run as regular joins, and R-tree indexes cannot be created on geography columns.
 - A geography is stored as WKB under its own type name, so the column keeps its type in databases of any storage version. Other formats see a plain `BLOB`: cast to `GEOMETRY` before exporting to GeoParquet or through GDAL, and cast the WKB back with `::GEOGRAPHY` when reading.
 
+## Raster
+
+A `RASTER` type and 94 PostGIS-style raster functions on top of the bundled GDAL.
+
+```sql
+-- Read a GeoTIFF as 256x256 tiles, then query it
+CREATE TABLE dem AS SELECT * FROM ST_ReadRaster('dem.tif', 256, 256);
+SELECT ST_Value(rast, ST_Point(152000, 167000)) FROM dem WHERE ST_Intersects(rast, ST_Point(152000, 167000));
+SELECT ST_SummaryStats(ST_Slope(rast)) FROM dem;
+SELECT ST_MapAlgebra(rast, 1, '32BF', '[rast] * 0.3048') FROM dem;   -- any constant DuckDB expression
+SELECT ST_Union_Agg(rast) FROM dem;
+```
+
+- I/O (`ST_ReadRaster`, `ST_FromGDALRaster`, `ST_AsGDALRaster`, `ST_AsTIFF`), constructors and band management, accessors, pixel access and editing, `ST_Clip`, resampling and `ST_Transform`, terrain (`ST_Slope`, `ST_Aspect`, `ST_Hillshade`, `ST_TPI`, `ST_TRI`, `ST_Roughness`), statistics, `ST_Reclass`, `ST_ColorMap`, `ST_MapAlgebra` (one and two rasters), raster/vector conversion (`ST_AsRaster`, `ST_DumpAsPolygons`, `ST_Polygon`, `ST_Intersection`, `ST_Contour`), predicates, and the aggregates `ST_Union_Agg`, `ST_SummaryStatsAgg` and `ST_Retile`. Each function documents its differences from PostGIS in the [function reference](docs/functions.md).
+- A raster value is an uncompressed GeoTIFF stored as a BLOB under the `RASTER` type name: about 17 µs to open a 256x256 tile, 0.3 ms to read all of its pixels. All the bands of a raster share one pixel type.
+- The bundled GDAL only has the GeoTIFF, COG, HFA, VRT and MEM raster drivers: there is no PNG or JPEG.
+- Set-returning PostGIS functions return lists (use `unnest`), the raster union is `ST_Union_Agg` rather than `ST_Union`, and `ST_Retile` is an aggregate. The callback forms of `ST_MapAlgebra` and the array-argument variants (band lists, `reclassarg[]`) are not available. Terrain functions use GDAL's handling of border pixels, which differs from PostGIS's on the outermost row and column.
+
 ## Topology
 
 The PostGIS / ISO SQL-MM topology model: a topology is a schema holding `node`, `edge_data` (and the `edge` view) and `face` tables, registered in `topology.topology`, in which shared boundaries are stored once.
@@ -90,7 +108,7 @@ Also includes `ST_ClusterIntersecting` and `ST_ClusterWithin` aggregate function
 - **Robust predicates**: Shewchuk adaptive-precision `orient2d` replaces the fast-but-wrong `orient2d_fast`, eliminating false positives in point-in-polygon and intersection tests near collinear edges
 - **Native ST_Intersects**: GEOMETRY-to-GEOMETRY intersection without GEOS fallback for the common bbox-miss and point-in-polygon cases
 
-## 119 New Functions (PostGIS parity)
+## 197 New Functions (PostGIS parity)
 
 | Category | Functions |
 |---|---|
@@ -105,6 +123,7 @@ Also includes `ST_ClusterIntersecting` and `ST_ClusterWithin` aggregate function
 | **Decomposition** (3) | `ST_DumpPoints`, `ST_DumpRings`, `ST_DumpSegments` |
 | **Constructors** (2) | `ST_LineFromMultiPoint`, `ST_Polygon` |
 | **Grids** (2) | `ST_HexagonGrid`, `ST_SquareGrid` |
+| **Raster** (78 names, 94 functions with overloads of existing names) | see [Raster](#raster) |
 | **Topology** (30) | see [Topology](#topology) |
 | **Geography** (5) | `ST_GeogPoint`, `ST_GeogFromText`, `ST_GeogFromWKT`, `ST_GeographyFromText`, `ST_GeogFromWKB` |
 | **Geodesic** (1) | `ST_Project` |

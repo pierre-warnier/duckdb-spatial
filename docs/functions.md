@@ -11,6 +11,7 @@
 | [`ST_3DLength`](#st_3dlength) | Returns the 3D length of a linestring (considers Z coordinate) |
 | [`ST_3DLineInterpolatePoint`](#st_3dlineinterpolatepoint) | Interpolates a point along a linestring at a fraction of its 3D length |
 | [`ST_3DPerimeter`](#st_3dperimeter) | Returns the 3D perimeter of a polygon (considers Z coordinate) |
+| [`ST_AddBand`](#st_addband) | Adds a band to a raster and returns the new raster. |
 | [`ST_AddMeasure`](#st_addmeasure) | Adds M values along a linestring, interpolated between start and end measures |
 | [`ST_AddPoint`](#st_addpoint) | Adds a point to a linestring at a given position (default: end) |
 | [`ST_Affine`](#st_affine) | Applies an affine transformation to a geometry. |
@@ -20,17 +21,26 @@
 | [`ST_AsEncodedPolyline`](#st_asencodedpolyline) | Encodes a linestring as a Google Encoded Polyline string |
 | [`ST_AsEWKB`](#st_asewkb) | Returns the geometry as EWKB (Extended Well-Known Binary). Alias for ST_AsWKB. |
 | [`ST_AsEWKT`](#st_asewkt) | Returns the geometry as an Extended WKT (EWKT) string |
+| [`ST_AsGDALRaster`](#st_asgdalraster) | Returns the raster as the bytes of a file in a GDAL raster format. |
 | [`ST_AsGeoJSON`](#st_asgeojson) | Returns the geometry as a GeoJSON fragment |
 | [`ST_AsGML`](#st_asgml) | Returns the geometry as a GML (Geography Markup Language) element. |
 | [`ST_AsHEXWKB`](#st_ashexwkb) | Returns the geometry as a HEXWKB string |
 | [`ST_AsKML`](#st_askml) | Returns the geometry as a KML (Keyhole Markup Language) geometry element. |
 | [`ST_AsLatLonText`](#st_aslatlontext) | Returns a point as a DMS (degrees-minutes-seconds) latitude/longitude string |
 | [`ST_AsMVTGeom`](#st_asmvtgeom) | Transform and clip geometry to a tile boundary |
+| [`ST_Aspect`](#st_aspect) | Returns the aspect of an elevation band: the compass direction the slope faces, measured clockwise from north (0 = north, 90 = east, 180 = south, 270 = west). Flat pixels are -1. |
+| [`ST_AsRaster`](#st_asraster) | Rasterizes a geometry: returns a single-band raster that covers the bounding box of the geometry, where the pixels covered by the geometry have `value` (default 1) and the others are NODATA. |
 | [`ST_AsSVG`](#st_assvg) | Convert the geometry into a SVG fragment or path |
 | [`ST_AsText`](#st_astext) | Returns the Well-Known Text (WKT) representation of the geometry |
+| [`ST_AsTIFF`](#st_astiff) | Returns the raster as the bytes of a GeoTIFF file. |
 | [`ST_AsTWKB`](#st_astwkb) | Encodes geometry as Tiny WKB (TWKB) with specified coordinate precision |
 | [`ST_AsWKB`](#st_aswkb) | Returns the Well-Known Binary (WKB) representation of the geometry |
 | [`ST_Azimuth`](#st_azimuth) | Returns the azimuth (a clockwise angle measured from north) of two points in radian. |
+| [`ST_Band`](#st_band) | Returns a raster made of one or more bands of the input raster. |
+| [`ST_BandIsNoData`](#st_bandisnodata) | Returns true if every pixel of the band (1-based, default 1) is NODATA. The pixels are always inspected, so `forcechecking` is accepted for compatibility and ignored. |
+| [`ST_BandMetaData`](#st_bandmetadata) | Returns the pixel type and NODATA value (NULL if none) of a band (1-based, default 1) as a struct. `isoutdb` is always false and `path` always NULL: bands are always stored in the raster value. |
+| [`ST_BandNoDataValue`](#st_bandnodatavalue) | Returns the NODATA value of a band (1-based, default 1), or NULL if the band has none. |
+| [`ST_BandPixelType`](#st_bandpixeltype) | Returns the pixel type of a band (1-based, default 1): `8BUI`, `8BSI`, `16BUI`, `16BSI`, `32BUI`, `32BSI`, `32BF` or `64BF`. |
 | [`ST_Boundary`](#st_boundary) | Returns the "boundary" of a geometry |
 | [`ST_BoundingDiagonal`](#st_boundingdiagonal) | Returns the diagonal of the bounding box as a linestring |
 | [`ST_Box2dFromGeoHash`](#st_box2dfromgeohash) | Returns the bounding box polygon of a GeoHash cell |
@@ -38,15 +48,19 @@
 | [`ST_BuildArea`](#st_buildarea) | Creates a polygonal geometry by attempting to "fill in" the input geometry. |
 | [`ST_Centroid`](#st_centroid) | Returns the centroid of a geometry |
 | [`ST_ChaikinSmoothing`](#st_chaikinsmoothing) | Smooths a geometry using Chaikin's corner-cutting algorithm |
+| [`ST_Clip`](#st_clip) | Returns the raster clipped by a geometry: pixels outside of the geometry become NODATA. |
 | [`ST_ClipByBox2D`](#st_clipbybox2d) | Clips a geometry by a bounding box |
 | [`ST_ClosestPoint`](#st_closestpoint) | Returns the closest point on the first geometry to the second geometry |
 | [`ST_Collect`](#st_collect) | Collects a list of geometries into a collection geometry. |
 | [`ST_CollectionExtract`](#st_collectionextract) | Extracts geometries from a GeometryCollection into a typed multi geometry. |
+| [`ST_ColorMap`](#st_colormap) | Returns a raster of up to four `8BUI` bands (grey, RGB or RGBA) that renders band `nband` (1-based, default 1) with a colormap. |
 | [`ST_ConcaveHull`](#st_concavehull) | Returns the 'concave' hull of the input geometry, containing all of the source input's points, and which can be used to create polygons from points. The ratio parameter dictates the level of concavity; 1.0 returns the convex hull; and 0 indicates to return the most concave hull possible. Set allowHoles to a non-zero value to allow output containing holes. |
 | [`ST_Contains`](#st_contains) | Returns true if the first geometry contains the second geometry |
 | [`ST_ContainsProperly`](#st_containsproperly) | Returns true if the first geometry \"properly\" contains the second geometry |
+| [`ST_Contour`](#st_contour) | Returns the contour lines of a band as a list of structs `(geom, id, value)`. PostGIS returns a set of rows: use `UNNEST(..., recursive := true)` to get the same shape. |
 | [`ST_ConvexHull`](#st_convexhull) | Returns the convex hull enclosing the geometry |
 | [`ST_CoordDim`](#st_coorddim) | Returns the coordinate dimension of a geometry |
+| [`ST_Count`](#st_count) | Returns the number of pixels of a band (1-based, default 1) that are not NODATA, or the number of all pixels if `exclude_nodata_value` is false. |
 | [`ST_CoverageClean`](#st_coverageclean) | Aligns the edges of a list of polygons whose edges are meant to align but are in fact exact matches. |
 | [`ST_CoverageInvalidEdges`](#st_coverageinvalidedges) | Returns the invalid edges in a polygonal coverage, which are edges that are not shared by two polygons. |
 | [`ST_CoverageSimplify`](#st_coveragesimplify) | Simplify the edges in a polygonal coverage, preserving the coverange by ensuring that the there are no seams between the resulting simplified polygons. |
@@ -64,6 +78,8 @@
 | [`ST_Distance_Sphere`](#st_distance_sphere) | Returns the haversine (great circle) distance between two geometries. |
 | [`ST_Distance_Spheroid`](#st_distance_spheroid) | Returns the distance between two geometries in meters using an ellipsoidal model of the earths surface |
 | [`ST_Dump`](#st_dump) | Dumps a geometry into a list of sub-geometries and their "path" in the original geometry. |
+| [`ST_DumpAsPolygons`](#st_dumpaspolygons) | Vectorizes a band: returns a list of structs `(geom, val)` with one polygon per connected area of pixels that share a value. PostGIS returns a set of rows: use `UNNEST(..., recursive := true)` to get the same shape. |
+| [`ST_DumpValues`](#st_dumpvalues) | Returns the pixel values of a band as a list of rows, each a list of values: `result[y][x]` is the pixel at column `x`, row `y` (both 1-based). |
 | [`ST_DWithin`](#st_dwithin) | Returns if two geometries are within a target distance of each-other |
 | [`ST_DWithin_GEOS`](#st_dwithin_geos) | Returns true if two geometries are within a target distance of each-other |
 | [`ST_DWithin_Spheroid`](#st_dwithin_spheroid) | Returns if two POINT_2D's are within a target distance in meters, using an ellipsoidal model of the earths surface |
@@ -83,6 +99,7 @@
 | [`ST_ForcePolygonCCW`](#st_forcepolygonccw) | Forces polygon exterior rings to be counter-clockwise |
 | [`ST_ForcePolygonCW`](#st_forcepolygoncw) | Forces polygon exterior rings to be clockwise |
 | [`ST_FrechetDistance`](#st_frechetdistance) | Returns the Frechet distance between two geometries |
+| [`ST_FromGDALRaster`](#st_fromgdalraster) | Creates a raster from the bytes of a raster file in any format the bundled GDAL reads from memory (GeoTIFF and Erdas Imagine; see `ST_GDALDrivers()`). |
 | [`ST_GeogFromText`](#st_geogfromtext) | Creates a GEOGRAPHY from its WKT representation. |
 | [`ST_GeogFromWKB`](#st_geogfromwkb) | Creates a GEOGRAPHY from its WKB representation. |
 | [`ST_GeogFromWKT`](#st_geogfromwkt) | Creates a GEOGRAPHY from its WKT representation. |
@@ -103,12 +120,19 @@
 | [`ST_GeomFromText`](#st_geomfromtext) | Deserialize a GEOMETRY from a WKT encoded string |
 | [`ST_GeomFromTWKB`](#st_geomfromtwkb) | Decodes a Tiny WKB (TWKB) binary into a geometry |
 | [`ST_GeomFromWKB`](#st_geomfromwkb) | Creates a geometry from Well-Known Binary (WKB) representation |
+| [`ST_GeoReference`](#st_georeference) | Returns the georeference as the six lines of a world file: `scalex`, `skewy`, `skewx`, `scaley`, `upperleftx`, `upperlefty`, each with 10 decimals and followed by a newline. |
+| [`ST_Grayscale`](#st_grayscale) | Returns a single-band `8BUI` raster with the luminance of three bands holding red, green and blue values between 0 and 255: `0.2989 * R + 0.5870 * G + 0.1140 * B`. |
 | [`ST_HasM`](#st_hasm) | Check if the input geometry has M values. |
+| [`ST_HasNoBand`](#st_hasnoband) | Returns true if the raster has no band with the given number (1-based, default 1). |
 | [`ST_HasZ`](#st_hasz) | Check if the input geometry has Z values. |
 | [`ST_HausdorffDistance`](#st_hausdorffdistance) | Returns the Hausdorff distance between two geometries |
+| [`ST_Height`](#st_height) | Returns the height of the raster in pixels. |
 | [`ST_Hilbert`](#st_hilbert) | Encodes the X and Y values as the hilbert curve index for a curve covering the given bounding box. |
+| [`ST_Hillshade`](#st_hillshade) | Returns the hypothetical illumination of an elevation band. |
+| [`ST_Histogram`](#st_histogram) | Returns the distribution of the pixel values of a band as a list of bins `(min, max, count, percent)`, where `percent` is the fraction of the counted pixels that fall in the bin. PostGIS returns a set of rows: use `UNNEST` to get the same shape. |
 | [`ST_InteriorRingN`](#st_interiorringn) | Returns the N-th interior ring (hole) of a POLYGON as a LINESTRING. Indexing is 1-based  (n = 1 returns the first interior ring). Returns NULL if the polygon is empty or has fewer than N interior rings. |
 | [`ST_InterpolatePoint`](#st_interpolatepoint) | Computes the closest point on a LINESTRING to a given POINT and returns the interpolated M value of that point. |
+| [`ST_InterpolateRaster`](#st_interpolateraster) | Interpolates a surface from the 3D points of a geometry onto the grid of a raster, and returns the raster with band `bandnumber` (1-based, default 1) replaced by the interpolated values. |
 | [`ST_Intersection`](#st_intersection) | Returns the intersection of two geometries |
 | [`ST_Intersects`](#st_intersects) | Returns true if two geometries intersect |
 | [`ST_Intersects_Extent`](#st_intersects_extent) | Returns true if the extent of two geometries intersects |
@@ -139,14 +163,18 @@
 | [`ST_LongestLine`](#st_longestline) | Returns the longest line between two geometries (vertex-to-vertex) |
 | [`ST_M`](#st_m) | Returns the M coordinate of a point geometry |
 | [`ST_MakeBox2D`](#st_makebox2d) | Create a BOX2D from two POINT geometries |
+| [`ST_MakeEmptyRaster`](#st_makeemptyraster) | Creates a raster without bands. |
 | [`ST_MakeEnvelope`](#st_makeenvelope) | Create a rectangular polygon from min/max coordinates |
 | [`ST_MakeLine`](#st_makeline) | Create a LINESTRING from a list of POINT geometries |
 | [`ST_MakePoint`](#st_makepoint) | Creates a GEOMETRY point from an pair of floating point numbers. |
 | [`ST_MakePolygon`](#st_makepolygon) | Create a POLYGON from a LINESTRING shell |
 | [`ST_MakeValid`](#st_makevalid) | Returns a valid representation of the geometry |
+| [`ST_MapAlgebra`](#st_mapalgebra) | Computes a new single-band raster pixel by pixel from one band, or from one band of each of two rasters, with a SQL expression. |
 | [`ST_MaxDistance`](#st_maxdistance) | Returns the maximum distance between two geometries |
 | [`ST_MaximumInscribedCircle`](#st_maximuminscribedcircle) | Returns the maximum inscribed circle of the input geometry, optionally with a tolerance. |
 | [`ST_MemSize`](#st_memsize) | Returns the memory size of a geometry in bytes |
+| [`ST_MetaData`](#st_metadata) | Returns the size, georeference, SRID (0 when the coordinate system is not an EPSG code) and number of bands of the raster as a struct. |
+| [`ST_MinConvexHull`](#st_minconvexhull) | Returns the outline of the smallest pixel window that contains every pixel that is not NODATA, in band `nband` (1-based) or in any band when omitted or NULL. Returns NULL if all pixels are NODATA. |
 | [`ST_MinimumBoundingCircle`](#st_minimumboundingcircle) | Returns the minimum bounding circle of a geometry |
 | [`ST_MinimumClearance`](#st_minimumclearance) | Returns the minimum clearance of a geometry |
 | [`ST_MinimumClearanceLine`](#st_minimumclearanceline) | Returns the line spanning the minimum clearance |
@@ -155,12 +183,15 @@
 | [`ST_MMin`](#st_mmin) | Returns the minimum M coordinate of a geometry |
 | [`ST_Multi`](#st_multi) | Turns a single geometry into a multi geometry. |
 | [`ST_NDims`](#st_ndims) | Returns the topological dimension of a geometry |
+| [`ST_NearestValue`](#st_nearestvalue) | Returns the value of the pixel at a point or at a 1-based column and row if it is not NODATA, otherwise the value of the nearest pixel that is not NODATA. |
 | [`ST_NGeometries`](#st_ngeometries) | Returns the number of component geometries in a collection geometry. |
 | [`ST_NInteriorRings`](#st_ninteriorrings) | Returns the number of interior rings of a polygon |
 | [`ST_Node`](#st_node) | Returns a "noded" MultiLinestring, produced by combining a collection of input linestrings and adding additional vertices where they intersect. |
 | [`ST_Normalize`](#st_normalize) | Returns the "normalized" representation of the geometry |
+| [`ST_NotSameAlignmentReason`](#st_notsamealignmentreason) | Returns the reason why two rasters are not aligned (see ST_SameAlignment), or 'The rasters are aligned'. |
 | [`ST_NPoints`](#st_npoints) | Returns the number of vertices within a geometry |
 | [`ST_NRings`](#st_nrings) | Returns the number of rings in a polygon (exterior + interior) |
+| [`ST_NumBands`](#st_numbands) | Returns the number of bands of the raster. |
 | [`ST_NumGeometries`](#st_numgeometries) | Returns the number of component geometries in a collection geometry. |
 | [`ST_NumInteriorRings`](#st_numinteriorrings) | Returns the number of interior rings of a polygon |
 | [`ST_NumPoints`](#st_numpoints) | Returns the number of vertices within a geometry |
@@ -169,6 +200,14 @@
 | [`ST_Overlaps`](#st_overlaps) | Returns true if the geometries overlap |
 | [`ST_Perimeter`](#st_perimeter) | Returns the length of the perimeter of the geometry |
 | [`ST_Perimeter_Spheroid`](#st_perimeter_spheroid) | Returns the length of the perimeter in meters using an ellipsoidal model of the earths surface |
+| [`ST_PixelAsCentroid`](#st_pixelascentroid) | Returns the centre of a pixel (1-based column `x` and row `y`) as a point. |
+| [`ST_PixelAsCentroids`](#st_pixelascentroids) | Returns one entry per pixel of a band as a list of structs `(geom, val, x, y)`: the pixel's centre as a point, its value and its 1-based column and row. |
+| [`ST_PixelAsPoint`](#st_pixelaspoint) | Returns the upper-left corner of a pixel (1-based column `x` and row `y`) as a point. |
+| [`ST_PixelAsPoints`](#st_pixelaspoints) | Returns one entry per pixel of a band as a list of structs `(geom, val, x, y)`: the pixel's upper-left corner as a point, its value and its 1-based column and row. |
+| [`ST_PixelAsPolygon`](#st_pixelaspolygon) | Returns the outline of a pixel (1-based column `x` and row `y`) as a polygon. |
+| [`ST_PixelAsPolygons`](#st_pixelaspolygons) | Returns one entry per pixel of a band as a list of structs `(geom, val, x, y)`: the pixel's outline as a polygon, its value and its 1-based column and row. |
+| [`ST_PixelHeight`](#st_pixelheight) | Returns the height of a pixel in world units, taking the skew into account: `sqrt(scaley^2 + skewx^2)`. |
+| [`ST_PixelWidth`](#st_pixelwidth) | Returns the width of a pixel in world units, taking the skew into account: `sqrt(scalex^2 + skewy^2)`. |
 | [`ST_Point`](#st_point) | Creates a GEOMETRY point |
 | [`ST_Point2D`](#st_point2d) | Creates a POINT_2D |
 | [`ST_Point2DFromWKB`](#st_point2dfromwkb) | Deserialize a POINT_2D from a WKB encoded blob |
@@ -182,17 +221,37 @@
 | [`ST_Polygonize`](#st_polygonize) | Returns a polygonized representation of the input geometries |
 | [`ST_Project`](#st_project) | Projects a point along the geodesic by a distance (meters) and azimuth (radians) |
 | [`ST_QuadKey`](#st_quadkey) | Compute the [quadkey](https://learn.microsoft.com/en-us/bingmaps/articles/bing-maps-tile-system) for a given lon/lat point at a given level. |
+| [`ST_Quantile`](#st_quantile) | Returns quantiles of the pixel values of a band. |
 | [`ST_QuantizeCoordinates`](#st_quantizecoordinates) | Rounds all coordinates to the given number of decimal places |
+| [`ST_RasterToWorldCoord`](#st_rastertoworldcoord) | Returns the world coordinates of the upper-left corner of a pixel as a struct. Pixel columns and rows are numbered from 1 and may lie outside of the raster. |
+| [`ST_RasterToWorldCoordX`](#st_rastertoworldcoordx) | Returns the world X coordinate of the upper-left corner of a pixel (columns and rows numbered from 1). The row may be omitted if the raster is not skewed. |
+| [`ST_RasterToWorldCoordY`](#st_rastertoworldcoordy) | Returns the world Y coordinate of the upper-left corner of a pixel (columns and rows numbered from 1). The column may be omitted if the raster is not skewed. |
+| [`ST_Reclass`](#st_reclass) | Returns the raster with the values of band `nband` (1-based, default 1) mapped to new values, stored with a new pixel type. |
 | [`ST_ReducePrecision`](#st_reduceprecision) | Returns the geometry with all vertices reduced to the given precision |
 | [`ST_Relate`](#st_relate) | Returns the DE-9IM intersection matrix string |
 | [`ST_RelateMatch`](#st_relatematch) | Tests if a DE-9IM matrix string matches a DE-9IM pattern |
 | [`ST_RemovePoint`](#st_removepoint) | Removes a point from a linestring (0-indexed, negative from end) |
 | [`ST_RemoveRepeatedPoints`](#st_removerepeatedpoints) | Remove repeated points from a LINESTRING. |
+| [`ST_Resample`](#st_resample) | Resamples a raster onto another pixel grid that covers the same area, and returns the new raster. |
+| [`ST_Rescale`](#st_rescale) | Resamples a raster to a new pixel size, in world units, keeping its extent and upper-left corner. The sign of the scale is ignored: the result is north-up. |
+| [`ST_Resize`](#st_resize) | Resamples a raster to a new width and height, keeping its extent. |
+| [`ST_Reskew`](#st_reskew) | Resamples a raster onto a grid with the given skew (rotation terms), keeping the pixel size and covering the same extent. |
 | [`ST_Reverse`](#st_reverse) | Returns the geometry with the order of its vertices reversed |
+| [`ST_Rotation`](#st_rotation) | Returns the rotation of the raster in radians, computed from the pixel column direction (`scalex`, `skewy`). A raster that is not rotated returns 0. |
+| [`ST_Roughness`](#st_roughness) | Returns the roughness of an elevation band: the difference between the largest and the smallest value in the 3x3 neighbourhood of each pixel. |
+| [`ST_SameAlignment`](#st_samealignment) | Returns true if two rasters have the same coordinate system, scale and skew and their pixel grids line up (a pixel corner of one falls on a pixel corner of the other). The rasters do not need to overlap. |
+| [`ST_ScaleX`](#st_scalex) | Returns the X term of the pixel size, in world units per pixel column. |
+| [`ST_ScaleY`](#st_scaley) | Returns the Y term of the pixel size, in world units per pixel row (negative for north-up rasters). |
 | [`ST_Scroll`](#st_scroll) | Rotates a closed linestring's start point to the vertex nearest to the given point |
 | [`ST_Segmentize`](#st_segmentize) | Densifies a geometry by adding vertices so no segment exceeds max_segment_length |
+| [`ST_SetBandNoDataValue`](#st_setbandnodatavalue) | Returns the raster with the NODATA value of a band (1-based, default 1) set to `nodatavalue`. NULL removes the NODATA value. The pixel values do not change. `forcechecking` is accepted for compatibility and ignored. |
+| [`ST_SetGeoReference`](#st_setgeoreference) | Returns the raster with a new georeference. The pixels are not resampled. |
 | [`ST_SetPoint`](#st_setpoint) | Replaces a point in a linestring (0-indexed, negative from end) |
+| [`ST_SetScale`](#st_setscale) | Returns the raster with a new pixel size, in world units. The pixels are not resampled (see ST_Rescale). The single-value variant sets both `scalex` and `scaley` to the same value. |
+| [`ST_SetSkew`](#st_setskew) | Returns the raster with new skew terms. The pixels are not resampled (see ST_Reskew). The single-value variant sets both `skewx` and `skewy` to the same value. |
 | [`ST_SetSRID`](#st_setsrid) | Sets the SRID of a geometry (no-op in DuckDB — use GEOMETRY('EPSG:XXXX') type for CRS) |
+| [`ST_SetUpperLeft`](#st_setupperleft) | Returns the raster moved so that its upper-left corner is at the given world coordinates. |
+| [`ST_SetValue`](#st_setvalue) | Returns the raster with one pixel (1-based column `x` and row `y`), or every pixel covered by a geometry, set to `newvalue` in a band (1-based, default 1). |
 | [`ST_SharedPaths`](#st_sharedpaths) | Returns shared paths between two linear geometries |
 | [`ST_ShiftLongitude`](#st_shiftlongitude) | Shifts longitude: negative values get +360, values >180 get -360 |
 | [`ST_ShortestLine`](#st_shortestline) | Returns the shortest line between two geometries |
@@ -200,6 +259,9 @@
 | [`ST_SimplifyPolygonHull`](#st_simplifypolygonhull) | Simplifies a polygon while preserving topology |
 | [`ST_SimplifyPreserveTopology`](#st_simplifypreservetopology) | Returns a simplified version of the geometry that preserves topology |
 | [`ST_SimplifyVW`](#st_simplifyvw) | Simplifies geometry using the Visvalingam-Whyatt area-based algorithm |
+| [`ST_SkewX`](#st_skewx) | Returns the X skew of the georeference: the world X offset per pixel row. |
+| [`ST_SkewY`](#st_skewy) | Returns the Y skew of the georeference: the world Y offset per pixel column. |
+| [`ST_Slope`](#st_slope) | Returns the slope of an elevation band, using Horn's formula. |
 | [`ST_Snap`](#st_snap) | Snaps the vertices and segments of a geometry to another geometry's vertices within the given tolerance |
 | [`ST_SnapToGrid`](#st_snaptogrid) | Snaps all coordinates to a grid of the given size |
 | [`ST_Split`](#st_split) | Splits a geometry by another geometry, returning a geometry collection of the pieces |
@@ -207,17 +269,29 @@
 | [`ST_StartPoint`](#st_startpoint) | Returns the start point of a LINESTRING. |
 | [`ST_Subdivide`](#st_subdivide) | Recursively splits a geometry into sub-geometries until the number of vertices of each are below the threshold given by max_vertices. Accepts any type of input except for a GeometryCollection.Degenerate inputs can lead to results having more than max_vertices vertices due to a recursion depth limit. |
 | [`ST_Summary`](#st_summary) | Returns a text summary of a geometry |
+| [`ST_SummaryStats`](#st_summarystats) | Returns the count, sum, mean, standard deviation, minimum and maximum of the pixel values of a band, as a struct `(count, sum, mean, stddev, min, max)`. |
 | [`ST_SwapOrdinates`](#st_swapordinates) | Swaps two ordinate values in a geometry (e.g., 'xy' swaps x and y) |
 | [`ST_SymDifference`](#st_symdifference) | Returns the symmetric difference of two geometries |
+| [`ST_Tile`](#st_tile) | Splits a raster into tiles of `width` x `height` pixels and returns them as a list, row by row from the upper-left corner. PostGIS returns a set of rows: use `UNNEST` to get the same shape. |
 | [`ST_TileEnvelope`](#st_tileenvelope) | The `ST_TileEnvelope` scalar function generates tile envelope rectangular polygons from specified zoom level and tile indices. |
 | [`ST_Touches`](#st_touches) | Returns true if the geometries touch |
+| [`ST_TPI`](#st_tpi) | Returns the Topographic Position Index of an elevation band: the value of each pixel minus the mean of its eight neighbours. |
 | [`ST_Transform`](#st_transform) | Transforms a geometry between two coordinate systems |
+| [`ST_TRI`](#st_tri) | Returns the Terrain Ruggedness Index of an elevation band: the mean absolute difference between each pixel and its eight neighbours. |
 | [`ST_TriangulatePolygon`](#st_triangulatepolygon) | Returns constrained Delaunay triangulation of a polygon |
 | [`ST_UnaryUnion`](#st_unaryunion) | Dissolves a geometry collection into a single geometry |
 | [`ST_Union`](#st_union) | Returns the union of two geometries |
+| [`ST_UpperLeftX`](#st_upperleftx) | Returns the world X coordinate of the upper-left corner of the raster. |
+| [`ST_UpperLeftY`](#st_upperlefty) | Returns the world Y coordinate of the upper-left corner of the raster. |
+| [`ST_Value`](#st_value) | Returns the value of a pixel, addressed by its 1-based column `x` and row `y` or by a point in world coordinates. |
+| [`ST_ValueCount`](#st_valuecount) | Counts how often each pixel value occurs in a band. |
 | [`ST_VoronoiDiagram`](#st_voronoidiagram) | Returns the Voronoi diagram of the supplied MultiPoint geometry |
+| [`ST_Width`](#st_width) | Returns the width of the raster in pixels. |
 | [`ST_Within`](#st_within) | Returns true if the first geometry is within the second |
 | [`ST_WithinProperly`](#st_withinproperly) | Returns true if the first geometry \"properly\" is contained by the second geometry |
+| [`ST_WorldToRasterCoord`](#st_worldtorastercoord) | Returns the 1-based column and row of the pixel that contains a world coordinate or a point, as a struct. The result may lie outside of the raster. |
+| [`ST_WorldToRasterCoordX`](#st_worldtorastercoordx) | Returns the 1-based column of the pixel that contains a world coordinate or a point. `yw` may be omitted if the raster is not skewed. |
+| [`ST_WorldToRasterCoordY`](#st_worldtorastercoordy) | Returns the 1-based row of the pixel that contains a world coordinate or a point. `xw` may be omitted if the raster is not skewed. |
 | [`ST_X`](#st_x) | Returns the X coordinate of a point geometry |
 | [`ST_XMax`](#st_xmax) | Returns the maximum X coordinate of a geometry |
 | [`ST_XMin`](#st_xmin) | Returns the minimum X coordinate of a geometry |
@@ -245,7 +319,9 @@
 | [`ST_Extent_Agg`](#st_extent_agg) | Computes the minimal-bounding-box polygon containing the set of input geometries |
 | [`ST_Intersection_Agg`](#st_intersection_agg) | Computes the intersection of a set of geometries |
 | [`ST_MemUnion_Agg`](#st_memunion_agg) | Computes the union of a set of input geometries. |
-| [`ST_Union_Agg`](#st_union_agg) | Computes the union of a set of input geometries |
+| [`ST_Retile`](#st_retile) | Aggregate: rebuilds the rasters of a group, a coverage tiled in any way, as a regular set of tiles, and returns the tiles as a list in row order. |
+| [`ST_SummaryStatsAgg`](#st_summarystatsagg) | Aggregate: returns the count, sum, mean, population standard deviation, minimum and maximum of the pixel values of a band over all rasters of a group, as a struct `(count, sum, mean, stddev, min, max)`. |
+| [`ST_Union_Agg`](#st_union_agg) | Aggregate: merges the rasters of a group into one raster that covers them all. |
 | [`TopoElementArray_Agg`](#topoelementarray_agg) | Collects TopoElements into a TopoElementArray. |
 
 **[Macro Functions](#Macro-functions)**
@@ -284,6 +360,7 @@
 | [`ST_DumpPoints`](#st_dumppoints) | Extracts all vertices from a geometry as individual point geometries. |
 | [`ST_DumpRings`](#st_dumprings) | Extracts the rings of a polygon geometry. |
 | [`ST_DumpSegments`](#st_dumpsegments) | Extracts consecutive vertex pairs from a geometry as 2-point linestring segments. |
+| [`ST_GDALDrivers`](#st_gdaldrivers) | Returns the GDAL raster drivers that are built into the extension: the formats that `ST_ReadRaster` and `ST_FromGDALRaster` can read and that `ST_AsGDALRaster` can write. |
 | [`ST_GeneratePoints`](#st_generatepoints) | Generates a set of random points within the specified bounding box. |
 | [`ST_GetFaceEdges`](#st_getfaceedges) | Returns the ordered set of signed edges bounding a face, as rows of `(sequence, edge)`. |
 | [`ST_GetFaceGeometry`](#st_getfacegeometry) | Returns the polygon of a face, built from the edges that have the face on exactly one side. |
@@ -296,6 +373,7 @@
 | [`ST_Read`](#st_read) | Read and import a variety of geospatial file formats using the GDAL library. |
 | [`ST_Read_Meta`](#st_read_meta) | Read the metadata from a variety of geospatial file formats using the GDAL library. |
 | [`ST_ReadOSM`](#st_readosm) | The `ST_ReadOsm()` table function enables reading compressed OpenStreetMap data directly from a `.osm.pbf` file. |
+| [`ST_ReadRaster`](#st_readraster) | Reads a raster file, or every file matching a glob pattern, and returns its pixels as `RASTER` values. |
 | [`ST_ReadSHP`](#st_readshp) | Read a Shapefile without relying on the GDAL library |
 | [`ST_RemEdgeModFace`](#st_remedgemodface) | Removes an edge. If it separates two faces, one is deleted and the other is modified to cover both. |
 | [`ST_RemEdgeNewFace`](#st_remedgenewface) | Removes an edge. If it separates two faces, both are deleted and replaced by a new face covering them. |
@@ -443,6 +521,46 @@ Returns the 3D perimeter of a polygon (considers Z coordinate)
 
 ```sql
 SELECT ST_3DPerimeter(ST_GeomFromText('POLYGON Z((0 0 0, 1 0 0, 1 1 1, 0 1 0, 0 0 0))'))
+```
+
+----
+
+### ST_AddBand
+
+
+#### Signatures
+
+```sql
+RASTER ST_AddBand (rast RASTER, pixeltype VARCHAR)
+RASTER ST_AddBand (rast RASTER, pixeltype VARCHAR, initialvalue DOUBLE)
+RASTER ST_AddBand (rast RASTER, pixeltype VARCHAR, initialvalue DOUBLE, nodataval DOUBLE)
+RASTER ST_AddBand (rast RASTER, index INTEGER, pixeltype VARCHAR)
+RASTER ST_AddBand (rast RASTER, index INTEGER, pixeltype VARCHAR, initialvalue DOUBLE)
+RASTER ST_AddBand (rast RASTER, index INTEGER, pixeltype VARCHAR, initialvalue DOUBLE, nodataval DOUBLE)
+RASTER ST_AddBand (torast RASTER, fromrast RASTER)
+RASTER ST_AddBand (torast RASTER, fromrast RASTER, fromband INTEGER)
+RASTER ST_AddBand (torast RASTER, fromrast RASTER, fromband INTEGER, torastindex INTEGER)
+RASTER ST_AddBand (torast RASTER, fromrasts RASTER[])
+RASTER ST_AddBand (torast RASTER, fromrasts RASTER[], fromband INTEGER)
+RASTER ST_AddBand (torast RASTER, fromrasts RASTER[], fromband INTEGER, torastindex INTEGER)
+```
+
+#### Description
+
+Adds a band to a raster and returns the new raster.
+
+`pixeltype` is one of `8BUI`, `8BSI`, `16BUI`, `16BSI`, `32BUI`, `32BSI`, `32BF`, `64BF`. The band is filled with `initialvalue` (default 0) and gets `nodataval` as its NODATA value (default: none). `index` is the 1-based position of the new band; by default it is appended.
+
+The `fromrast` variants copy band `fromband` (default 1) of another raster of the same width and height, or of each raster in a list, and insert the copies at `torastindex` (default: at the end).
+
+Differences from PostGIS: all bands of a raster share one pixel type, so adding a band of another type is an error; `1BB`, `2BUI` and `4BUI` are accepted but stored as `8BUI`; out-of-database bands are not supported.
+
+#### Example
+
+```sql
+SELECT ST_BandPixelType(ST_AddBand(ST_MakeEmptyRaster(4, 4, 0, 0, 1), '32BF', 1.5, -9999));
+----
+32BF
 ```
 
 ----
@@ -676,6 +794,33 @@ SELECT ST_AsEWKT(ST_Point(1, 2))
 
 ----
 
+### ST_AsGDALRaster
+
+
+#### Signatures
+
+```sql
+BLOB ST_AsGDALRaster (rast RASTER, format VARCHAR)
+BLOB ST_AsGDALRaster (rast RASTER, format VARCHAR, options VARCHAR[])
+BLOB ST_AsGDALRaster (rast RASTER, format VARCHAR, options VARCHAR[], srid INTEGER)
+```
+
+#### Description
+
+Returns the raster as the bytes of a file in a GDAL raster format.
+
+`format` is the short name of a driver that can write (see `ST_GDALDrivers()`), `options` is a list of `NAME=VALUE` creation options of that driver, and `srid` overrides the coordinate system written to the file with an EPSG code, without reprojecting. The bundled GDAL has no PNG or JPEG driver. A raster without bands cannot be exported.
+
+#### Example
+
+```sql
+SELECT octet_length(ST_AsGDALRaster(ST_AddBand(ST_MakeEmptyRaster(3, 2, 0, 0, 1), '8BUI'), 'GTiff', ['COMPRESS=DEFLATE'])) > 0;
+----
+true
+```
+
+----
+
 ### ST_AsGeoJSON
 
 
@@ -833,6 +978,96 @@ See "ST_AsMVT" for more details
 
 ----
 
+### ST_Aspect
+
+
+#### Signatures
+
+```sql
+RASTER ST_Aspect (rast RASTER)
+RASTER ST_Aspect (rast RASTER, nband INTEGER)
+RASTER ST_Aspect (rast RASTER, nband INTEGER, pixeltype VARCHAR)
+RASTER ST_Aspect (rast RASTER, nband INTEGER, pixeltype VARCHAR, units VARCHAR)
+RASTER ST_Aspect (rast RASTER, nband INTEGER, pixeltype VARCHAR, units VARCHAR, interpolate_nodata BOOLEAN)
+```
+
+#### Description
+
+Returns the aspect of an elevation band: the compass direction the slope faces, measured clockwise from north (0 = north, 90 = east, 180 = south, 270 = west). Flat pixels are -1.
+
+`units` is `DEGREES` (the default) or `RADIANS`.
+
+Computed by GDAL's DEM processing on the 3x3 neighbourhood of each pixel. Pixels on the border and next to NODATA pixels are computed from a neighbourhood that GDAL extrapolates, where PostGIS substitutes the value of the centre pixel, so those pixels can differ from PostGIS. `nband` is 1-based (default 1) and `pixeltype` the pixel type of the result (default `32BF`). NODATA pixels are NODATA in the result (-9999, or the largest value of the pixel type if it cannot hold -9999). `interpolate_nodata` must be false and the `customextent` variants are not available.
+
+#### Example
+
+```sql
+SELECT ST_Value(ST_Aspect(ST_SetValue(ST_SetValue(ST_AddBand(ST_MakeEmptyRaster(3, 3, 0, 3, 1), '32BF'), ST_MakeEnvelope(1, 0, 2, 3), 1), ST_MakeEnvelope(2, 0, 3, 3), 2)), 2, 2);
+----
+270.0
+```
+
+----
+
+### ST_AsRaster
+
+
+#### Signatures
+
+```sql
+RASTER ST_AsRaster (geom GEOMETRY, ref RASTER)
+RASTER ST_AsRaster (geom GEOMETRY, ref RASTER, pixeltype VARCHAR)
+RASTER ST_AsRaster (geom GEOMETRY, ref RASTER, pixeltype VARCHAR, value DOUBLE)
+RASTER ST_AsRaster (geom GEOMETRY, ref RASTER, pixeltype VARCHAR, value DOUBLE, nodataval DOUBLE)
+RASTER ST_AsRaster (geom GEOMETRY, ref RASTER, pixeltype VARCHAR, value DOUBLE, nodataval DOUBLE, touched BOOLEAN)
+RASTER ST_AsRaster (geom GEOMETRY, scalex DOUBLE, scaley DOUBLE, pixeltype VARCHAR)
+RASTER ST_AsRaster (geom GEOMETRY, scalex DOUBLE, scaley DOUBLE, pixeltype VARCHAR, value DOUBLE)
+RASTER ST_AsRaster (geom GEOMETRY, scalex DOUBLE, scaley DOUBLE, pixeltype VARCHAR, value DOUBLE, nodataval DOUBLE)
+RASTER ST_AsRaster (geom GEOMETRY, scalex DOUBLE, scaley DOUBLE, pixeltype VARCHAR, value DOUBLE, nodataval DOUBLE, upperleftx DOUBLE)
+RASTER ST_AsRaster (geom GEOMETRY, scalex DOUBLE, scaley DOUBLE, pixeltype VARCHAR, value DOUBLE, nodataval DOUBLE, upperleftx DOUBLE, upperlefty DOUBLE)
+RASTER ST_AsRaster (geom GEOMETRY, scalex DOUBLE, scaley DOUBLE, pixeltype VARCHAR, value DOUBLE, nodataval DOUBLE, upperleftx DOUBLE, upperlefty DOUBLE, skewx DOUBLE)
+RASTER ST_AsRaster (geom GEOMETRY, scalex DOUBLE, scaley DOUBLE, pixeltype VARCHAR, value DOUBLE, nodataval DOUBLE, upperleftx DOUBLE, upperlefty DOUBLE, skewx DOUBLE, skewy DOUBLE)
+RASTER ST_AsRaster (geom GEOMETRY, scalex DOUBLE, scaley DOUBLE, pixeltype VARCHAR, value DOUBLE, nodataval DOUBLE, upperleftx DOUBLE, upperlefty DOUBLE, skewx DOUBLE, skewy DOUBLE, touched BOOLEAN)
+RASTER ST_AsRaster (geom GEOMETRY, scalex DOUBLE, scaley DOUBLE, gridx DOUBLE, gridy DOUBLE, pixeltype VARCHAR)
+RASTER ST_AsRaster (geom GEOMETRY, scalex DOUBLE, scaley DOUBLE, gridx DOUBLE, gridy DOUBLE, pixeltype VARCHAR, value DOUBLE)
+RASTER ST_AsRaster (geom GEOMETRY, scalex DOUBLE, scaley DOUBLE, gridx DOUBLE, gridy DOUBLE, pixeltype VARCHAR, value DOUBLE, nodataval DOUBLE)
+RASTER ST_AsRaster (geom GEOMETRY, scalex DOUBLE, scaley DOUBLE, gridx DOUBLE, gridy DOUBLE, pixeltype VARCHAR, value DOUBLE, nodataval DOUBLE, skewx DOUBLE)
+RASTER ST_AsRaster (geom GEOMETRY, scalex DOUBLE, scaley DOUBLE, gridx DOUBLE, gridy DOUBLE, pixeltype VARCHAR, value DOUBLE, nodataval DOUBLE, skewx DOUBLE, skewy DOUBLE)
+RASTER ST_AsRaster (geom GEOMETRY, scalex DOUBLE, scaley DOUBLE, gridx DOUBLE, gridy DOUBLE, pixeltype VARCHAR, value DOUBLE, nodataval DOUBLE, skewx DOUBLE, skewy DOUBLE, touched BOOLEAN)
+RASTER ST_AsRaster (geom GEOMETRY, width INTEGER, height INTEGER, pixeltype VARCHAR)
+RASTER ST_AsRaster (geom GEOMETRY, width INTEGER, height INTEGER, pixeltype VARCHAR, value DOUBLE)
+RASTER ST_AsRaster (geom GEOMETRY, width INTEGER, height INTEGER, pixeltype VARCHAR, value DOUBLE, nodataval DOUBLE)
+RASTER ST_AsRaster (geom GEOMETRY, width INTEGER, height INTEGER, pixeltype VARCHAR, value DOUBLE, nodataval DOUBLE, upperleftx DOUBLE)
+RASTER ST_AsRaster (geom GEOMETRY, width INTEGER, height INTEGER, pixeltype VARCHAR, value DOUBLE, nodataval DOUBLE, upperleftx DOUBLE, upperlefty DOUBLE)
+RASTER ST_AsRaster (geom GEOMETRY, width INTEGER, height INTEGER, pixeltype VARCHAR, value DOUBLE, nodataval DOUBLE, upperleftx DOUBLE, upperlefty DOUBLE, skewx DOUBLE)
+RASTER ST_AsRaster (geom GEOMETRY, width INTEGER, height INTEGER, pixeltype VARCHAR, value DOUBLE, nodataval DOUBLE, upperleftx DOUBLE, upperlefty DOUBLE, skewx DOUBLE, skewy DOUBLE)
+RASTER ST_AsRaster (geom GEOMETRY, width INTEGER, height INTEGER, pixeltype VARCHAR, value DOUBLE, nodataval DOUBLE, upperleftx DOUBLE, upperlefty DOUBLE, skewx DOUBLE, skewy DOUBLE, touched BOOLEAN)
+RASTER ST_AsRaster (geom GEOMETRY, width INTEGER, height INTEGER, gridx DOUBLE, gridy DOUBLE, pixeltype VARCHAR)
+RASTER ST_AsRaster (geom GEOMETRY, width INTEGER, height INTEGER, gridx DOUBLE, gridy DOUBLE, pixeltype VARCHAR, value DOUBLE)
+RASTER ST_AsRaster (geom GEOMETRY, width INTEGER, height INTEGER, gridx DOUBLE, gridy DOUBLE, pixeltype VARCHAR, value DOUBLE, nodataval DOUBLE)
+RASTER ST_AsRaster (geom GEOMETRY, width INTEGER, height INTEGER, gridx DOUBLE, gridy DOUBLE, pixeltype VARCHAR, value DOUBLE, nodataval DOUBLE, skewx DOUBLE)
+RASTER ST_AsRaster (geom GEOMETRY, width INTEGER, height INTEGER, gridx DOUBLE, gridy DOUBLE, pixeltype VARCHAR, value DOUBLE, nodataval DOUBLE, skewx DOUBLE, skewy DOUBLE)
+RASTER ST_AsRaster (geom GEOMETRY, width INTEGER, height INTEGER, gridx DOUBLE, gridy DOUBLE, pixeltype VARCHAR, value DOUBLE, nodataval DOUBLE, skewx DOUBLE, skewy DOUBLE, touched BOOLEAN)
+```
+
+#### Description
+
+Rasterizes a geometry: returns a single-band raster that covers the bounding box of the geometry, where the pixels covered by the geometry have `value` (default 1) and the others are NODATA.
+
+The grid is that of a reference raster `ref` (same pixel size, skew, alignment and coordinate system), or is given by a pixel size (`scalex`, `scaley`, in world units, sign ignored) or a size in pixels (`width`, `height`). `upperleftx`/`upperlefty` fix the upper-left corner of the result, `gridx`/`gridy` only align its pixel corners with that point; `skewx`/`skewy` default to 0. Without a reference raster the result is north-up and has no coordinate system.
+
+`pixeltype` defaults to `8BUI` and `nodataval` to 0; a NULL `nodataval` gives a band without NODATA value whose background is 0. A polygon covers the pixels whose centre it contains, lines and points the pixels they pass through; with `touched` every pixel the geometry touches is covered. Returns NULL for an empty geometry. The variants of PostGIS that take lists of pixel types, values and NODATA values (several bands) are not available.
+
+#### Example
+
+```sql
+SELECT ST_DumpValues(ST_AsRaster(ST_MakeEnvelope(0, 0, 2, 1), 1.0, 1.0, '8BUI', 7));
+----
+[[7.0, 7.0]]
+```
+
+----
+
 ### ST_AsSVG
 
 
@@ -884,6 +1119,35 @@ Returns the Well-Known Text (WKT) representation of the geometry
 
 ```sql
 ST_AsText(ST_GeomFromWKB(X'01010000000000000000000000000000000000000000000000'))
+```
+
+----
+
+### ST_AsTIFF
+
+
+#### Signatures
+
+```sql
+BLOB ST_AsTIFF (rast RASTER)
+BLOB ST_AsTIFF (rast RASTER, compression VARCHAR)
+BLOB ST_AsTIFF (rast RASTER, options VARCHAR[])
+```
+
+#### Description
+
+Returns the raster as the bytes of a GeoTIFF file.
+
+`compression` is a GeoTIFF compression name: `NONE`, `LZW`, `DEFLATE` or `PACKBITS` (JPEG and ZSTD are not available in the bundled GDAL); `options` is a list of `NAME=VALUE` GeoTIFF creation options. The file carries the coordinate system as regular GeoTIFF keys.
+
+`RASTER` values are stored uncompressed, because compressing makes writing a raster 10 to 50 times slower. The result of this function is itself a valid `RASTER`: `ST_AsTIFF(rast, 'DEFLATE')::RASTER` is a compressed raster that every function reads transparently, at the price of slower reads.
+
+#### Example
+
+```sql
+SELECT octet_length(ST_AsTIFF(ST_AddBand(ST_MakeEmptyRaster(3, 2, 0, 0, 1), '8BUI'), 'LZW')) > 0;
+----
+true
 ```
 
 ----
@@ -951,6 +1215,131 @@ Returns the azimuth (a clockwise angle measured from north) of two points in rad
 SELECT degrees(ST_Azimuth(ST_Point(0, 0), ST_Point(0, 1)));
 ----
 90.0
+```
+
+----
+
+### ST_Band
+
+
+#### Signatures
+
+```sql
+RASTER ST_Band (rast RASTER)
+RASTER ST_Band (rast RASTER, nband INTEGER)
+RASTER ST_Band (rast RASTER, nbands INTEGER[])
+```
+
+#### Description
+
+Returns a raster made of one or more bands of the input raster.
+
+`nband` is a 1-based band number (default 1); `nbands` is a list of band numbers, which may repeat or reorder bands.
+
+#### Example
+
+```sql
+SELECT ST_NumBands(ST_Band(rast, [3, 1])) FROM (SELECT ST_AddBand(ST_AddBand(ST_AddBand(ST_MakeEmptyRaster(2, 2, 0, 0, 1), '8BUI'), '8BUI'), '8BUI') AS rast);
+----
+2
+```
+
+----
+
+### ST_BandIsNoData
+
+
+#### Signatures
+
+```sql
+BOOLEAN ST_BandIsNoData (rast RASTER)
+BOOLEAN ST_BandIsNoData (rast RASTER, band INTEGER)
+BOOLEAN ST_BandIsNoData (rast RASTER, band INTEGER, forcechecking BOOLEAN)
+BOOLEAN ST_BandIsNoData (rast RASTER, forcechecking BOOLEAN)
+```
+
+#### Description
+
+Returns true if every pixel of the band (1-based, default 1) is NODATA. The pixels are always inspected, so `forcechecking` is accepted for compatibility and ignored.
+
+#### Example
+
+```sql
+SELECT ST_BandIsNoData(ST_AddBand(ST_MakeEmptyRaster(2, 2, 0, 0, 1), '8BUI', 7, 7));
+----
+true
+```
+
+----
+
+### ST_BandMetaData
+
+
+#### Signatures
+
+```sql
+STRUCT(pixeltype VARCHAR, nodatavalue DOUBLE, isoutdb BOOLEAN, path VARCHAR) ST_BandMetaData (rast RASTER)
+STRUCT(pixeltype VARCHAR, nodatavalue DOUBLE, isoutdb BOOLEAN, path VARCHAR) ST_BandMetaData (rast RASTER, band INTEGER)
+```
+
+#### Description
+
+Returns the pixel type and NODATA value (NULL if none) of a band (1-based, default 1) as a struct. `isoutdb` is always false and `path` always NULL: bands are always stored in the raster value.
+
+#### Example
+
+```sql
+SELECT ST_BandMetaData(ST_AddBand(ST_MakeEmptyRaster(2, 2, 0, 0, 1), '16BSI', 0, -1));
+----
+{'pixeltype': 16BSI, 'nodatavalue': -1.0, 'isoutdb': false, 'path': NULL}
+```
+
+----
+
+### ST_BandNoDataValue
+
+
+#### Signatures
+
+```sql
+DOUBLE ST_BandNoDataValue (rast RASTER)
+DOUBLE ST_BandNoDataValue (rast RASTER, band INTEGER)
+```
+
+#### Description
+
+Returns the NODATA value of a band (1-based, default 1), or NULL if the band has none.
+
+#### Example
+
+```sql
+SELECT ST_BandNoDataValue(ST_AddBand(ST_MakeEmptyRaster(2, 2, 0, 0, 1), '16BSI', 0, -1));
+----
+-1.0
+```
+
+----
+
+### ST_BandPixelType
+
+
+#### Signatures
+
+```sql
+VARCHAR ST_BandPixelType (rast RASTER)
+VARCHAR ST_BandPixelType (rast RASTER, band INTEGER)
+```
+
+#### Description
+
+Returns the pixel type of a band (1-based, default 1): `8BUI`, `8BSI`, `16BUI`, `16BSI`, `32BUI`, `32BSI`, `32BF` or `64BF`.
+
+#### Example
+
+```sql
+SELECT ST_BandPixelType(ST_AddBand(ST_MakeEmptyRaster(2, 2, 0, 0, 1), '16BSI'));
+----
+16BSI
 ```
 
 ----
@@ -1097,6 +1486,44 @@ SELECT ST_AsText(ST_ChaikinSmoothing(ST_GeomFromText('LINESTRING(0 0, 5 10, 10 0
 
 ----
 
+### ST_Clip
+
+
+#### Signatures
+
+```sql
+RASTER ST_Clip (rast RASTER, geom GEOMETRY)
+RASTER ST_Clip (rast RASTER, geom GEOMETRY, nodataval DOUBLE)
+RASTER ST_Clip (rast RASTER, geom GEOMETRY, nodataval DOUBLE, crop BOOLEAN)
+RASTER ST_Clip (rast RASTER, geom GEOMETRY, nodataval DOUBLE, crop BOOLEAN, touched BOOLEAN)
+RASTER ST_Clip (rast RASTER, geom GEOMETRY, crop BOOLEAN)
+RASTER ST_Clip (rast RASTER, geom GEOMETRY, crop BOOLEAN, touched BOOLEAN)
+RASTER ST_Clip (rast RASTER, band INTEGER, geom GEOMETRY)
+RASTER ST_Clip (rast RASTER, band INTEGER, geom GEOMETRY, nodataval DOUBLE)
+RASTER ST_Clip (rast RASTER, band INTEGER, geom GEOMETRY, nodataval DOUBLE, crop BOOLEAN)
+RASTER ST_Clip (rast RASTER, band INTEGER, geom GEOMETRY, nodataval DOUBLE, crop BOOLEAN, touched BOOLEAN)
+RASTER ST_Clip (rast RASTER, band INTEGER, geom GEOMETRY, crop BOOLEAN)
+RASTER ST_Clip (rast RASTER, band INTEGER, geom GEOMETRY, crop BOOLEAN, touched BOOLEAN)
+```
+
+#### Description
+
+Returns the raster clipped by a geometry: pixels outside of the geometry become NODATA.
+
+With `band` (1-based) the result has only that band; otherwise all bands are clipped. `nodataval` is the NODATA value of the result; by default the band's own NODATA value is used, or the smallest value of the pixel type if it has none. With `crop` (the default) the result is cut to the pixels that intersect the bounding box of the geometry; otherwise it keeps the size of the input. A pixel is inside when its centre is inside the geometry, or, if `touched` is true, when the geometry touches it.
+
+The geometry must be in the coordinate system of the raster. Returns NULL if the geometry is empty or does not overlap the raster (PostGIS returns an empty raster). The variants taking lists of bands and NODATA values are not available.
+
+#### Example
+
+```sql
+SELECT ST_Width(r), ST_Height(r) FROM (SELECT ST_Clip(ST_AddBand(ST_MakeEmptyRaster(10, 10, 0, 10, 1), '8BUI', 1, 0), ST_MakeEnvelope(2, 2, 5, 6)) AS r);
+----
+3    4
+```
+
+----
+
 ### ST_ClipByBox2D
 
 
@@ -1220,6 +1647,38 @@ SELECT ST_CollectionExtract('MULTIPOINT(1 2, 3 4)'::GEOMETRY, 1);
 
 ----
 
+### ST_ColorMap
+
+
+#### Signatures
+
+```sql
+RASTER ST_ColorMap (rast RASTER)
+RASTER ST_ColorMap (rast RASTER, nband INTEGER)
+RASTER ST_ColorMap (rast RASTER, nband INTEGER, colormap VARCHAR)
+RASTER ST_ColorMap (rast RASTER, nband INTEGER, colormap VARCHAR, method VARCHAR)
+RASTER ST_ColorMap (rast RASTER, colormap VARCHAR)
+RASTER ST_ColorMap (rast RASTER, colormap VARCHAR, method VARCHAR)
+```
+
+#### Description
+
+Returns a raster of up to four `8BUI` bands (grey, RGB or RGBA) that renders band `nband` (1-based, default 1) with a colormap.
+
+`colormap` is the name of a predefined colormap (`grayscale`, `pseudocolor`, `fire`, `bluered`) or a custom colormap: one entry per line, each a value followed by one to four colour components between 0 and 255 (separated by spaces, commas or colons). The value is a pixel value, a percentage of the range between the smallest and largest pixel value (`50%`), or `nv` for NODATA pixels. The result has as many bands as the longest entry.
+
+`method` is `INTERPOLATE` (the default: colours are blended linearly between entries, and values beyond the first or last entry take its colour), `EXACT` (only pixels equal to an entry are coloured) or `NEAREST` (the colour of the closest entry). Pixels without a colour are 0 in all bands. Predefined colormaps are always interpolated.
+
+#### Example
+
+```sql
+SELECT ST_NumBands(ST_ColorMap(ST_AddBand(ST_MakeEmptyRaster(2, 2, 0, 0, 1), '8BUI', 5), 1, 'fire'));
+----
+4
+```
+
+----
+
 ### ST_ConcaveHull
 
 
@@ -1243,6 +1702,8 @@ Returns the 'concave' hull of the input geometry, containing all of the source i
 ```sql
 BOOLEAN ST_Contains (geom1 POLYGON_2D, geom2 POINT_2D)
 BOOLEAN ST_Contains (geom1 GEOMETRY, geom2 GEOMETRY)
+BOOLEAN ST_Contains (rast1 RASTER, rast2 RASTER)
+BOOLEAN ST_Contains (rast1 RASTER, nband1 INTEGER, rast2 RASTER, nband2 INTEGER)
 ```
 
 #### Description
@@ -1272,13 +1733,44 @@ A geometry always `ST_Contains` itself, but does not `ST_ContainsProperly` itsel
 
 ----
 
+### ST_Contour
+
+
+#### Signatures
+
+```sql
+STRUCT(geom GEOMETRY, id INTEGER, "value" DOUBLE)[] ST_Contour (rast RASTER)
+STRUCT(geom GEOMETRY, id INTEGER, "value" DOUBLE)[] ST_Contour (rast RASTER, bandnumber INTEGER)
+STRUCT(geom GEOMETRY, id INTEGER, "value" DOUBLE)[] ST_Contour (rast RASTER, bandnumber INTEGER, level_interval DOUBLE)
+STRUCT(geom GEOMETRY, id INTEGER, "value" DOUBLE)[] ST_Contour (rast RASTER, bandnumber INTEGER, level_interval DOUBLE, level_base DOUBLE)
+STRUCT(geom GEOMETRY, id INTEGER, "value" DOUBLE)[] ST_Contour (rast RASTER, bandnumber INTEGER, level_interval DOUBLE, level_base DOUBLE, fixed_levels DOUBLE[])
+STRUCT(geom GEOMETRY, id INTEGER, "value" DOUBLE)[] ST_Contour (rast RASTER, bandnumber INTEGER, level_interval DOUBLE, level_base DOUBLE, fixed_levels DOUBLE[], polygonize BOOLEAN)
+```
+
+#### Description
+
+Returns the contour lines of a band as a list of structs `(geom, id, value)`. PostGIS returns a set of rows: use `UNNEST(..., recursive := true)` to get the same shape.
+
+Contours are drawn every `level_interval` (default 100) starting from `level_base` (default 0), or at the `fixed_levels` if that list is not empty. `bandnumber` is 1-based and defaults to 1; NODATA pixels are ignored. With `polygonize` the result is polygons of the areas between consecutive levels instead of lines, and `value` is the lower bound that GDAL reports for each area. Pixel values are taken at pixel centres; in the outer half pixel of the raster the surface is the value of the outermost pixel centres.
+
+#### Example
+
+```sql
+SELECT c.id, c.value, ST_GeometryType(c.geom) FROM (SELECT UNNEST(ST_Contour(ST_SetValue(ST_AddBand(ST_MakeEmptyRaster(3, 3, 0, 3, 1), '32BF', 0), 2, 2, 10), 1, 100.0, 0.0, [5.0])) AS c);
+----
+0    5.0    LINESTRING
+```
+
+----
+
 ### ST_ConvexHull
 
 
-#### Signature
+#### Signatures
 
 ```sql
 GEOMETRY ST_ConvexHull (geom GEOMETRY)
+GEOMETRY ST_ConvexHull (rast RASTER)
 ```
 
 #### Description
@@ -1299,6 +1791,32 @@ INTEGER ST_CoordDim (geom GEOMETRY)
 #### Description
 
 Returns the coordinate dimension of a geometry
+
+----
+
+### ST_Count
+
+
+#### Signatures
+
+```sql
+BIGINT ST_Count (rast RASTER)
+BIGINT ST_Count (rast RASTER, nband INTEGER)
+BIGINT ST_Count (rast RASTER, nband INTEGER, exclude_nodata_value BOOLEAN)
+BIGINT ST_Count (rast RASTER, exclude_nodata_value BOOLEAN)
+```
+
+#### Description
+
+Returns the number of pixels of a band (1-based, default 1) that are not NODATA, or the number of all pixels if `exclude_nodata_value` is false.
+
+#### Example
+
+```sql
+SELECT ST_Count(ST_SetValue(ST_AddBand(ST_MakeEmptyRaster(2, 2, 0, 0, 1), '8BUI', 1, 0), 1, 1, NULL));
+----
+3
+```
 
 ----
 
@@ -1644,6 +2162,61 @@ SELECT unnest(ST_Dump('MULTIPOINT(1 2, 3 4)'::GEOMETRY), recursive := true);
 
 ----
 
+### ST_DumpAsPolygons
+
+
+#### Signatures
+
+```sql
+STRUCT(geom GEOMETRY, val DOUBLE)[] ST_DumpAsPolygons (rast RASTER)
+STRUCT(geom GEOMETRY, val DOUBLE)[] ST_DumpAsPolygons (rast RASTER, band INTEGER)
+STRUCT(geom GEOMETRY, val DOUBLE)[] ST_DumpAsPolygons (rast RASTER, band INTEGER, exclude_nodata_value BOOLEAN)
+```
+
+#### Description
+
+Vectorizes a band: returns a list of structs `(geom, val)` with one polygon per connected area of pixels that share a value. PostGIS returns a set of rows: use `UNNEST(..., recursive := true)` to get the same shape.
+
+`band` is 1-based and defaults to 1. NODATA pixels are left out unless `exclude_nodata_value` is false. Pixels that only touch at a corner are not connected. Bands of type `32BUI`, `32BF` and `64BF` are compared as 32-bit floats.
+
+#### Example
+
+```sql
+SELECT UNNEST(ST_DumpAsPolygons(ST_SetValue(ST_AddBand(ST_MakeEmptyRaster(2, 1, 0, 1, 1), '8BUI', 1), 2, 1, 5)), recursive := true);
+----
+POLYGON ((0 1, 0 0, 1 0, 1 1, 0 1))    1.0
+POLYGON ((1 1, 1 0, 2 0, 2 1, 1 1))    5.0
+```
+
+----
+
+### ST_DumpValues
+
+
+#### Signatures
+
+```sql
+DOUBLE[][] ST_DumpValues (rast RASTER)
+DOUBLE[][] ST_DumpValues (rast RASTER, nband INTEGER)
+DOUBLE[][] ST_DumpValues (rast RASTER, nband INTEGER, exclude_nodata_value BOOLEAN)
+```
+
+#### Description
+
+Returns the pixel values of a band as a list of rows, each a list of values: `result[y][x]` is the pixel at column `x`, row `y` (both 1-based).
+
+`nband` is 1-based and defaults to 1. NODATA pixels are NULL unless `exclude_nodata_value` is false. The variant of PostGIS that returns one row per band is not available: call the function once per band.
+
+#### Example
+
+```sql
+SELECT ST_DumpValues(ST_SetValue(ST_AddBand(ST_MakeEmptyRaster(2, 2, 0, 0, 1), '8BUI', 1, 0), 2, 1, NULL));
+----
+[[1.0, NULL], [1.0, 1.0]]
+```
+
+----
+
 ### ST_DWithin
 
 
@@ -1711,10 +2284,11 @@ Returns the end point of a LINESTRING.
 ### ST_Envelope
 
 
-#### Signature
+#### Signatures
 
 ```sql
 GEOMETRY ST_Envelope (geom GEOMETRY)
+GEOMETRY ST_Envelope (rast RASTER)
 ```
 
 #### Description
@@ -1976,6 +2550,32 @@ DOUBLE ST_FrechetDistance (geom1 GEOMETRY, geom2 GEOMETRY)
 #### Description
 
 Returns the Frechet distance between two geometries
+
+----
+
+### ST_FromGDALRaster
+
+
+#### Signatures
+
+```sql
+RASTER ST_FromGDALRaster (gdaldata BLOB)
+RASTER ST_FromGDALRaster (gdaldata BLOB, srid INTEGER)
+```
+
+#### Description
+
+Creates a raster from the bytes of a raster file in any format the bundled GDAL reads from memory (GeoTIFF and Erdas Imagine; see `ST_GDALDrivers()`).
+
+`srid` overrides the coordinate system of the file with an EPSG code, without reprojecting. VRT files are rejected because they refer to other files: read them with `ST_ReadRaster`. All bands of the result share the pixel type of the first band.
+
+#### Example
+
+```sql
+SELECT ST_Width(ST_FromGDALRaster(ST_AsGDALRaster(ST_AddBand(ST_MakeEmptyRaster(3, 2, 0, 0, 1), '8BUI'), 'GTiff')));
+----
+3
+```
 
 ----
 
@@ -2404,6 +3004,60 @@ ST_GeomFromWKB(X'01010000000000000000000000000000000000000000000000')
 
 ----
 
+### ST_GeoReference
+
+
+#### Signatures
+
+```sql
+VARCHAR ST_GeoReference (rast RASTER)
+VARCHAR ST_GeoReference (rast RASTER, format VARCHAR)
+```
+
+#### Description
+
+Returns the georeference as the six lines of a world file: `scalex`, `skewy`, `skewx`, `scaley`, `upperleftx`, `upperlefty`, each with 10 decimals and followed by a newline.
+
+`format` is `GDAL` (the default, upper-left corner of the upper-left pixel) or `ESRI` (centre of the upper-left pixel).
+
+#### Example
+
+```sql
+SELECT string_split(rtrim(ST_GeoReference(ST_MakeEmptyRaster(10, 5, 100, 200, 2, -2, 0, 0)), chr(10)), chr(10));
+----
+[2.0000000000, 0.0000000000, 0.0000000000, -2.0000000000, 100.0000000000, 200.0000000000]
+```
+
+----
+
+### ST_Grayscale
+
+
+#### Signatures
+
+```sql
+RASTER ST_Grayscale (rast RASTER)
+RASTER ST_Grayscale (rast RASTER, redband INTEGER)
+RASTER ST_Grayscale (rast RASTER, redband INTEGER, greenband INTEGER)
+RASTER ST_Grayscale (rast RASTER, redband INTEGER, greenband INTEGER, blueband INTEGER)
+```
+
+#### Description
+
+Returns a single-band `8BUI` raster with the luminance of three bands holding red, green and blue values between 0 and 255: `0.2989 * R + 0.5870 * G + 0.1140 * B`.
+
+The band numbers are 1-based and default to 1, 2 and 3. The `rastbandarg[]` variant of PostGIS and the `extenttype` argument are not available: the three bands come from one raster.
+
+#### Example
+
+```sql
+SELECT ST_Value(ST_Grayscale(ST_AddBand(ST_AddBand(ST_AddBand(ST_MakeEmptyRaster(2, 2, 0, 0, 1), '8BUI', 255), '8BUI', 0), '8BUI', 0)), 1, 1);
+----
+76.0
+```
+
+----
+
 ### ST_HasM
 
 
@@ -2437,6 +3091,30 @@ true
 
 -- HasM for a 4D geometry
 SELECT ST_HasM(ST_GeomFromText('POINT ZM(1 1 1 1)'));
+----
+true
+```
+
+----
+
+### ST_HasNoBand
+
+
+#### Signatures
+
+```sql
+BOOLEAN ST_HasNoBand (rast RASTER)
+BOOLEAN ST_HasNoBand (rast RASTER, band INTEGER)
+```
+
+#### Description
+
+Returns true if the raster has no band with the given number (1-based, default 1).
+
+#### Example
+
+```sql
+SELECT ST_HasNoBand(ST_MakeEmptyRaster(2, 2, 0, 0, 1));
 ----
 true
 ```
@@ -2497,6 +3175,29 @@ Returns the Hausdorff distance between two geometries
 
 ----
 
+### ST_Height
+
+
+#### Signature
+
+```sql
+INTEGER ST_Height (rast RASTER)
+```
+
+#### Description
+
+Returns the height of the raster in pixels.
+
+#### Example
+
+```sql
+SELECT ST_Height(ST_MakeEmptyRaster(10, 5, 0, 0, 1));
+----
+5
+```
+
+----
+
 ### ST_Hilbert
 
 
@@ -2516,6 +3217,76 @@ Encodes the X and Y values as the hilbert curve index for a curve covering the g
 If a geometry is provided, the center of the approximate bounding box is used as the point to encode.
 If no bounding box is provided, the hilbert curve index is mapped to the full range of a single-precision float.
 For the BOX_2D and BOX_2DF variants, the center of the box is used as the point to encode.
+
+----
+
+### ST_Hillshade
+
+
+#### Signatures
+
+```sql
+RASTER ST_Hillshade (rast RASTER)
+RASTER ST_Hillshade (rast RASTER, nband INTEGER)
+RASTER ST_Hillshade (rast RASTER, nband INTEGER, pixeltype VARCHAR)
+RASTER ST_Hillshade (rast RASTER, nband INTEGER, pixeltype VARCHAR, azimuth DOUBLE)
+RASTER ST_Hillshade (rast RASTER, nband INTEGER, pixeltype VARCHAR, azimuth DOUBLE, altitude DOUBLE)
+RASTER ST_Hillshade (rast RASTER, nband INTEGER, pixeltype VARCHAR, azimuth DOUBLE, altitude DOUBLE, max_bright DOUBLE)
+RASTER ST_Hillshade (rast RASTER, nband INTEGER, pixeltype VARCHAR, azimuth DOUBLE, altitude DOUBLE, max_bright DOUBLE, scale DOUBLE)
+RASTER ST_Hillshade (rast RASTER, nband INTEGER, pixeltype VARCHAR, azimuth DOUBLE, altitude DOUBLE, max_bright DOUBLE, scale DOUBLE, interpolate_nodata BOOLEAN)
+```
+
+#### Description
+
+Returns the hypothetical illumination of an elevation band.
+
+`azimuth` is the direction of the light source in degrees clockwise from north (default 315) and `altitude` its angle above the horizon in degrees (default 45). `max_bright` is the value of a fully lit pixel (default 255) and `scale` the ratio of vertical units to horizontal units (default 1). GDAL computes the illumination as an 8-bit value, so the result has 255 distinct levels between 0 and `max_bright`.
+
+Computed by GDAL's DEM processing on the 3x3 neighbourhood of each pixel. Pixels on the border and next to NODATA pixels are computed from a neighbourhood that GDAL extrapolates, where PostGIS substitutes the value of the centre pixel, so those pixels can differ from PostGIS. `nband` is 1-based (default 1) and `pixeltype` the pixel type of the result (default `32BF`). NODATA pixels are NODATA in the result (-9999, or the largest value of the pixel type if it cannot hold -9999). `interpolate_nodata` must be false and the `customextent` variants are not available.
+
+#### Example
+
+```sql
+SELECT round(ST_Value(ST_Hillshade(ST_AddBand(ST_MakeEmptyRaster(5, 5, 0, 5, 1), '32BF', 10)), 3, 3));
+----
+181.0
+```
+
+----
+
+### ST_Histogram
+
+
+#### Signatures
+
+```sql
+STRUCT(min DOUBLE, max DOUBLE, count BIGINT, "percent" DOUBLE)[] ST_Histogram (rast RASTER)
+STRUCT(min DOUBLE, max DOUBLE, count BIGINT, "percent" DOUBLE)[] ST_Histogram (rast RASTER, nband INTEGER)
+STRUCT(min DOUBLE, max DOUBLE, count BIGINT, "percent" DOUBLE)[] ST_Histogram (rast RASTER, nband INTEGER, exclude_nodata_value BOOLEAN)
+STRUCT(min DOUBLE, max DOUBLE, count BIGINT, "percent" DOUBLE)[] ST_Histogram (rast RASTER, nband INTEGER, exclude_nodata_value BOOLEAN, bins INTEGER)
+STRUCT(min DOUBLE, max DOUBLE, count BIGINT, "percent" DOUBLE)[] ST_Histogram (rast RASTER, nband INTEGER, exclude_nodata_value BOOLEAN, bins INTEGER, width DOUBLE[])
+STRUCT(min DOUBLE, max DOUBLE, count BIGINT, "percent" DOUBLE)[] ST_Histogram (rast RASTER, nband INTEGER, exclude_nodata_value BOOLEAN, bins INTEGER, width DOUBLE[], right BOOLEAN)
+STRUCT(min DOUBLE, max DOUBLE, count BIGINT, "percent" DOUBLE)[] ST_Histogram (rast RASTER, nband INTEGER, exclude_nodata_value BOOLEAN, bins INTEGER, right BOOLEAN)
+STRUCT(min DOUBLE, max DOUBLE, count BIGINT, "percent" DOUBLE)[] ST_Histogram (rast RASTER, nband INTEGER, bins INTEGER)
+STRUCT(min DOUBLE, max DOUBLE, count BIGINT, "percent" DOUBLE)[] ST_Histogram (rast RASTER, nband INTEGER, bins INTEGER, width DOUBLE[])
+STRUCT(min DOUBLE, max DOUBLE, count BIGINT, "percent" DOUBLE)[] ST_Histogram (rast RASTER, nband INTEGER, bins INTEGER, width DOUBLE[], right BOOLEAN)
+STRUCT(min DOUBLE, max DOUBLE, count BIGINT, "percent" DOUBLE)[] ST_Histogram (rast RASTER, nband INTEGER, bins INTEGER, right BOOLEAN)
+```
+
+#### Description
+
+Returns the distribution of the pixel values of a band as a list of bins `(min, max, count, percent)`, where `percent` is the fraction of the counted pixels that fall in the bin. PostGIS returns a set of rows: use `UNNEST` to get the same shape.
+
+`nband` is 1-based and defaults to 1; NODATA pixels are left out unless `exclude_nodata_value` is false. `bins` is the number of bins; 0 (the default) chooses it from the number of values (the square root for fewer than 30 values, Sturges' formula otherwise). `width` is a list of bin widths that is repeated to cover the value range, instead of equal-width bins. Bins include their lower bound and exclude their upper bound, except the last one; with `right` set to true the bins are listed from the largest value down, exclude their lower bound and include their upper bound.
+
+#### Example
+
+```sql
+SELECT UNNEST(ST_Histogram(ST_SetValue(ST_AddBand(ST_MakeEmptyRaster(2, 2, 0, 0, 1), '8BUI', 1), 1, 1, 5), 1, 2), recursive := true);
+----
+1.0    3.0    3    0.75
+3.0    5.0    1    0.25
+```
 
 ----
 
@@ -2559,13 +3330,43 @@ Neither argument can be empty.
 
 ----
 
+### ST_InterpolateRaster
+
+
+#### Signatures
+
+```sql
+RASTER ST_InterpolateRaster (geom GEOMETRY, options VARCHAR, rast RASTER)
+RASTER ST_InterpolateRaster (geom GEOMETRY, options VARCHAR, rast RASTER, bandnumber INTEGER)
+```
+
+#### Description
+
+Interpolates a surface from the 3D points of a geometry onto the grid of a raster, and returns the raster with band `bandnumber` (1-based, default 1) replaced by the interpolated values.
+
+Every vertex of the geometry, which must have Z values, is an input point. `options` names the algorithm and its parameters in the syntax of `gdal_grid`: `invdist[:power:2.0:smoothing:0.0:...]`, `invdistnn`, `average`, `nearest` and the other GDAL gridding algorithms (`linear` needs a GDAL built with QHull, which the bundled one is not). Values are computed at pixel centres. The raster must not be skewed; the geometry must be in its coordinate system.
+
+#### Example
+
+```sql
+SELECT ST_DumpValues(ST_InterpolateRaster(ST_GeomFromText('MULTIPOINT Z ((0.5 0.5 10), (1.5 0.5 20))'), 'nearest', ST_AddBand(ST_MakeEmptyRaster(2, 1, 0, 1, 1), '32BF')));
+----
+[[10.0, 20.0]]
+```
+
+----
+
 ### ST_Intersection
 
 
-#### Signature
+#### Signatures
 
 ```sql
 GEOMETRY ST_Intersection (geom1 GEOMETRY, geom2 GEOMETRY)
+STRUCT(geom GEOMETRY, val DOUBLE)[] ST_Intersection (rast RASTER, geomin GEOMETRY)
+STRUCT(geom GEOMETRY, val DOUBLE)[] ST_Intersection (rast RASTER, band INTEGER, geomin GEOMETRY)
+STRUCT(geom GEOMETRY, val DOUBLE)[] ST_Intersection (geomin GEOMETRY, rast RASTER)
+STRUCT(geom GEOMETRY, val DOUBLE)[] ST_Intersection (geomin GEOMETRY, rast RASTER, band INTEGER)
 ```
 
 #### Description
@@ -2583,6 +3384,13 @@ Returns the intersection of two geometries
 BOOLEAN ST_Intersects (box1 BOX_2D, box2 BOX_2D)
 BOOLEAN ST_Intersects (geom1 GEOMETRY, geom2 GEOMETRY)
 BOOLEAN ST_Intersects (geog1 GEOGRAPHY, geog2 GEOGRAPHY)
+BOOLEAN ST_Intersects (rast RASTER, geom GEOMETRY)
+BOOLEAN ST_Intersects (rast RASTER, geom GEOMETRY, nband INTEGER)
+BOOLEAN ST_Intersects (geom GEOMETRY, rast RASTER)
+BOOLEAN ST_Intersects (geom GEOMETRY, rast RASTER, nband INTEGER)
+BOOLEAN ST_Intersects (rast RASTER, nband INTEGER, geom GEOMETRY)
+BOOLEAN ST_Intersects (rast1 RASTER, rast2 RASTER)
+BOOLEAN ST_Intersects (rast1 RASTER, nband1 INTEGER, rast2 RASTER, nband2 INTEGER)
 ```
 
 #### Description
@@ -3109,6 +3917,36 @@ BOX(0 0, 1 1)
 
 ----
 
+### ST_MakeEmptyRaster
+
+
+#### Signatures
+
+```sql
+RASTER ST_MakeEmptyRaster (width INTEGER, height INTEGER, upperleftx DOUBLE, upperlefty DOUBLE, scalex DOUBLE, scaley DOUBLE, skewx DOUBLE, skewy DOUBLE)
+RASTER ST_MakeEmptyRaster (width INTEGER, height INTEGER, upperleftx DOUBLE, upperlefty DOUBLE, scalex DOUBLE, scaley DOUBLE, skewx DOUBLE, skewy DOUBLE, srid INTEGER)
+RASTER ST_MakeEmptyRaster (width INTEGER, height INTEGER, upperleftx DOUBLE, upperlefty DOUBLE, pixelsize DOUBLE)
+RASTER ST_MakeEmptyRaster (rast RASTER)
+```
+
+#### Description
+
+Creates a raster without bands.
+
+`width` and `height` are in pixels, `upperleftx`/`upperlefty` are the world coordinates of the upper-left corner of the upper-left pixel, `scalex`/`scaley` the pixel size in world units (`scaley` is negative for north-up rasters) and `skewx`/`skewy` the rotation terms. `srid` is an EPSG code, 0 (the default) means no coordinate system. The `pixelsize` variant creates square, north-up pixels (`scalex = pixelsize`, `scaley = -pixelsize`). The single-argument variant copies the size, georeference and coordinate system of another raster.
+
+A raster is a `RASTER` value: a GeoTIFF byte stream. Because GeoTIFF needs at least one band, a raster without bands is stored with a placeholder band that no function exposes.
+
+#### Example
+
+```sql
+SELECT ST_MetaData(ST_MakeEmptyRaster(10, 5, 100, 200, 2, -2, 0, 0, 4326));
+----
+{'upperleftx': 100.0, 'upperlefty': 200.0, 'width': 10, 'height': 5, 'scalex': 2.0, 'scaley': -2.0, 'skewx': 0.0, 'skewy': 0.0, 'srid': 4326, 'numbands': 0}
+```
+
+----
+
 ### ST_MakeEnvelope
 
 
@@ -3216,6 +4054,52 @@ Returns a valid representation of the geometry
 
 ----
 
+### ST_MapAlgebra
+
+
+#### Signatures
+
+```sql
+RASTER ST_MapAlgebra (rast RASTER, nband INTEGER, pixeltype VARCHAR, expression VARCHAR)
+RASTER ST_MapAlgebra (rast RASTER, nband INTEGER, pixeltype VARCHAR, expression VARCHAR, nodataval DOUBLE)
+RASTER ST_MapAlgebra (rast RASTER, pixeltype VARCHAR, expression VARCHAR)
+RASTER ST_MapAlgebra (rast RASTER, pixeltype VARCHAR, expression VARCHAR, nodataval DOUBLE)
+RASTER ST_MapAlgebra (rast1 RASTER, nband1 INTEGER, rast2 RASTER, nband2 INTEGER, expression VARCHAR)
+RASTER ST_MapAlgebra (rast1 RASTER, nband1 INTEGER, rast2 RASTER, nband2 INTEGER, expression VARCHAR, pixeltype VARCHAR)
+RASTER ST_MapAlgebra (rast1 RASTER, nband1 INTEGER, rast2 RASTER, nband2 INTEGER, expression VARCHAR, pixeltype VARCHAR, extenttype VARCHAR)
+RASTER ST_MapAlgebra (rast1 RASTER, nband1 INTEGER, rast2 RASTER, nband2 INTEGER, expression VARCHAR, pixeltype VARCHAR, extenttype VARCHAR, nodata1expr VARCHAR)
+RASTER ST_MapAlgebra (rast1 RASTER, nband1 INTEGER, rast2 RASTER, nband2 INTEGER, expression VARCHAR, pixeltype VARCHAR, extenttype VARCHAR, nodata1expr VARCHAR, nodata2expr VARCHAR)
+RASTER ST_MapAlgebra (rast1 RASTER, nband1 INTEGER, rast2 RASTER, nband2 INTEGER, expression VARCHAR, pixeltype VARCHAR, extenttype VARCHAR, nodata1expr VARCHAR, nodata2expr VARCHAR, nodatanodataval DOUBLE)
+RASTER ST_MapAlgebra (rast1 RASTER, rast2 RASTER, expression VARCHAR)
+RASTER ST_MapAlgebra (rast1 RASTER, rast2 RASTER, expression VARCHAR, pixeltype VARCHAR)
+RASTER ST_MapAlgebra (rast1 RASTER, rast2 RASTER, expression VARCHAR, pixeltype VARCHAR, extenttype VARCHAR)
+RASTER ST_MapAlgebra (rast1 RASTER, rast2 RASTER, expression VARCHAR, pixeltype VARCHAR, extenttype VARCHAR, nodata1expr VARCHAR)
+RASTER ST_MapAlgebra (rast1 RASTER, rast2 RASTER, expression VARCHAR, pixeltype VARCHAR, extenttype VARCHAR, nodata1expr VARCHAR, nodata2expr VARCHAR)
+RASTER ST_MapAlgebra (rast1 RASTER, rast2 RASTER, expression VARCHAR, pixeltype VARCHAR, extenttype VARCHAR, nodata1expr VARCHAR, nodata2expr VARCHAR, nodatanodataval DOUBLE)
+```
+
+#### Description
+
+Computes a new single-band raster pixel by pixel from one band, or from one band of each of two rasters, with a SQL expression.
+
+One raster: `expression` is evaluated for every pixel of band `nband` (1-based, default 1) that is not NODATA. It may use `[rast]` (or `[rast.val]`, the pixel value, a DOUBLE) and `[rast.x]` / `[rast.y]` (the 1-based column and row, INTEGER). Pixels that are NODATA in the input, and pixels for which the expression is NULL, are NODATA in the result. The NODATA value of the result is `nodataval`, by default the one of the input band, or the smallest value of the pixel type if there is none and one is needed.
+
+Two rasters: the rasters must have the same alignment (see ST_SameAlignment and ST_Resample). `expression` may use `[rast1]`, `[rast1.x]`, `[rast1.y]`, `[rast2]`, `[rast2.x]` and `[rast2.y]`, and is evaluated where both rasters have a value. `extenttype` is the extent of the result: `INTERSECTION` (the default), `UNION`, `FIRST` or `SECOND`. Where only the second raster has a value, the result is `nodata1expr` (an expression, NODATA if omitted); where only the first one has a value, `nodata2expr`; where neither has, the constant `nodatanodataval`. Returns NULL if the extent is empty (PostGIS returns an empty raster).
+
+`pixeltype` is the pixel type of the result; NULL means the type of the (first) input band. Results are rounded and clamped to the pixel type.
+
+The expression must be a constant string. It is parsed and bound once per query by DuckDB's own parser and binder and evaluated vectorised over the pixels, so every DuckDB scalar function and operator is available and the syntax and semantics are those of DuckDB, not of PostgreSQL. Subqueries, window functions and aggregates are not allowed. The callback (`regprocedure`) variants of PostGIS are not available.
+
+#### Example
+
+```sql
+SELECT ST_DumpValues(ST_MapAlgebra(ST_AddBand(ST_MakeEmptyRaster(3, 2, 0, 0, 1), '8BUI', 10), 1, '16BSI', '[rast] * 2 + [rast.x] - [rast.y]'));
+----
+[[20.0, 21.0, 22.0], [19.0, 20.0, 21.0]]
+```
+
+----
+
 ### ST_MaxDistance
 
 
@@ -3278,6 +4162,53 @@ Returns the memory size of a geometry in bytes
 
 ```sql
 SELECT ST_MemSize(ST_Point(1, 2))
+```
+
+----
+
+### ST_MetaData
+
+
+#### Signature
+
+```sql
+STRUCT(upperleftx DOUBLE, upperlefty DOUBLE, width INTEGER, height INTEGER, scalex DOUBLE, scaley DOUBLE, skewx DOUBLE, skewy DOUBLE, srid INTEGER, numbands INTEGER) ST_MetaData (rast RASTER)
+```
+
+#### Description
+
+Returns the size, georeference, SRID (0 when the coordinate system is not an EPSG code) and number of bands of the raster as a struct.
+
+#### Example
+
+```sql
+SELECT ST_MetaData(ST_MakeEmptyRaster(10, 5, 100, 200, 2, -2, 0, 0, 4326));
+----
+{'upperleftx': 100.0, 'upperlefty': 200.0, 'width': 10, 'height': 5, 'scalex': 2.0, 'scaley': -2.0, 'skewx': 0.0, 'skewy': 0.0, 'srid': 4326, 'numbands': 0}
+```
+
+----
+
+### ST_MinConvexHull
+
+
+#### Signatures
+
+```sql
+GEOMETRY ST_MinConvexHull (rast RASTER)
+GEOMETRY ST_MinConvexHull (rast RASTER, nband INTEGER)
+```
+
+#### Description
+
+Returns the outline of the smallest pixel window that contains every pixel that is not NODATA, in band `nband` (1-based) or in any band when omitted or NULL. Returns NULL if all pixels are NODATA.
+
+#### Example
+
+```sql
+SELECT ST_MinConvexHull(ST_SetValue(ST_AddBand(ST_MakeEmptyRaster(4, 4, 0, 0, 1), '8BUI', 0, 0), 2, 2, 9));
+----
+POLYGON ((1 -1, 2 -1, 2 -2, 1 -2, 1 -1))
 ```
 
 ----
@@ -3432,6 +4363,38 @@ Returns the topological dimension of a geometry
 
 ----
 
+### ST_NearestValue
+
+
+#### Signatures
+
+```sql
+DOUBLE ST_NearestValue (rast RASTER, pt GEOMETRY)
+DOUBLE ST_NearestValue (rast RASTER, pt GEOMETRY, exclude_nodata_value BOOLEAN)
+DOUBLE ST_NearestValue (rast RASTER, band INTEGER, pt GEOMETRY)
+DOUBLE ST_NearestValue (rast RASTER, band INTEGER, pt GEOMETRY, exclude_nodata_value BOOLEAN)
+DOUBLE ST_NearestValue (rast RASTER, columnx INTEGER, rowy INTEGER)
+DOUBLE ST_NearestValue (rast RASTER, columnx INTEGER, rowy INTEGER, exclude_nodata_value BOOLEAN)
+DOUBLE ST_NearestValue (rast RASTER, band INTEGER, columnx INTEGER, rowy INTEGER)
+DOUBLE ST_NearestValue (rast RASTER, band INTEGER, columnx INTEGER, rowy INTEGER, exclude_nodata_value BOOLEAN)
+```
+
+#### Description
+
+Returns the value of the pixel at a point or at a 1-based column and row if it is not NODATA, otherwise the value of the nearest pixel that is not NODATA.
+
+The distance is measured in world units from the point (or the centre of the given pixel) to the pixel centres. The location may be outside of the raster. Returns NULL if the band (1-based, default 1) has no such pixel.
+
+#### Example
+
+```sql
+SELECT ST_NearestValue(ST_SetValue(ST_AddBand(ST_MakeEmptyRaster(4, 4, 0, 0, 1), '8BUI', 0, 0), 4, 4, 9), 1, 1);
+----
+9.0
+```
+
+----
+
 ### ST_NGeometries
 
 
@@ -3505,6 +4468,29 @@ Returns the "normalized" representation of the geometry
 
 ----
 
+### ST_NotSameAlignmentReason
+
+
+#### Signature
+
+```sql
+VARCHAR ST_NotSameAlignmentReason (rast1 RASTER, rast2 RASTER)
+```
+
+#### Description
+
+Returns the reason why two rasters are not aligned (see ST_SameAlignment), or 'The rasters are aligned'.
+
+#### Example
+
+```sql
+SELECT ST_NotSameAlignmentReason(ST_MakeEmptyRaster(2, 2, 0, 0, 1), ST_MakeEmptyRaster(2, 2, 0.5, 0, 1));
+----
+The rasters (pixel corner coordinates) are not aligned
+```
+
+----
+
 ### ST_NPoints
 
 
@@ -3536,6 +4522,29 @@ INTEGER ST_NRings (geom GEOMETRY)
 #### Description
 
 Returns the number of rings in a polygon (exterior + interior)
+
+----
+
+### ST_NumBands
+
+
+#### Signature
+
+```sql
+INTEGER ST_NumBands (rast RASTER)
+```
+
+#### Description
+
+Returns the number of bands of the raster.
+
+#### Example
+
+```sql
+SELECT ST_NumBands(ST_AddBand(ST_MakeEmptyRaster(2, 2, 0, 0, 1), '8BUI'));
+----
+1
+```
 
 ----
 
@@ -3623,10 +4632,12 @@ Returns true if two geometries are exactly equal (same vertex order)
 ### ST_Overlaps
 
 
-#### Signature
+#### Signatures
 
 ```sql
 BOOLEAN ST_Overlaps (geom1 GEOMETRY, geom2 GEOMETRY)
+BOOLEAN ST_Overlaps (rast1 RASTER, rast2 RASTER)
+BOOLEAN ST_Overlaps (rast1 RASTER, nband1 INTEGER, rast2 RASTER, nband2 INTEGER)
 ```
 
 #### Description
@@ -3670,6 +4681,205 @@ Returns the length of the perimeter in meters using an ellipsoidal model of the 
 The input geometry is assumed to be in the [EPSG:4326](https://en.wikipedia.org/wiki/World_Geodetic_System) coordinate system (WGS84), with [latitude, longitude] axis order and the length is returned in meters. This function uses the [GeographicLib](https://geographiclib.sourceforge.io/) library, calculating the perimeter using an ellipsoidal model of the earth. This is a highly accurate method for calculating the perimeter of a polygon taking the curvature of the earth into account, but is also the slowest.
 
 Returns `0.0` for any geometry that is not a `POLYGON`, `MULTIPOLYGON` or `GEOMETRYCOLLECTION` containing polygon geometries.
+
+----
+
+### ST_PixelAsCentroid
+
+
+#### Signature
+
+```sql
+GEOMETRY ST_PixelAsCentroid (rast RASTER, x INTEGER, y INTEGER)
+```
+
+#### Description
+
+Returns the centre of a pixel (1-based column `x` and row `y`) as a point.
+
+#### Example
+
+```sql
+SELECT ST_PixelAsCentroid(ST_MakeEmptyRaster(10, 5, 100, 200, 2, -2, 0, 0), 2, 3);
+----
+POINT (103 195)
+```
+
+----
+
+### ST_PixelAsCentroids
+
+
+#### Signatures
+
+```sql
+STRUCT(geom GEOMETRY, val DOUBLE, x INTEGER, y INTEGER)[] ST_PixelAsCentroids (rast RASTER)
+STRUCT(geom GEOMETRY, val DOUBLE, x INTEGER, y INTEGER)[] ST_PixelAsCentroids (rast RASTER, band INTEGER)
+STRUCT(geom GEOMETRY, val DOUBLE, x INTEGER, y INTEGER)[] ST_PixelAsCentroids (rast RASTER, band INTEGER, exclude_nodata_value BOOLEAN)
+```
+
+#### Description
+
+Returns one entry per pixel of a band as a list of structs `(geom, val, x, y)`: the pixel's centre as a point, its value and its 1-based column and row.
+
+`band` is 1-based and defaults to 1. NODATA pixels are left out unless `exclude_nodata_value` is false. PostGIS returns a set of rows; use `UNNEST(..., recursive := true)` to get the same shape.
+
+#### Example
+
+```sql
+SELECT UNNEST(ST_PixelAsCentroids(ST_AddBand(ST_MakeEmptyRaster(2, 1, 0, 0, 1), '8BUI', 7)), recursive := true);
+----
+POINT (0.5 -0.5)    7.0    1    1
+POINT (1.5 -0.5)    7.0    2    1
+```
+
+----
+
+### ST_PixelAsPoint
+
+
+#### Signature
+
+```sql
+GEOMETRY ST_PixelAsPoint (rast RASTER, x INTEGER, y INTEGER)
+```
+
+#### Description
+
+Returns the upper-left corner of a pixel (1-based column `x` and row `y`) as a point.
+
+#### Example
+
+```sql
+SELECT ST_PixelAsPoint(ST_MakeEmptyRaster(10, 5, 100, 200, 2, -2, 0, 0), 2, 3);
+----
+POINT (102 196)
+```
+
+----
+
+### ST_PixelAsPoints
+
+
+#### Signatures
+
+```sql
+STRUCT(geom GEOMETRY, val DOUBLE, x INTEGER, y INTEGER)[] ST_PixelAsPoints (rast RASTER)
+STRUCT(geom GEOMETRY, val DOUBLE, x INTEGER, y INTEGER)[] ST_PixelAsPoints (rast RASTER, band INTEGER)
+STRUCT(geom GEOMETRY, val DOUBLE, x INTEGER, y INTEGER)[] ST_PixelAsPoints (rast RASTER, band INTEGER, exclude_nodata_value BOOLEAN)
+```
+
+#### Description
+
+Returns one entry per pixel of a band as a list of structs `(geom, val, x, y)`: the pixel's upper-left corner as a point, its value and its 1-based column and row.
+
+`band` is 1-based and defaults to 1. NODATA pixels are left out unless `exclude_nodata_value` is false. PostGIS returns a set of rows; use `UNNEST(..., recursive := true)` to get the same shape.
+
+#### Example
+
+```sql
+SELECT UNNEST(ST_PixelAsPoints(ST_AddBand(ST_MakeEmptyRaster(2, 1, 0, 0, 1), '8BUI', 7)), recursive := true);
+----
+POINT (0 0)    7.0    1    1
+POINT (1 0)    7.0    2    1
+```
+
+----
+
+### ST_PixelAsPolygon
+
+
+#### Signature
+
+```sql
+GEOMETRY ST_PixelAsPolygon (rast RASTER, x INTEGER, y INTEGER)
+```
+
+#### Description
+
+Returns the outline of a pixel (1-based column `x` and row `y`) as a polygon.
+
+#### Example
+
+```sql
+SELECT ST_PixelAsPolygon(ST_MakeEmptyRaster(10, 5, 100, 200, 2, -2, 0, 0), 2, 3);
+----
+POLYGON ((102 196, 104 196, 104 194, 102 194, 102 196))
+```
+
+----
+
+### ST_PixelAsPolygons
+
+
+#### Signatures
+
+```sql
+STRUCT(geom GEOMETRY, val DOUBLE, x INTEGER, y INTEGER)[] ST_PixelAsPolygons (rast RASTER)
+STRUCT(geom GEOMETRY, val DOUBLE, x INTEGER, y INTEGER)[] ST_PixelAsPolygons (rast RASTER, band INTEGER)
+STRUCT(geom GEOMETRY, val DOUBLE, x INTEGER, y INTEGER)[] ST_PixelAsPolygons (rast RASTER, band INTEGER, exclude_nodata_value BOOLEAN)
+```
+
+#### Description
+
+Returns one entry per pixel of a band as a list of structs `(geom, val, x, y)`: the pixel's outline as a polygon, its value and its 1-based column and row.
+
+`band` is 1-based and defaults to 1. NODATA pixels are left out unless `exclude_nodata_value` is false. PostGIS returns a set of rows; use `UNNEST(..., recursive := true)` to get the same shape.
+
+#### Example
+
+```sql
+SELECT UNNEST(ST_PixelAsPolygons(ST_AddBand(ST_MakeEmptyRaster(2, 1, 0, 0, 1), '8BUI', 7)), recursive := true);
+----
+POLYGON ((0 0, 1 0, 1 -1, 0 -1, 0 0))    7.0    1    1
+POLYGON ((1 0, 2 0, 2 -1, 1 -1, 1 0))    7.0    2    1
+```
+
+----
+
+### ST_PixelHeight
+
+
+#### Signature
+
+```sql
+DOUBLE ST_PixelHeight (rast RASTER)
+```
+
+#### Description
+
+Returns the height of a pixel in world units, taking the skew into account: `sqrt(scaley^2 + skewx^2)`.
+
+#### Example
+
+```sql
+SELECT ST_PixelHeight(ST_MakeEmptyRaster(10, 5, 0, 0, 2, -3, 4, 0));
+----
+5.0
+```
+
+----
+
+### ST_PixelWidth
+
+
+#### Signature
+
+```sql
+DOUBLE ST_PixelWidth (rast RASTER)
+```
+
+#### Description
+
+Returns the width of a pixel in world units, taking the skew into account: `sqrt(scalex^2 + skewy^2)`.
+
+#### Example
+
+```sql
+SELECT ST_PixelWidth(ST_MakeEmptyRaster(10, 5, 0, 0, 3, -2, 0, 4));
+----
+5.0
+```
 
 ----
 
@@ -3809,10 +5019,12 @@ MULTIPOINT Z EMPTY
 ### ST_Polygon
 
 
-#### Signature
+#### Signatures
 
 ```sql
 GEOMETRY ST_Polygon (line GEOMETRY)
+GEOMETRY ST_Polygon (rast RASTER)
+GEOMETRY ST_Polygon (rast RASTER, band INTEGER)
 ```
 
 #### Description
@@ -3921,6 +5133,40 @@ SELECT ST_QuadKey(ST_Point(11.08, 49.45), 10);
 
 ----
 
+### ST_Quantile
+
+
+#### Signatures
+
+```sql
+STRUCT(quantile DOUBLE, "value" DOUBLE)[] ST_Quantile (rast RASTER)
+STRUCT(quantile DOUBLE, "value" DOUBLE)[] ST_Quantile (rast RASTER, nband INTEGER)
+STRUCT(quantile DOUBLE, "value" DOUBLE)[] ST_Quantile (rast RASTER, nband INTEGER, exclude_nodata_value BOOLEAN)
+STRUCT(quantile DOUBLE, "value" DOUBLE)[] ST_Quantile (rast RASTER, nband INTEGER, exclude_nodata_value BOOLEAN, quantiles DOUBLE[])
+STRUCT(quantile DOUBLE, "value" DOUBLE)[] ST_Quantile (rast RASTER, nband INTEGER, quantiles DOUBLE[])
+STRUCT(quantile DOUBLE, "value" DOUBLE)[] ST_Quantile (rast RASTER, quantiles DOUBLE[])
+DOUBLE ST_Quantile (rast RASTER, nband INTEGER, exclude_nodata_value BOOLEAN, quantile DOUBLE)
+DOUBLE ST_Quantile (rast RASTER, nband INTEGER, quantile DOUBLE)
+DOUBLE ST_Quantile (rast RASTER, exclude_nodata_value BOOLEAN, quantile DOUBLE)
+DOUBLE ST_Quantile (rast RASTER, quantile DOUBLE)
+```
+
+#### Description
+
+Returns quantiles of the pixel values of a band.
+
+With a single `quantile` between 0 and 1 the result is its value. With a list of `quantiles`, or without any (the quartiles 0, 0.25, 0.5, 0.75 and 1), the result is a list of structs `(quantile, value)` in ascending order; PostGIS returns a set of rows. Quantiles are interpolated linearly between the closest ranks, like `quantile_cont`. `nband` is 1-based and defaults to 1; NODATA pixels are left out unless `exclude_nodata_value` is false. The value is NULL when no pixel is counted.
+
+#### Example
+
+```sql
+SELECT ST_Quantile(ST_SetValue(ST_AddBand(ST_MakeEmptyRaster(2, 2, 0, 0, 1), '8BUI', 1), 1, 1, 5), 0.5);
+----
+1.0
+```
+
+----
+
 ### ST_QuantizeCoordinates
 
 
@@ -3938,6 +5184,106 @@ Rounds all coordinates to the given number of decimal places
 
 ```sql
 SELECT ST_AsText(ST_QuantizeCoordinates(ST_Point(1.23456, 2.78901), 2))
+```
+
+----
+
+### ST_RasterToWorldCoord
+
+
+#### Signature
+
+```sql
+STRUCT(longitude DOUBLE, latitude DOUBLE) ST_RasterToWorldCoord (rast RASTER, columnx INTEGER, rowy INTEGER)
+```
+
+#### Description
+
+Returns the world coordinates of the upper-left corner of a pixel as a struct. Pixel columns and rows are numbered from 1 and may lie outside of the raster.
+
+#### Example
+
+```sql
+SELECT ST_RasterToWorldCoord(ST_MakeEmptyRaster(10, 5, 100, 200, 2, -2, 0, 0), 2, 3);
+----
+{'longitude': 102.0, 'latitude': 196.0}
+```
+
+----
+
+### ST_RasterToWorldCoordX
+
+
+#### Signatures
+
+```sql
+DOUBLE ST_RasterToWorldCoordX (rast RASTER, xr INTEGER, yr INTEGER)
+DOUBLE ST_RasterToWorldCoordX (rast RASTER, xr INTEGER)
+```
+
+#### Description
+
+Returns the world X coordinate of the upper-left corner of a pixel (columns and rows numbered from 1). The row may be omitted if the raster is not skewed.
+
+#### Example
+
+```sql
+SELECT ST_RasterToWorldCoordX(ST_MakeEmptyRaster(10, 5, 100, 200, 2, -2, 0, 0), 2);
+----
+102.0
+```
+
+----
+
+### ST_RasterToWorldCoordY
+
+
+#### Signatures
+
+```sql
+DOUBLE ST_RasterToWorldCoordY (rast RASTER, xr INTEGER, yr INTEGER)
+DOUBLE ST_RasterToWorldCoordY (rast RASTER, yr INTEGER)
+```
+
+#### Description
+
+Returns the world Y coordinate of the upper-left corner of a pixel (columns and rows numbered from 1). The column may be omitted if the raster is not skewed.
+
+#### Example
+
+```sql
+SELECT ST_RasterToWorldCoordY(ST_MakeEmptyRaster(10, 5, 100, 200, 2, -2, 0, 0), 3);
+----
+196.0
+```
+
+----
+
+### ST_Reclass
+
+
+#### Signatures
+
+```sql
+RASTER ST_Reclass (rast RASTER, nband INTEGER, reclassexpr VARCHAR, pixeltype VARCHAR)
+RASTER ST_Reclass (rast RASTER, nband INTEGER, reclassexpr VARCHAR, pixeltype VARCHAR, nodataval DOUBLE)
+RASTER ST_Reclass (rast RASTER, reclassexpr VARCHAR, pixeltype VARCHAR)
+```
+
+#### Description
+
+Returns the raster with the values of band `nband` (1-based, default 1) mapped to new values, stored with a new pixel type.
+
+`reclassexpr` is a comma-separated list of `range:map_range` entries. A range is a single value or `min-max`; its values are mapped linearly onto `map_range` and the first matching entry wins. The minimum is included unless the range starts with `(`, the maximum is excluded unless the range ends with `]`: `[0-100]` is 0 <= x <= 100, `(0-100]` is 0 < x <= 100, `0-100` and `[0-100)` are 0 <= x < 100. Negative numbers are written as is: `-10--5:1-2`. For integer pixel types the result is rounded.
+
+Pixels that match no entry, and NODATA pixels, are set to `nodataval`, which becomes the NODATA value of the band. Without `nodataval` the band has no NODATA value, unmatched pixels are 0 and NODATA pixels are reclassified like any other value. The other bands are unchanged and must have the same pixel type as the result. The `reclassarg[]` variant of PostGIS is not available: nest calls instead.
+
+#### Example
+
+```sql
+SELECT ST_DumpValues(ST_Reclass(ST_SetValue(ST_AddBand(ST_MakeEmptyRaster(2, 1, 0, 0, 1), '32BF', 50), 2, 1, 150), 1, '[0-100]:1-11, (100-200]:20', '8BUI', 0));
+----
+[[6.0, 20.0]]
 ```
 
 ----
@@ -4032,6 +5378,146 @@ Remove repeated points from a LINESTRING.
 
 ----
 
+### ST_Resample
+
+
+#### Signatures
+
+```sql
+RASTER ST_Resample (rast RASTER, scalex DOUBLE, scaley DOUBLE)
+RASTER ST_Resample (rast RASTER, scalex DOUBLE, scaley DOUBLE, gridx DOUBLE)
+RASTER ST_Resample (rast RASTER, scalex DOUBLE, scaley DOUBLE, gridx DOUBLE, gridy DOUBLE)
+RASTER ST_Resample (rast RASTER, scalex DOUBLE, scaley DOUBLE, gridx DOUBLE, gridy DOUBLE, skewx DOUBLE)
+RASTER ST_Resample (rast RASTER, scalex DOUBLE, scaley DOUBLE, gridx DOUBLE, gridy DOUBLE, skewx DOUBLE, skewy DOUBLE)
+RASTER ST_Resample (rast RASTER, scalex DOUBLE, scaley DOUBLE, gridx DOUBLE, gridy DOUBLE, skewx DOUBLE, skewy DOUBLE, algorithm VARCHAR)
+RASTER ST_Resample (rast RASTER, scalex DOUBLE, scaley DOUBLE, gridx DOUBLE, gridy DOUBLE, skewx DOUBLE, skewy DOUBLE, algorithm VARCHAR, maxerr DOUBLE)
+RASTER ST_Resample (rast RASTER, width INTEGER, height INTEGER)
+RASTER ST_Resample (rast RASTER, width INTEGER, height INTEGER, gridx DOUBLE)
+RASTER ST_Resample (rast RASTER, width INTEGER, height INTEGER, gridx DOUBLE, gridy DOUBLE)
+RASTER ST_Resample (rast RASTER, width INTEGER, height INTEGER, gridx DOUBLE, gridy DOUBLE, skewx DOUBLE)
+RASTER ST_Resample (rast RASTER, width INTEGER, height INTEGER, gridx DOUBLE, gridy DOUBLE, skewx DOUBLE, skewy DOUBLE)
+RASTER ST_Resample (rast RASTER, width INTEGER, height INTEGER, gridx DOUBLE, gridy DOUBLE, skewx DOUBLE, skewy DOUBLE, algorithm VARCHAR)
+RASTER ST_Resample (rast RASTER, width INTEGER, height INTEGER, gridx DOUBLE, gridy DOUBLE, skewx DOUBLE, skewy DOUBLE, algorithm VARCHAR, maxerr DOUBLE)
+RASTER ST_Resample (rast RASTER, ref RASTER)
+RASTER ST_Resample (rast RASTER, ref RASTER, algorithm VARCHAR)
+RASTER ST_Resample (rast RASTER, ref RASTER, algorithm VARCHAR, maxerr DOUBLE)
+RASTER ST_Resample (rast RASTER, ref RASTER, algorithm VARCHAR, maxerr DOUBLE, usescale BOOLEAN)
+RASTER ST_Resample (rast RASTER, ref RASTER, usescale BOOLEAN)
+RASTER ST_Resample (rast RASTER, ref RASTER, usescale BOOLEAN, algorithm VARCHAR)
+RASTER ST_Resample (rast RASTER, ref RASTER, usescale BOOLEAN, algorithm VARCHAR, maxerr DOUBLE)
+```
+
+#### Description
+
+Resamples a raster onto another pixel grid that covers the same area, and returns the new raster.
+
+The target grid is given by a pixel size (`scalex`, `scaley`, in world units; 0 keeps the current size and the sign is ignored), by a size in pixels (`width`, `height`), or by a reference raster `ref` whose alignment, skew, coordinate system and (unless `usescale` is false) pixel size are used. `gridx`/`gridy` are the world coordinates of any pixel corner of the target grid (default: the upper-left corner of the raster's extent) and `skewx`/`skewy` its skew (default 0). The result is north-up (negative `scaley`) unless a reference raster or a skew says otherwise.
+
+`algorithm` is one of `NearestNeighbor` (the default), `Bilinear`, `Cubic`, `CubicSpline`, `Lanczos`, `Average`, `Mode`, `Max`, `Min`. `maxerr` is the error, in pixels, tolerated by the approximation of the coordinate transformation (default 0.125). Pixels outside of the source, and NODATA pixels, are NODATA in the result when the band has a NODATA value, and 0 otherwise.
+
+#### Example
+
+```sql
+SELECT ST_Width(r), ST_ScaleX(r) FROM (SELECT ST_Resample(ST_AddBand(ST_MakeEmptyRaster(10, 10, 0, 0, 1), '8BUI', 1), 2.0, 2.0) AS r);
+----
+5    2.0
+```
+
+----
+
+### ST_Rescale
+
+
+#### Signatures
+
+```sql
+RASTER ST_Rescale (rast RASTER, scalexy DOUBLE)
+RASTER ST_Rescale (rast RASTER, scalexy DOUBLE, algorithm VARCHAR)
+RASTER ST_Rescale (rast RASTER, scalexy DOUBLE, algorithm VARCHAR, maxerr DOUBLE)
+RASTER ST_Rescale (rast RASTER, scalex DOUBLE, scaley DOUBLE)
+RASTER ST_Rescale (rast RASTER, scalex DOUBLE, scaley DOUBLE, algorithm VARCHAR)
+RASTER ST_Rescale (rast RASTER, scalex DOUBLE, scaley DOUBLE, algorithm VARCHAR, maxerr DOUBLE)
+```
+
+#### Description
+
+Resamples a raster to a new pixel size, in world units, keeping its extent and upper-left corner. The sign of the scale is ignored: the result is north-up.
+
+See ST_Resample for `algorithm` and `maxerr`. Use ST_SetScale to change the georeference without resampling.
+
+#### Example
+
+```sql
+SELECT ST_Width(ST_Rescale(ST_AddBand(ST_MakeEmptyRaster(10, 10, 0, 0, 1), '8BUI', 1), 0.5, 'Bilinear'));
+----
+20
+```
+
+----
+
+### ST_Resize
+
+
+#### Signatures
+
+```sql
+RASTER ST_Resize (rast RASTER, width INTEGER, height INTEGER)
+RASTER ST_Resize (rast RASTER, width INTEGER, height INTEGER, algorithm VARCHAR)
+RASTER ST_Resize (rast RASTER, width INTEGER, height INTEGER, algorithm VARCHAR, maxerr DOUBLE)
+RASTER ST_Resize (rast RASTER, percentwidth DOUBLE, percentheight DOUBLE)
+RASTER ST_Resize (rast RASTER, percentwidth DOUBLE, percentheight DOUBLE, algorithm VARCHAR)
+RASTER ST_Resize (rast RASTER, percentwidth DOUBLE, percentheight DOUBLE, algorithm VARCHAR, maxerr DOUBLE)
+RASTER ST_Resize (rast RASTER, textwidth VARCHAR, textheight VARCHAR)
+RASTER ST_Resize (rast RASTER, textwidth VARCHAR, textheight VARCHAR, algorithm VARCHAR)
+RASTER ST_Resize (rast RASTER, textwidth VARCHAR, textheight VARCHAR, algorithm VARCHAR, maxerr DOUBLE)
+```
+
+#### Description
+
+Resamples a raster to a new width and height, keeping its extent.
+
+The size is given in pixels (integers), as fractions of the current size (doubles: 0.5 halves the size), or as text holding either a number of pixels or a percentage (`'50%'`). The result is north-up. See ST_Resample for `algorithm` and `maxerr`.
+
+#### Example
+
+```sql
+SELECT ST_Width(r), ST_Height(r) FROM (SELECT ST_Resize(ST_AddBand(ST_MakeEmptyRaster(10, 10, 0, 0, 1), '8BUI', 1), '50%', '20') AS r);
+----
+5    20
+```
+
+----
+
+### ST_Reskew
+
+
+#### Signatures
+
+```sql
+RASTER ST_Reskew (rast RASTER, skewxy DOUBLE)
+RASTER ST_Reskew (rast RASTER, skewxy DOUBLE, algorithm VARCHAR)
+RASTER ST_Reskew (rast RASTER, skewxy DOUBLE, algorithm VARCHAR, maxerr DOUBLE)
+RASTER ST_Reskew (rast RASTER, skewx DOUBLE, skewy DOUBLE)
+RASTER ST_Reskew (rast RASTER, skewx DOUBLE, skewy DOUBLE, algorithm VARCHAR)
+RASTER ST_Reskew (rast RASTER, skewx DOUBLE, skewy DOUBLE, algorithm VARCHAR, maxerr DOUBLE)
+```
+
+#### Description
+
+Resamples a raster onto a grid with the given skew (rotation terms), keeping the pixel size and covering the same extent.
+
+See ST_Resample for `algorithm` and `maxerr`. Use ST_SetSkew to change the georeference without resampling.
+
+#### Example
+
+```sql
+SELECT ST_SkewX(ST_Reskew(ST_AddBand(ST_MakeEmptyRaster(10, 10, 0, 0, 1), '8BUI', 1), 0.1, 0.1));
+----
+0.1
+```
+
+----
+
 ### ST_Reverse
 
 
@@ -4044,6 +5530,126 @@ GEOMETRY ST_Reverse (geom GEOMETRY)
 #### Description
 
 Returns the geometry with the order of its vertices reversed
+
+----
+
+### ST_Rotation
+
+
+#### Signature
+
+```sql
+DOUBLE ST_Rotation (rast RASTER)
+```
+
+#### Description
+
+Returns the rotation of the raster in radians, computed from the pixel column direction (`scalex`, `skewy`). A raster that is not rotated returns 0.
+
+#### Example
+
+```sql
+SELECT ST_Rotation(ST_MakeEmptyRaster(10, 5, 0, 0, 2, -2, 0, 0));
+----
+0.0
+```
+
+----
+
+### ST_Roughness
+
+
+#### Signatures
+
+```sql
+RASTER ST_Roughness (rast RASTER)
+RASTER ST_Roughness (rast RASTER, nband INTEGER)
+RASTER ST_Roughness (rast RASTER, nband INTEGER, pixeltype VARCHAR)
+RASTER ST_Roughness (rast RASTER, nband INTEGER, pixeltype VARCHAR, interpolate_nodata BOOLEAN)
+```
+
+#### Description
+
+Returns the roughness of an elevation band: the difference between the largest and the smallest value in the 3x3 neighbourhood of each pixel.
+
+Computed by GDAL's DEM processing on the 3x3 neighbourhood of each pixel. Pixels on the border and next to NODATA pixels are computed from a neighbourhood that GDAL extrapolates, where PostGIS substitutes the value of the centre pixel, so those pixels can differ from PostGIS. `nband` is 1-based (default 1) and `pixeltype` the pixel type of the result (default `32BF`). NODATA pixels are NODATA in the result (-9999, or the largest value of the pixel type if it cannot hold -9999). `interpolate_nodata` must be false and the `customextent` variants are not available.
+
+#### Example
+
+```sql
+SELECT ST_Value(ST_Roughness(ST_SetValue(ST_AddBand(ST_MakeEmptyRaster(3, 3, 0, 3, 1), '32BF', 1), 2, 2, 9)), 2, 2);
+----
+8.0
+```
+
+----
+
+### ST_SameAlignment
+
+
+#### Signature
+
+```sql
+BOOLEAN ST_SameAlignment (rast1 RASTER, rast2 RASTER)
+```
+
+#### Description
+
+Returns true if two rasters have the same coordinate system, scale and skew and their pixel grids line up (a pixel corner of one falls on a pixel corner of the other). The rasters do not need to overlap.
+
+#### Example
+
+```sql
+SELECT ST_SameAlignment(ST_MakeEmptyRaster(2, 2, 0, 0, 1), ST_MakeEmptyRaster(3, 3, 5, -7, 1));
+----
+true
+```
+
+----
+
+### ST_ScaleX
+
+
+#### Signature
+
+```sql
+DOUBLE ST_ScaleX (rast RASTER)
+```
+
+#### Description
+
+Returns the X term of the pixel size, in world units per pixel column.
+
+#### Example
+
+```sql
+SELECT ST_ScaleX(ST_MakeEmptyRaster(10, 5, 0, 0, 2, -3, 0, 0));
+----
+2.0
+```
+
+----
+
+### ST_ScaleY
+
+
+#### Signature
+
+```sql
+DOUBLE ST_ScaleY (rast RASTER)
+```
+
+#### Description
+
+Returns the Y term of the pixel size, in world units per pixel row (negative for north-up rasters).
+
+#### Example
+
+```sql
+SELECT ST_ScaleY(ST_MakeEmptyRaster(10, 5, 0, 0, 2, -3, 0, 0));
+----
+-3.0
+```
 
 ----
 
@@ -4084,6 +5690,58 @@ Densifies a geometry by adding vertices so no segment exceeds max_segment_length
 
 ----
 
+### ST_SetBandNoDataValue
+
+
+#### Signatures
+
+```sql
+RASTER ST_SetBandNoDataValue (rast RASTER, nodatavalue DOUBLE)
+RASTER ST_SetBandNoDataValue (rast RASTER, band INTEGER, nodatavalue DOUBLE)
+RASTER ST_SetBandNoDataValue (rast RASTER, band INTEGER, nodatavalue DOUBLE, forcechecking BOOLEAN)
+```
+
+#### Description
+
+Returns the raster with the NODATA value of a band (1-based, default 1) set to `nodatavalue`. NULL removes the NODATA value. The pixel values do not change. `forcechecking` is accepted for compatibility and ignored.
+
+#### Example
+
+```sql
+SELECT ST_BandNoDataValue(ST_SetBandNoDataValue(ST_AddBand(ST_MakeEmptyRaster(2, 2, 0, 0, 1), '8BUI'), 255));
+----
+255.0
+```
+
+----
+
+### ST_SetGeoReference
+
+
+#### Signatures
+
+```sql
+RASTER ST_SetGeoReference (rast RASTER, georef VARCHAR)
+RASTER ST_SetGeoReference (rast RASTER, georef VARCHAR, format VARCHAR)
+RASTER ST_SetGeoReference (rast RASTER, upperleftx DOUBLE, upperlefty DOUBLE, scalex DOUBLE, scaley DOUBLE, skewx DOUBLE, skewy DOUBLE)
+```
+
+#### Description
+
+Returns the raster with a new georeference. The pixels are not resampled.
+
+`georef` holds the six world-file terms `scalex skewy skewx scaley upperleftx upperlefty` separated by whitespace. `format` is `GDAL` (the default, the upper-left term is the corner of the upper-left pixel) or `ESRI` (it is the centre of that pixel).
+
+#### Example
+
+```sql
+SELECT ST_UpperLeftX(ST_SetGeoReference(ST_MakeEmptyRaster(2, 2, 0, 0, 1), '2 0 0 -2 100 200'));
+----
+100.0
+```
+
+----
+
 ### ST_SetPoint
 
 
@@ -4105,13 +5763,62 @@ SELECT ST_AsText(ST_SetPoint(ST_GeomFromText('LINESTRING(0 0, 1 1, 2 2)'), 1, ST
 
 ----
 
+### ST_SetScale
+
+
+#### Signatures
+
+```sql
+RASTER ST_SetScale (rast RASTER, scale DOUBLE)
+RASTER ST_SetScale (rast RASTER, scalex DOUBLE, scaley DOUBLE)
+```
+
+#### Description
+
+Returns the raster with a new pixel size, in world units. The pixels are not resampled (see ST_Rescale). The single-value variant sets both `scalex` and `scaley` to the same value.
+
+#### Example
+
+```sql
+SELECT ST_ScaleY(ST_SetScale(ST_MakeEmptyRaster(2, 2, 0, 0, 1), 2, -3));
+----
+-3.0
+```
+
+----
+
+### ST_SetSkew
+
+
+#### Signatures
+
+```sql
+RASTER ST_SetSkew (rast RASTER, skew DOUBLE)
+RASTER ST_SetSkew (rast RASTER, skewx DOUBLE, skewy DOUBLE)
+```
+
+#### Description
+
+Returns the raster with new skew terms. The pixels are not resampled (see ST_Reskew). The single-value variant sets both `skewx` and `skewy` to the same value.
+
+#### Example
+
+```sql
+SELECT ST_SkewX(ST_SetSkew(ST_MakeEmptyRaster(2, 2, 0, 0, 1), 0.5, 0.25));
+----
+0.5
+```
+
+----
+
 ### ST_SetSRID
 
 
-#### Signature
+#### Signatures
 
 ```sql
 GEOMETRY ST_SetSRID (geom GEOMETRY, srid INTEGER)
+RASTER ST_SetSRID (rast RASTER, srid INTEGER)
 ```
 
 #### Description
@@ -4122,6 +5829,57 @@ Sets the SRID of a geometry (no-op in DuckDB — use GEOMETRY('EPSG:XXXX') type 
 
 ```sql
 SELECT ST_SetSRID(ST_Point(1, 2), 4326)
+```
+
+----
+
+### ST_SetUpperLeft
+
+
+#### Signature
+
+```sql
+RASTER ST_SetUpperLeft (rast RASTER, upperleftx DOUBLE, upperlefty DOUBLE)
+```
+
+#### Description
+
+Returns the raster moved so that its upper-left corner is at the given world coordinates.
+
+#### Example
+
+```sql
+SELECT ST_UpperLeftY(ST_SetUpperLeft(ST_MakeEmptyRaster(2, 2, 0, 0, 1), 100, 200));
+----
+200.0
+```
+
+----
+
+### ST_SetValue
+
+
+#### Signatures
+
+```sql
+RASTER ST_SetValue (rast RASTER, x INTEGER, y INTEGER, newvalue DOUBLE)
+RASTER ST_SetValue (rast RASTER, band INTEGER, x INTEGER, y INTEGER, newvalue DOUBLE)
+RASTER ST_SetValue (rast RASTER, geom GEOMETRY, newvalue DOUBLE)
+RASTER ST_SetValue (rast RASTER, band INTEGER, geom GEOMETRY, newvalue DOUBLE)
+```
+
+#### Description
+
+Returns the raster with one pixel (1-based column `x` and row `y`), or every pixel covered by a geometry, set to `newvalue` in a band (1-based, default 1).
+
+A NULL `newvalue` sets the pixels to the band's NODATA value. The value is clamped to the range of the pixel type. For polygons the pixels whose centre is inside are set, for lines and points the pixels they pass through. A pixel outside of the raster is an error.
+
+#### Example
+
+```sql
+SELECT ST_DumpValues(ST_SetValue(ST_AddBand(ST_MakeEmptyRaster(2, 2, 0, 0, 1), '8BUI'), 1, 2, 5));
+----
+[[0.0, 0.0], [5.0, 0.0]]
 ```
 
 ----
@@ -4243,6 +6001,84 @@ SELECT ST_AsText(ST_SimplifyVW(ST_GeomFromText('LINESTRING(0 0, 1 1, 2 0, 3 1, 4
 
 ----
 
+### ST_SkewX
+
+
+#### Signature
+
+```sql
+DOUBLE ST_SkewX (rast RASTER)
+```
+
+#### Description
+
+Returns the X skew of the georeference: the world X offset per pixel row.
+
+#### Example
+
+```sql
+SELECT ST_SkewX(ST_MakeEmptyRaster(10, 5, 0, 0, 2, -3, 0.5, 0.25));
+----
+0.5
+```
+
+----
+
+### ST_SkewY
+
+
+#### Signature
+
+```sql
+DOUBLE ST_SkewY (rast RASTER)
+```
+
+#### Description
+
+Returns the Y skew of the georeference: the world Y offset per pixel column.
+
+#### Example
+
+```sql
+SELECT ST_SkewY(ST_MakeEmptyRaster(10, 5, 0, 0, 2, -3, 0.5, 0.25));
+----
+0.25
+```
+
+----
+
+### ST_Slope
+
+
+#### Signatures
+
+```sql
+RASTER ST_Slope (rast RASTER)
+RASTER ST_Slope (rast RASTER, nband INTEGER)
+RASTER ST_Slope (rast RASTER, nband INTEGER, pixeltype VARCHAR)
+RASTER ST_Slope (rast RASTER, nband INTEGER, pixeltype VARCHAR, units VARCHAR)
+RASTER ST_Slope (rast RASTER, nband INTEGER, pixeltype VARCHAR, units VARCHAR, scale DOUBLE)
+RASTER ST_Slope (rast RASTER, nband INTEGER, pixeltype VARCHAR, units VARCHAR, scale DOUBLE, interpolate_nodata BOOLEAN)
+```
+
+#### Description
+
+Returns the slope of an elevation band, using Horn's formula.
+
+`units` is `DEGREES` (the default), `RADIANS` or `PERCENT`. `scale` is the ratio of vertical units to horizontal units (default 1; use 111120 for elevations in metres on a longitude/latitude grid).
+
+Computed by GDAL's DEM processing on the 3x3 neighbourhood of each pixel. Pixels on the border and next to NODATA pixels are computed from a neighbourhood that GDAL extrapolates, where PostGIS substitutes the value of the centre pixel, so those pixels can differ from PostGIS. `nband` is 1-based (default 1) and `pixeltype` the pixel type of the result (default `32BF`). NODATA pixels are NODATA in the result (-9999, or the largest value of the pixel type if it cannot hold -9999). `interpolate_nodata` must be false and the `customextent` variants are not available.
+
+#### Example
+
+```sql
+SELECT round(ST_Value(ST_Slope(ST_SetValue(ST_SetValue(ST_AddBand(ST_MakeEmptyRaster(3, 3, 0, 3, 1), '32BF'), ST_MakeEnvelope(1, 0, 2, 3), 1), ST_MakeEnvelope(2, 0, 3, 3), 2), 1, '32BF', 'DEGREES'), 2, 2), 3);
+----
+45.0
+```
+
+----
+
 ### ST_Snap
 
 
@@ -4261,10 +6097,21 @@ Snaps the vertices and segments of a geometry to another geometry's vertices wit
 ### ST_SnapToGrid
 
 
-#### Signature
+#### Signatures
 
 ```sql
 GEOMETRY ST_SnapToGrid (geom GEOMETRY, size DOUBLE)
+RASTER ST_SnapToGrid (rast RASTER, gridx DOUBLE, gridy DOUBLE)
+RASTER ST_SnapToGrid (rast RASTER, gridx DOUBLE, gridy DOUBLE, algorithm VARCHAR)
+RASTER ST_SnapToGrid (rast RASTER, gridx DOUBLE, gridy DOUBLE, algorithm VARCHAR, maxerr DOUBLE)
+RASTER ST_SnapToGrid (rast RASTER, gridx DOUBLE, gridy DOUBLE, algorithm VARCHAR, maxerr DOUBLE, scalex DOUBLE)
+RASTER ST_SnapToGrid (rast RASTER, gridx DOUBLE, gridy DOUBLE, algorithm VARCHAR, maxerr DOUBLE, scalex DOUBLE, scaley DOUBLE)
+RASTER ST_SnapToGrid (rast RASTER, gridx DOUBLE, gridy DOUBLE, scalex DOUBLE, scaley DOUBLE)
+RASTER ST_SnapToGrid (rast RASTER, gridx DOUBLE, gridy DOUBLE, scalex DOUBLE, scaley DOUBLE, algorithm VARCHAR)
+RASTER ST_SnapToGrid (rast RASTER, gridx DOUBLE, gridy DOUBLE, scalex DOUBLE, scaley DOUBLE, algorithm VARCHAR, maxerr DOUBLE)
+RASTER ST_SnapToGrid (rast RASTER, gridx DOUBLE, gridy DOUBLE, scalexy DOUBLE)
+RASTER ST_SnapToGrid (rast RASTER, gridx DOUBLE, gridy DOUBLE, scalexy DOUBLE, algorithm VARCHAR)
+RASTER ST_SnapToGrid (rast RASTER, gridx DOUBLE, gridy DOUBLE, scalexy DOUBLE, algorithm VARCHAR, maxerr DOUBLE)
 ```
 
 #### Description
@@ -4297,10 +6144,11 @@ SELECT ST_AsText(ST_Split(ST_GeomFromText('LINESTRING(0 0, 10 0)'), ST_Point(5, 
 ### ST_SRID
 
 
-#### Signature
+#### Signatures
 
 ```sql
 INTEGER ST_SRID (geom GEOMETRY)
+INTEGER ST_SRID (rast RASTER)
 ```
 
 #### Description
@@ -4367,6 +6215,34 @@ SELECT ST_Summary(ST_Point(1, 2))
 
 ----
 
+### ST_SummaryStats
+
+
+#### Signatures
+
+```sql
+STRUCT(count BIGINT, sum DOUBLE, mean DOUBLE, stddev DOUBLE, min DOUBLE, max DOUBLE) ST_SummaryStats (rast RASTER)
+STRUCT(count BIGINT, sum DOUBLE, mean DOUBLE, stddev DOUBLE, min DOUBLE, max DOUBLE) ST_SummaryStats (rast RASTER, nband INTEGER)
+STRUCT(count BIGINT, sum DOUBLE, mean DOUBLE, stddev DOUBLE, min DOUBLE, max DOUBLE) ST_SummaryStats (rast RASTER, nband INTEGER, exclude_nodata_value BOOLEAN)
+STRUCT(count BIGINT, sum DOUBLE, mean DOUBLE, stddev DOUBLE, min DOUBLE, max DOUBLE) ST_SummaryStats (rast RASTER, exclude_nodata_value BOOLEAN)
+```
+
+#### Description
+
+Returns the count, sum, mean, standard deviation, minimum and maximum of the pixel values of a band, as a struct `(count, sum, mean, stddev, min, max)`.
+
+`nband` is 1-based and defaults to 1. NODATA pixels are left out unless `exclude_nodata_value` is false. `stddev` is the population standard deviation. When no pixel is counted, `count` is 0 and the other fields are NULL.
+
+#### Example
+
+```sql
+SELECT ST_SummaryStats(ST_SetValue(ST_AddBand(ST_MakeEmptyRaster(2, 1, 0, 0, 1), '8BUI', 1), 1, 1, 5));
+----
+{'count': 2, 'sum': 6.0, 'mean': 3.0, 'stddev': 2.0, 'min': 1.0, 'max': 5.0}
+```
+
+----
+
 ### ST_SwapOrdinates
 
 
@@ -4400,6 +6276,39 @@ GEOMETRY ST_SymDifference (geom1 GEOMETRY, geom2 GEOMETRY)
 #### Description
 
 Returns the symmetric difference of two geometries
+
+----
+
+### ST_Tile
+
+
+#### Signatures
+
+```sql
+RASTER[] ST_Tile (rast RASTER, width INTEGER, height INTEGER)
+RASTER[] ST_Tile (rast RASTER, width INTEGER, height INTEGER, padwithnodata BOOLEAN)
+RASTER[] ST_Tile (rast RASTER, width INTEGER, height INTEGER, padwithnodata BOOLEAN, nodataval DOUBLE)
+RASTER[] ST_Tile (rast RASTER, nband INTEGER, width INTEGER, height INTEGER)
+RASTER[] ST_Tile (rast RASTER, nband INTEGER, width INTEGER, height INTEGER, padwithnodata BOOLEAN)
+RASTER[] ST_Tile (rast RASTER, nband INTEGER, width INTEGER, height INTEGER, padwithnodata BOOLEAN, nodataval DOUBLE)
+RASTER[] ST_Tile (rast RASTER, nbands INTEGER[], width INTEGER, height INTEGER)
+RASTER[] ST_Tile (rast RASTER, nbands INTEGER[], width INTEGER, height INTEGER, padwithnodata BOOLEAN)
+RASTER[] ST_Tile (rast RASTER, nbands INTEGER[], width INTEGER, height INTEGER, padwithnodata BOOLEAN, nodataval DOUBLE)
+```
+
+#### Description
+
+Splits a raster into tiles of `width` x `height` pixels and returns them as a list, row by row from the upper-left corner. PostGIS returns a set of rows: use `UNNEST` to get the same shape.
+
+With `nband` or `nbands` (1-based) the tiles only have those bands. Tiles on the right and bottom edges are smaller unless `padwithnodata` is true, in which case they are padded with `nodataval` (default: the band's NODATA value, or the smallest value of the pixel type).
+
+#### Example
+
+```sql
+SELECT len(ST_Tile(ST_AddBand(ST_MakeEmptyRaster(10, 10, 0, 0, 1), '8BUI'), 4, 4));
+----
+9
+```
 
 ----
 
@@ -4444,15 +6353,45 @@ SELECT ST_TileEnvelope(2, 3, 1);
 ### ST_Touches
 
 
-#### Signature
+#### Signatures
 
 ```sql
 BOOLEAN ST_Touches (geom1 GEOMETRY, geom2 GEOMETRY)
+BOOLEAN ST_Touches (rast1 RASTER, rast2 RASTER)
+BOOLEAN ST_Touches (rast1 RASTER, nband1 INTEGER, rast2 RASTER, nband2 INTEGER)
 ```
 
 #### Description
 
 Returns true if the geometries touch
+
+----
+
+### ST_TPI
+
+
+#### Signatures
+
+```sql
+RASTER ST_TPI (rast RASTER)
+RASTER ST_TPI (rast RASTER, nband INTEGER)
+RASTER ST_TPI (rast RASTER, nband INTEGER, pixeltype VARCHAR)
+RASTER ST_TPI (rast RASTER, nband INTEGER, pixeltype VARCHAR, interpolate_nodata BOOLEAN)
+```
+
+#### Description
+
+Returns the Topographic Position Index of an elevation band: the value of each pixel minus the mean of its eight neighbours.
+
+Computed by GDAL's DEM processing on the 3x3 neighbourhood of each pixel. Pixels on the border and next to NODATA pixels are computed from a neighbourhood that GDAL extrapolates, where PostGIS substitutes the value of the centre pixel, so those pixels can differ from PostGIS. `nband` is 1-based (default 1) and `pixeltype` the pixel type of the result (default `32BF`). NODATA pixels are NODATA in the result (-9999, or the largest value of the pixel type if it cannot hold -9999). `interpolate_nodata` must be false and the `customextent` variants are not available.
+
+#### Example
+
+```sql
+SELECT ST_Value(ST_TPI(ST_SetValue(ST_AddBand(ST_MakeEmptyRaster(3, 3, 0, 3, 1), '32BF', 1), 2, 2, 9)), 2, 2);
+----
+8.0
+```
 
 ----
 
@@ -4470,6 +6409,25 @@ GEOMETRY ST_Transform (geom GEOMETRY, source_crs VARCHAR, target_crs VARCHAR)
 GEOMETRY ST_Transform (geom GEOMETRY, source_crs VARCHAR, target_crs VARCHAR, always_xy BOOLEAN)
 GEOMETRY ST_Transform (geom GEOMETRY, target_crs VARCHAR)
 GEOMETRY ST_Transform (geom GEOMETRY, target_crs VARCHAR, always_xy BOOLEAN)
+RASTER ST_Transform (rast RASTER, crs VARCHAR)
+RASTER ST_Transform (rast RASTER, crs VARCHAR, algorithm VARCHAR)
+RASTER ST_Transform (rast RASTER, crs VARCHAR, algorithm VARCHAR, maxerr DOUBLE)
+RASTER ST_Transform (rast RASTER, crs VARCHAR, algorithm VARCHAR, maxerr DOUBLE, scalex DOUBLE)
+RASTER ST_Transform (rast RASTER, crs VARCHAR, algorithm VARCHAR, maxerr DOUBLE, scalex DOUBLE, scaley DOUBLE)
+RASTER ST_Transform (rast RASTER, srid INTEGER)
+RASTER ST_Transform (rast RASTER, srid INTEGER, algorithm VARCHAR)
+RASTER ST_Transform (rast RASTER, srid INTEGER, algorithm VARCHAR, maxerr DOUBLE)
+RASTER ST_Transform (rast RASTER, srid INTEGER, algorithm VARCHAR, maxerr DOUBLE, scalex DOUBLE)
+RASTER ST_Transform (rast RASTER, srid INTEGER, algorithm VARCHAR, maxerr DOUBLE, scalex DOUBLE, scaley DOUBLE)
+RASTER ST_Transform (rast RASTER, srid INTEGER, scalex DOUBLE, scaley DOUBLE)
+RASTER ST_Transform (rast RASTER, srid INTEGER, scalex DOUBLE, scaley DOUBLE, algorithm VARCHAR)
+RASTER ST_Transform (rast RASTER, srid INTEGER, scalex DOUBLE, scaley DOUBLE, algorithm VARCHAR, maxerr DOUBLE)
+RASTER ST_Transform (rast RASTER, srid INTEGER, scalexy DOUBLE)
+RASTER ST_Transform (rast RASTER, srid INTEGER, scalexy DOUBLE, algorithm VARCHAR)
+RASTER ST_Transform (rast RASTER, srid INTEGER, scalexy DOUBLE, algorithm VARCHAR, maxerr DOUBLE)
+RASTER ST_Transform (rast RASTER, alignto RASTER)
+RASTER ST_Transform (rast RASTER, alignto RASTER, algorithm VARCHAR)
+RASTER ST_Transform (rast RASTER, alignto RASTER, algorithm VARCHAR, maxerr DOUBLE)
 ```
 
 #### Description
@@ -4539,6 +6497,34 @@ POINT (-5.203046090608746 49.96006137018598)
 
 ----
 
+### ST_TRI
+
+
+#### Signatures
+
+```sql
+RASTER ST_TRI (rast RASTER)
+RASTER ST_TRI (rast RASTER, nband INTEGER)
+RASTER ST_TRI (rast RASTER, nband INTEGER, pixeltype VARCHAR)
+RASTER ST_TRI (rast RASTER, nband INTEGER, pixeltype VARCHAR, interpolate_nodata BOOLEAN)
+```
+
+#### Description
+
+Returns the Terrain Ruggedness Index of an elevation band: the mean absolute difference between each pixel and its eight neighbours.
+
+Computed by GDAL's DEM processing on the 3x3 neighbourhood of each pixel. Pixels on the border and next to NODATA pixels are computed from a neighbourhood that GDAL extrapolates, where PostGIS substitutes the value of the centre pixel, so those pixels can differ from PostGIS. `nband` is 1-based (default 1) and `pixeltype` the pixel type of the result (default `32BF`). NODATA pixels are NODATA in the result (-9999, or the largest value of the pixel type if it cannot hold -9999). `interpolate_nodata` must be false and the `customextent` variants are not available.
+
+#### Example
+
+```sql
+SELECT ST_Value(ST_TRI(ST_SetValue(ST_AddBand(ST_MakeEmptyRaster(3, 3, 0, 3, 1), '32BF', 1), 2, 2, 9)), 2, 2);
+----
+8.0
+```
+
+----
+
 ### ST_TriangulatePolygon
 
 
@@ -4584,6 +6570,123 @@ Returns the union of two geometries
 
 ----
 
+### ST_UpperLeftX
+
+
+#### Signature
+
+```sql
+DOUBLE ST_UpperLeftX (rast RASTER)
+```
+
+#### Description
+
+Returns the world X coordinate of the upper-left corner of the raster.
+
+#### Example
+
+```sql
+SELECT ST_UpperLeftX(ST_MakeEmptyRaster(10, 5, 100, 200, 1));
+----
+100.0
+```
+
+----
+
+### ST_UpperLeftY
+
+
+#### Signature
+
+```sql
+DOUBLE ST_UpperLeftY (rast RASTER)
+```
+
+#### Description
+
+Returns the world Y coordinate of the upper-left corner of the raster.
+
+#### Example
+
+```sql
+SELECT ST_UpperLeftY(ST_MakeEmptyRaster(10, 5, 100, 200, 1));
+----
+200.0
+```
+
+----
+
+### ST_Value
+
+
+#### Signatures
+
+```sql
+DOUBLE ST_Value (rast RASTER, x INTEGER, y INTEGER)
+DOUBLE ST_Value (rast RASTER, x INTEGER, y INTEGER, exclude_nodata_value BOOLEAN)
+DOUBLE ST_Value (rast RASTER, band INTEGER, x INTEGER, y INTEGER)
+DOUBLE ST_Value (rast RASTER, band INTEGER, x INTEGER, y INTEGER, exclude_nodata_value BOOLEAN)
+DOUBLE ST_Value (rast RASTER, pt GEOMETRY)
+DOUBLE ST_Value (rast RASTER, pt GEOMETRY, exclude_nodata_value BOOLEAN)
+DOUBLE ST_Value (rast RASTER, band INTEGER, pt GEOMETRY)
+DOUBLE ST_Value (rast RASTER, band INTEGER, pt GEOMETRY, exclude_nodata_value BOOLEAN)
+```
+
+#### Description
+
+Returns the value of a pixel, addressed by its 1-based column `x` and row `y` or by a point in world coordinates.
+
+`band` is 1-based and defaults to 1. NODATA pixels return NULL unless `exclude_nodata_value` is false. A pixel or point outside of the raster returns NULL. The point is not reprojected and only nearest-pixel lookup is supported (PostGIS's `resample` argument is not available).
+
+#### Example
+
+```sql
+SELECT ST_Value(ST_SetValue(ST_AddBand(ST_MakeEmptyRaster(4, 4, 0, 0, 1), '8BUI'), 2, 3, 42), 2, 3);
+----
+42.0
+```
+
+----
+
+### ST_ValueCount
+
+
+#### Signatures
+
+```sql
+STRUCT("value" DOUBLE, count BIGINT)[] ST_ValueCount (rast RASTER)
+STRUCT("value" DOUBLE, count BIGINT)[] ST_ValueCount (rast RASTER, nband INTEGER)
+STRUCT("value" DOUBLE, count BIGINT)[] ST_ValueCount (rast RASTER, nband INTEGER, exclude_nodata_value BOOLEAN)
+STRUCT("value" DOUBLE, count BIGINT)[] ST_ValueCount (rast RASTER, nband INTEGER, exclude_nodata_value BOOLEAN, searchvalues DOUBLE[])
+STRUCT("value" DOUBLE, count BIGINT)[] ST_ValueCount (rast RASTER, nband INTEGER, exclude_nodata_value BOOLEAN, searchvalues DOUBLE[], roundto DOUBLE)
+STRUCT("value" DOUBLE, count BIGINT)[] ST_ValueCount (rast RASTER, nband INTEGER, searchvalues DOUBLE[])
+STRUCT("value" DOUBLE, count BIGINT)[] ST_ValueCount (rast RASTER, nband INTEGER, searchvalues DOUBLE[], roundto DOUBLE)
+STRUCT("value" DOUBLE, count BIGINT)[] ST_ValueCount (rast RASTER, searchvalues DOUBLE[])
+STRUCT("value" DOUBLE, count BIGINT)[] ST_ValueCount (rast RASTER, searchvalues DOUBLE[], roundto DOUBLE)
+BIGINT ST_ValueCount (rast RASTER, nband INTEGER, exclude_nodata_value BOOLEAN, searchvalue DOUBLE)
+BIGINT ST_ValueCount (rast RASTER, nband INTEGER, exclude_nodata_value BOOLEAN, searchvalue DOUBLE, roundto DOUBLE)
+BIGINT ST_ValueCount (rast RASTER, nband INTEGER, searchvalue DOUBLE)
+BIGINT ST_ValueCount (rast RASTER, nband INTEGER, searchvalue DOUBLE, roundto DOUBLE)
+BIGINT ST_ValueCount (rast RASTER, searchvalue DOUBLE)
+BIGINT ST_ValueCount (rast RASTER, searchvalue DOUBLE, roundto DOUBLE)
+```
+
+#### Description
+
+Counts how often each pixel value occurs in a band.
+
+Without search values the result is a list of structs `(value, count)` for every distinct value, in ascending order; with a list of `searchvalues` it has one entry per search value, in the given order, with a count of 0 for values that do not occur; PostGIS returns a set of rows. With a single `searchvalue` the result is its count. `roundto` rounds the pixel values and the search values to a multiple of it before counting (for example 0.1 or 10; 0, the default, does not round); to round without search values, pass `NULL::DOUBLE[]` as `searchvalues`, because an untyped NULL is taken for a single search value. `nband` is 1-based and defaults to 1; NODATA pixels are left out unless `exclude_nodata_value` is false.
+
+#### Example
+
+```sql
+SELECT ST_ValueCount(ST_SetValue(ST_AddBand(ST_MakeEmptyRaster(2, 2, 0, 0, 1), '8BUI', 1), 1, 1, 5));
+----
+[{'value': 1.0, 'count': 3}, {'value': 5.0, 'count': 1}]
+```
+
+----
+
 ### ST_VoronoiDiagram
 
 
@@ -4599,6 +6702,29 @@ Returns the Voronoi diagram of the supplied MultiPoint geometry
 
 ----
 
+### ST_Width
+
+
+#### Signature
+
+```sql
+INTEGER ST_Width (rast RASTER)
+```
+
+#### Description
+
+Returns the width of the raster in pixels.
+
+#### Example
+
+```sql
+SELECT ST_Width(ST_MakeEmptyRaster(10, 5, 0, 0, 1));
+----
+10
+```
+
+----
+
 ### ST_Within
 
 
@@ -4607,6 +6733,8 @@ Returns the Voronoi diagram of the supplied MultiPoint geometry
 ```sql
 BOOLEAN ST_Within (geom1 POINT_2D, geom2 POLYGON_2D)
 BOOLEAN ST_Within (geom1 GEOMETRY, geom2 GEOMETRY)
+BOOLEAN ST_Within (rast1 RASTER, rast2 RASTER)
+BOOLEAN ST_Within (rast1 RASTER, nband1 INTEGER, rast2 RASTER, nband2 INTEGER)
 ```
 
 #### Description
@@ -4629,6 +6757,80 @@ BOOLEAN ST_WithinProperly (geom1 GEOMETRY, geom2 GEOMETRY)
 Returns true if the first geometry \"properly\" is contained by the second geometry
 
 This function functions the same as `ST_ContainsProperly`, but the arguments are swapped.
+
+----
+
+### ST_WorldToRasterCoord
+
+
+#### Signatures
+
+```sql
+STRUCT(columnx INTEGER, rowy INTEGER) ST_WorldToRasterCoord (rast RASTER, xw DOUBLE, yw DOUBLE)
+STRUCT(columnx INTEGER, rowy INTEGER) ST_WorldToRasterCoord (rast RASTER, pt GEOMETRY)
+```
+
+#### Description
+
+Returns the 1-based column and row of the pixel that contains a world coordinate or a point, as a struct. The result may lie outside of the raster.
+
+#### Example
+
+```sql
+SELECT ST_WorldToRasterCoord(ST_MakeEmptyRaster(10, 5, 100, 200, 2, -2, 0, 0), 103, 195);
+----
+{'columnx': 2, 'rowy': 3}
+```
+
+----
+
+### ST_WorldToRasterCoordX
+
+
+#### Signatures
+
+```sql
+INTEGER ST_WorldToRasterCoordX (rast RASTER, xw DOUBLE, yw DOUBLE)
+INTEGER ST_WorldToRasterCoordX (rast RASTER, xw DOUBLE)
+INTEGER ST_WorldToRasterCoordX (rast RASTER, pt GEOMETRY)
+```
+
+#### Description
+
+Returns the 1-based column of the pixel that contains a world coordinate or a point. `yw` may be omitted if the raster is not skewed.
+
+#### Example
+
+```sql
+SELECT ST_WorldToRasterCoordX(ST_MakeEmptyRaster(10, 5, 100, 200, 2, -2, 0, 0), 103);
+----
+2
+```
+
+----
+
+### ST_WorldToRasterCoordY
+
+
+#### Signatures
+
+```sql
+INTEGER ST_WorldToRasterCoordY (rast RASTER, xw DOUBLE, yw DOUBLE)
+INTEGER ST_WorldToRasterCoordY (rast RASTER, yw DOUBLE)
+INTEGER ST_WorldToRasterCoordY (rast RASTER, pt GEOMETRY)
+```
+
+#### Description
+
+Returns the 1-based row of the pixel that contains a world coordinate or a point. `xw` may be omitted if the raster is not skewed.
+
+#### Example
+
+```sql
+SELECT ST_WorldToRasterCoordY(ST_MakeEmptyRaster(10, 5, 100, 200, 2, -2, 0, 0), 195);
+----
+3
+```
 
 ----
 
@@ -5166,18 +7368,83 @@ Computes the union of a set of input geometries.
 
 ----
 
-### ST_Union_Agg
+### ST_Retile
 
 
-#### Signature
+#### Signatures
 
 ```sql
-GEOMETRY ST_Union_Agg (col0 GEOMETRY)
+RASTER[] ST_Retile (rast RASTER, ext GEOMETRY, sfx DOUBLE, sfy DOUBLE, tw INTEGER, th INTEGER)
+RASTER[] ST_Retile (rast RASTER, ext GEOMETRY, sfx DOUBLE, sfy DOUBLE, tw INTEGER, th INTEGER, algo VARCHAR)
 ```
 
 #### Description
 
-Computes the union of a set of input geometries
+Aggregate: rebuilds the rasters of a group, a coverage tiled in any way, as a regular set of tiles, and returns the tiles as a list in row order.
+
+The tiles are `tw` x `th` pixels of `sfx` x `sfy` world units and start at the upper-left corner of the bounding box of `ext`, which they cover completely (the last tiles of a row or column may extend beyond it). Each tile is resampled with `algo` (default `NearestNeighbor`, see ST_Resample) from the rasters that overlap it, later rasters over earlier ones; tiles that no raster overlaps are left out, and pixels that no raster covers are NODATA. The rasters must have the same coordinate system and the same bands; `ext` must be in that coordinate system. The arguments other than the raster are taken from the first row of the group.
+
+In PostGIS, ST_Retile is a set-returning function that takes the name of a table and of its raster column. Here it is an aggregate over the rasters themselves: `SELECT UNNEST(ST_Retile(rast, ...)) FROM coverage`. All rasters of a group are kept in memory until the group is complete.
+
+#### Example
+
+```sql
+SELECT len(ST_Retile(rast, ST_MakeEnvelope(150000, 169760, 150320, 170000), 20.0, 20.0, 8, 6)) FROM ST_ReadRaster('test/data/raster/dem.tif', 5, 7);
+```
+
+----
+
+### ST_SummaryStatsAgg
+
+
+#### Signatures
+
+```sql
+STRUCT(count BIGINT, sum DOUBLE, mean DOUBLE, stddev DOUBLE, min DOUBLE, max DOUBLE) ST_SummaryStatsAgg (rast RASTER)
+STRUCT(count BIGINT, sum DOUBLE, mean DOUBLE, stddev DOUBLE, min DOUBLE, max DOUBLE) ST_SummaryStatsAgg (rast RASTER, nband INTEGER)
+STRUCT(count BIGINT, sum DOUBLE, mean DOUBLE, stddev DOUBLE, min DOUBLE, max DOUBLE) ST_SummaryStatsAgg (rast RASTER, nband INTEGER, exclude_nodata_value BOOLEAN)
+```
+
+#### Description
+
+Aggregate: returns the count, sum, mean, population standard deviation, minimum and maximum of the pixel values of a band over all rasters of a group, as a struct `(count, sum, mean, stddev, min, max)`.
+
+`nband` is 1-based and defaults to 1; NODATA pixels are left out unless `exclude_nodata_value` is false. NULL rasters are skipped. The `sample_percent` argument of PostGIS is not available: all pixels are always read.
+
+#### Example
+
+```sql
+SELECT (ST_SummaryStatsAgg(rast)).mean FROM ST_ReadRaster('test/data/raster/dem.tif', 8, 8);
+```
+
+----
+
+### ST_Union_Agg
+
+
+#### Signatures
+
+```sql
+GEOMETRY ST_Union_Agg (col0 GEOMETRY)
+RASTER ST_Union_Agg (rast RASTER)
+RASTER ST_Union_Agg (rast RASTER, uniontype VARCHAR)
+RASTER ST_Union_Agg (rast RASTER, nband INTEGER)
+RASTER ST_Union_Agg (rast RASTER, nband INTEGER, uniontype VARCHAR)
+```
+
+#### Description
+
+Aggregate: merges the rasters of a group into one raster that covers them all.
+
+The rasters must have the same alignment (see ST_SameAlignment and ST_Resample). Where rasters overlap, `uniontype` decides the value: `LAST` (the default), `FIRST`, `MIN`, `MAX`, `COUNT` (the number of rasters with a value, stored as `32BUI`), `SUM`, `MEAN` (stored as `64BF`) or `RANGE` (the difference between the largest and the smallest value). NODATA pixels do not take part; pixels that no raster gives a value are NODATA (the NODATA value of the first raster, or the smallest value of the pixel type). With `nband` (1-based) the result has that band only, otherwise all bands are merged and the rasters must have the same number of bands. NULL rasters are skipped.
+
+PostGIS calls this aggregate `ST_Union`; that name is a scalar geometry function here. `FIRST` and `LAST` depend on the order of the rows: use `ST_Union_Agg(rast ORDER BY ...)` for a defined result. All rasters of a group are kept in memory until the group is complete.
+
+#### Example
+
+```sql
+SELECT ST_Width(ST_Union_Agg(rast, 'MEAN')) FROM ST_ReadRaster('test/data/raster/dem.tif', 8, 8);
+```
 
 ----
 
@@ -5911,6 +8178,28 @@ SELECT * FROM ST_DumpSegments('LINESTRING(0 0, 1 1, 2 2)'::GEOMETRY);
 
 ----
 
+### ST_GDALDrivers
+
+#### Signature
+
+```sql
+ST_GDALDrivers ()
+```
+
+#### Description
+
+Returns the GDAL raster drivers that are built into the extension: the formats that `ST_ReadRaster` and `ST_FromGDALRaster` can read and that `ST_AsGDALRaster` can write.
+
+`idx` is the position of the driver in GDAL's driver list, `can_read` and `can_write` tell whether the driver opens and creates files, and `create_options` is the XML description of the creation options that `ST_AsGDALRaster` accepts. The vector drivers are listed by `ST_Drivers()`.
+
+#### Example
+
+```sql
+SELECT short_name, can_read, can_write FROM ST_GDALDrivers() ORDER BY short_name;
+```
+
+----
+
 ### ST_GeneratePoints
 
 #### Signature
@@ -6290,6 +8579,31 @@ LIMIT 5;
 │ node                 │ 123566 │ {highway=traffic_s…  │         │ 54.617268200000005 │  8.9718171 │           │                        │
 │ node                 │ 125801 │ {TMC:cid_58:tabcd_…  │         │ 53.070685000000005 │  8.7819939 │           │                        │
 └──────────────────────┴────────┴──────────────────────┴─────────┴────────────────────┴────────────┴───────────┴────────────────────────┘
+```
+
+----
+
+### ST_ReadRaster
+
+#### Signature
+
+```sql
+ST_ReadRaster (col0 VARCHAR)
+ST_ReadRaster (col0 VARCHAR, col1 INTEGER, col2 INTEGER)
+```
+
+#### Description
+
+Reads a raster file, or every file matching a glob pattern, and returns its pixels as `RASTER` values.
+
+Without a tile size the function returns one row per file holding the whole raster. With `tile_width` and `tile_height` (in pixels) each file is cut into tiles of that size, one row per tile; the tiles on the right and bottom edges are smaller when the raster size is not a multiple of the tile size. `x` and `y` are the column and row of the tile in the tile grid, starting at 0, and every tile carries its own georeference.
+
+Any format of the bundled GDAL raster drivers can be read (see `ST_GDALDrivers()`; GeoTIFF, Cloud Optimized GeoTIFF, VRT and Erdas Imagine `.img`). Files are opened through DuckDB's file system, so remote paths (`https://`, `s3://`, ...) work as they do for `ST_Read`. All bands of a `RASTER` share the pixel type of the first band, colour tables are dropped and side-car files (`.tfw`, `.aux.xml`, `.ovr`) are not read. Tiles are read in parallel and are not returned in order.
+
+#### Example
+
+```sql
+SELECT x, y, ST_Width(rast), ST_Height(rast) FROM ST_ReadRaster('test/data/raster/dem.tif', 16, 16) ORDER BY y, x;
 ```
 
 ----

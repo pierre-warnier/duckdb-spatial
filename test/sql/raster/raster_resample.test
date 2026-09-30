@@ -1,0 +1,289 @@
+# name: test/sql/raster/raster_resample.test
+# group: [raster]
+
+require spatial
+
+# 10 x 10 pixels of 1 x 1 degree, upper-left corner at (0, 10)
+statement ok
+CREATE TABLE q AS SELECT ST_AddBand(ST_MakeEmptyRaster(10, 10, 0, 10, 1, -1, 0, 0, 4326), '8BUI', 1, 0) AS rast;
+
+# 32 x 24 pixels of 10 m, value 100 + 2x + 3y, pixel (5, 5) is NODATA
+statement ok
+CREATE TABLE dem AS SELECT rast FROM ST_ReadRaster('test/data/raster/dem.tif');
+
+#----------------------------------------------------------------------------------------------------------------------
+# ST_Resample
+#----------------------------------------------------------------------------------------------------------------------
+
+query I
+SELECT ST_MetaData(ST_Resample(rast, 2.0, 2.0))::VARCHAR FROM q;
+----
+{'upperleftx': 0.0, 'upperlefty': 10.0, 'width': 5, 'height': 5, 'scalex': 2.0, 'scaley': -2.0, 'skewx': 0.0, 'skewy': 0.0, 'srid': 4326, 'numbands': 1}
+
+# The sign of the scale is ignored and 0 keeps the current scale
+query II
+SELECT ST_MetaData(ST_Resample(rast, 2.0, -2.0)) = ST_MetaData(ST_Resample(rast, 2.0, 2.0)), ST_MetaData(ST_Resample(rast, 0.0, 0.0)) = ST_MetaData(rast) FROM q;
+----
+true	true
+
+query I
+SELECT ST_MetaData(ST_Resample(rast, 4, 5))::VARCHAR FROM q;
+----
+{'upperleftx': 0.0, 'upperlefty': 10.0, 'width': 4, 'height': 5, 'scalex': 2.5, 'scaley': -2.0, 'skewx': 0.0, 'skewy': 0.0, 'srid': 4326, 'numbands': 1}
+
+# Pixel type, NODATA value and values are kept
+query III
+SELECT ST_BandPixelType(r), ST_BandNoDataValue(r)::INTEGER, ST_DumpValues(r)::VARCHAR FROM (SELECT ST_Resample(rast, 5.0, 5.0) AS r FROM q);
+----
+8BUI	0	[[1.0, 1.0], [1.0, 1.0]]
+
+# Onto a grid through (0.5, 0.5): the result grows by one pixel and the new border is NODATA
+query II
+SELECT ST_MetaData(r)::VARCHAR, len(ST_PixelAsPoints(r)) FROM (SELECT ST_Resample(rast, 1.0, 1.0, 0.5, 0.5) AS r FROM q);
+----
+{'upperleftx': -0.5, 'upperlefty': 10.5, 'width': 11, 'height': 11, 'scalex': 1.0, 'scaley': -1.0, 'skewx': 0.0, 'skewy': 0.0, 'srid': 4326, 'numbands': 1}	100
+
+# NULL grid coordinates mean the default alignment
+query I
+SELECT ST_MetaData(ST_Resample(rast, 2.0, 2.0, NULL, NULL, 0, 0, 'Bilinear', 0.0)) = ST_MetaData(ST_Resample(rast, 2.0, 2.0)) FROM q;
+----
+true
+
+# With a skew
+query I
+SELECT ST_MetaData(ST_Resample(rast, 1.0, 1.0, NULL, NULL, 0.1, 0.1))::VARCHAR FROM q;
+----
+{'upperleftx': -1.0, 'upperlefty': 9.9, 'width': 11, 'height': 11, 'scalex': 1.0, 'scaley': -1.0, 'skewx': 0.1, 'skewy': 0.1, 'srid': 4326, 'numbands': 1}
+
+# Onto the grid of a reference raster
+query I
+SELECT ST_MetaData(ST_Resample(rast, ST_MakeEmptyRaster(3, 3, 0.5, 0.5, 2, -2, 0, 0, 4326)))::VARCHAR FROM q;
+----
+{'upperleftx': -1.5, 'upperlefty': 10.5, 'width': 6, 'height': 6, 'scalex': 2.0, 'scaley': -2.0, 'skewx': 0.0, 'skewy': 0.0, 'srid': 4326, 'numbands': 1}
+
+query III
+SELECT ST_SameAlignment(r, ref), ST_SameAlignment(r2, ref), ST_Width(r2)
+FROM (SELECT ref, ST_Resample(rast, ref, 'Bilinear') AS r, ST_Resample(rast, ref, true, 'NearestNeighbor', 0.125) AS r2 FROM q, (SELECT ST_MakeEmptyRaster(3, 3, 0.5, 0.5, 2, -2, 0, 0, 4326) AS ref));
+----
+true	true	6
+
+query II
+SELECT ST_MetaData(ST_Resample(rast, ref, false))::VARCHAR, ST_MetaData(ST_Resample(rast, ref, 'NearestNeighbor', 0.125, false)) = ST_MetaData(ST_Resample(rast, ref, false))
+FROM q, (SELECT ST_MakeEmptyRaster(3, 3, 0.5, 0.5, 2, -2, 0, 0, 4326) AS ref);
+----
+{'upperleftx': -0.5, 'upperlefty': 10.5, 'width': 11, 'height': 11, 'scalex': 1.0, 'scaley': -1.0, 'skewx': 0.0, 'skewy': 0.0, 'srid': 4326, 'numbands': 1}	true
+
+# Nearest-neighbour resampling onto the same grid is the identity
+query II
+SELECT ST_MetaData(r) = ST_MetaData(rast), ST_DumpValues(r) = ST_DumpValues(rast) FROM (SELECT rast, ST_Resample(rast, 10.0, 10.0) AS r FROM dem);
+----
+true	true
+
+# Halving the pixel size with nearest neighbour repeats every pixel four times
+query III
+SELECT count(*), bool_and(p.val = ST_Value(rast, p.geom)), ST_Width(any_value(r))
+FROM (SELECT rast, r, unnest(ST_PixelAsCentroids(r)) AS p FROM (SELECT rast, ST_Rescale(rast, 5.0) AS r FROM dem));
+----
+3068	true	64
+
+# Bilinear interpolation of a plane is the plane (away from the border and the NODATA pixel)
+query II
+SELECT count(*) > 1500, bool_and(abs(p.val - (100 + 2 * ((ST_X(p.geom) - 150000) / 10 + 0.5) + 3 * ((170000 - ST_Y(p.geom)) / 10 + 0.5))) < 1e-3)
+FROM (SELECT unnest(ST_PixelAsCentroids(ST_Rescale(rast, 5.0, 'Bilinear'))) AS p FROM dem)
+WHERE p.x BETWEEN 3 AND 62 AND p.y BETWEEN 3 AND 46 AND NOT (p.x BETWEEN 5 AND 14 AND p.y BETWEEN 5 AND 14);
+----
+true	true
+
+# Every algorithm runs
+query II
+SELECT algorithm, ST_Width(ST_Resample(rast, 20.0, 20.0, NULL, NULL, 0, 0, algorithm))
+FROM dem, (VALUES ('NearestNeighbour'), ('NearestNeighbor'), ('nearest'), ('Bilinear'), ('Cubic'), ('CubicSpline'), ('Lanczos'), ('Average'), ('Mode'), ('Max'), ('Min')) a(algorithm) ORDER BY algorithm;
+----
+Average	16
+Bilinear	16
+Cubic	16
+CubicSpline	16
+Lanczos	16
+Max	16
+Min	16
+Mode	16
+NearestNeighbor	16
+NearestNeighbour	16
+nearest	16
+
+# Averaging 2 x 2 blocks of the plane
+query I
+SELECT abs(ST_Value(ST_Resample(rast, 20.0, 20.0, NULL, NULL, 0, 0, 'Average'), 10, 10) - (100 + 2 * 19.5 + 3 * 19.5)) < 1e-3 FROM dem;
+----
+true
+
+statement error
+SELECT ST_Resample(rast, 2.0, 2.0, NULL, NULL, 0, 0, 'Sharpest') FROM q;
+----
+Unknown resampling algorithm 'Sharpest'
+
+statement error
+SELECT ST_Resample(rast, 1e-9, 1e-9) FROM q;
+----
+outside of the supported range
+
+statement error
+SELECT ST_Resample(rast, 0, 5) FROM q;
+----
+outside of the supported range
+
+# A raster without bands only gets the new grid
+query II
+SELECT ST_NumBands(r), ST_Width(r) FROM (SELECT ST_Resample(ST_MakeEmptyRaster(rast), 2.0, 2.0) AS r FROM q);
+----
+0	5
+
+# All bands are resampled
+query IIII
+SELECT ST_NumBands(r), ST_Value(r, 1, 1, 1)::INTEGER, ST_Value(r, 2, 1, 1)::INTEGER, ST_Value(r, 3, 1, 1)::INTEGER FROM (SELECT ST_Resample(rast, 2, 2) AS r FROM ST_ReadRaster('test/data/raster/rgb.tif'));
+----
+3	10	20	30
+
+# The identity georeference (not stored in the GeoTIFF) can be resampled too
+query II
+SELECT ST_Width(r), ST_Value(r, 1, 1)::INTEGER FROM (SELECT ST_Resample(ST_AddBand(ST_MakeEmptyRaster(4, 4, 0, 0, 1, 1, 0, 0), '8BUI', 3), 2.0, 2.0) AS r);
+----
+2	3
+
+#----------------------------------------------------------------------------------------------------------------------
+# ST_Rescale, ST_Reskew, ST_SnapToGrid, ST_Resize
+#----------------------------------------------------------------------------------------------------------------------
+
+query I
+SELECT ST_MetaData(ST_Rescale(rast, 0.5))::VARCHAR FROM q;
+----
+{'upperleftx': 0.0, 'upperlefty': 10.0, 'width': 20, 'height': 20, 'scalex': 0.5, 'scaley': -0.5, 'skewx': 0.0, 'skewy': 0.0, 'srid': 4326, 'numbands': 1}
+
+query III
+SELECT ST_MetaData(ST_Rescale(rast, 0.5, -0.5)) = ST_MetaData(ST_Rescale(rast, 0.5)), ST_MetaData(ST_Rescale(rast, 0.5, 'Bilinear', 0.0)) = ST_MetaData(ST_Rescale(rast, 0.5)), ST_MetaData(ST_Rescale(rast, 2.0, 5.0, 'Cubic'))::VARCHAR FROM q;
+----
+true	true	{'upperleftx': 0.0, 'upperlefty': 10.0, 'width': 5, 'height': 2, 'scalex': 2.0, 'scaley': -5.0, 'skewx': 0.0, 'skewy': 0.0, 'srid': 4326, 'numbands': 1}
+
+query II
+SELECT ST_MetaData(ST_Reskew(rast, 0.1, 0.1))::VARCHAR, ST_MetaData(ST_Reskew(rast, 0.1)) = ST_MetaData(ST_Reskew(rast, 0.1, 0.1, 'NearestNeighbor', 0.125)) FROM q;
+----
+{'upperleftx': -1.0, 'upperlefty': 9.9, 'width': 11, 'height': 11, 'scalex': 1.0, 'scaley': -1.0, 'skewx': 0.1, 'skewy': 0.1, 'srid': 4326, 'numbands': 1}	true
+
+# The skewed grid covers the input, and the pixels it has in common keep their value
+query II
+SELECT ST_Covers(ST_Buffer(ST_ConvexHull(r), 1e-9), ST_Envelope(rast)), len(ST_PixelAsPoints(r)) BETWEEN 95 AND 105 FROM (SELECT rast, ST_Reskew(rast, 0.1, 0.1) AS r FROM q);
+----
+true	true
+
+query II
+SELECT ST_MetaData(r)::VARCHAR, len(ST_PixelAsPoints(r)) FROM (SELECT ST_SnapToGrid(ST_SetUpperLeft(rast, 0.5, 10.5), 0, 0) AS r FROM q);
+----
+{'upperleftx': 0.0, 'upperlefty': 11.0, 'width': 11, 'height': 11, 'scalex': 1.0, 'scaley': -1.0, 'skewx': 0.0, 'skewy': 0.0, 'srid': 4326, 'numbands': 1}	100
+
+query III
+SELECT ST_MetaData(ST_SnapToGrid(rast, 0.5, 0.5, 'Bilinear', 0.125, 2.0, 2.0)) = ST_MetaData(ST_SnapToGrid(rast, 0.5, 0.5, 2.0, 2.0)),
+       ST_MetaData(ST_SnapToGrid(rast, 0.5, 0.5, 2.0)) = ST_MetaData(ST_SnapToGrid(rast, 0.5, 0.5, 2.0, 2.0, 'NearestNeighbor', 0.125)),
+       ST_MetaData(ST_SnapToGrid(rast, 0.5, 0.5, 2.0, 'Bilinear'))::VARCHAR FROM q;
+----
+true	true	{'upperleftx': -1.5, 'upperlefty': 10.5, 'width': 6, 'height': 6, 'scalex': 2.0, 'scaley': -2.0, 'skewx': 0.0, 'skewy': 0.0, 'srid': 4326, 'numbands': 1}
+
+# The geometry function of the same name is untouched
+query I
+SELECT ST_AsText(ST_SnapToGrid(ST_Point(1.26, 2.74), 0.5));
+----
+POINT (1.5 2.5)
+
+query IIII
+SELECT ST_MetaData(ST_Resize(rast, 3, 4))::VARCHAR, ST_MetaData(ST_Resize(rast, 0.5, 0.2)) = ST_MetaData(ST_Resize(rast, 5, 2)), ST_MetaData(ST_Resize(rast, '50%', '20')) = ST_MetaData(ST_Resize(rast, 5, 20)),
+       ST_MetaData(ST_Resize(rast, 5, 20, 'Bilinear', 0.0)) = ST_MetaData(ST_Resize(rast, ' 50% ', '200%', 'Cubic'))
+FROM q;
+----
+{'upperleftx': 0.0, 'upperlefty': 10.0, 'width': 3, 'height': 4, 'scalex': 3.3333333333333335, 'scaley': -2.5, 'skewx': 0.0, 'skewy': 0.0, 'srid': 4326, 'numbands': 1}	true	true	true
+
+statement error
+SELECT ST_Resize(rast, 'wide', '20') FROM q;
+----
+invalid width 'wide'
+
+statement error
+SELECT ST_Resize(rast, 0.0, 0.5) FROM q;
+----
+must be greater than 0
+
+statement error
+SELECT ST_Resize(rast, 0, 5) FROM q;
+----
+outside of the supported range
+
+#----------------------------------------------------------------------------------------------------------------------
+# ST_Transform
+#----------------------------------------------------------------------------------------------------------------------
+
+# 0..10 degrees of longitude are 0..1113194.9 m in web mercator
+query IIIIII
+SELECT ST_SRID(r), ST_CRS(r), ST_Width(r), abs(ST_UpperLeftX(r)) < 1, abs(ST_XMax(ST_Envelope(r)) - 1113194.9) < 0.6 * ST_ScaleX(r), abs(ST_YMin(ST_Envelope(r))) < 0.6 * ST_ScaleX(r)
+FROM (SELECT ST_Transform(rast, 'EPSG:3857') AS r FROM q);
+----
+3857	EPSG:3857	10	true	true	true
+
+query IIII
+SELECT ST_MetaData(ST_Transform(rast, 3857)) = ST_MetaData(ST_Transform(rast, 'EPSG:3857')),
+       ST_MetaData(ST_Transform(rast, 3857, 'Bilinear', 0.0)) = ST_MetaData(ST_Transform(rast, 'EPSG:3857', 'Bilinear')),
+       ST_BandPixelType(ST_Transform(rast, 3857)), ST_BandNoDataValue(ST_Transform(rast, 3857))::INTEGER
+FROM q;
+----
+true	true	8BUI	0
+
+# With a pixel size
+query IIII
+SELECT ST_ScaleX(r)::INTEGER, ST_ScaleY(r)::INTEGER, ST_Width(r), ST_MetaData(r) = ST_MetaData(ST_Transform(rast, 3857, 100000.0, 100000.0, 'NearestNeighbor'))
+FROM (SELECT rast, ST_Transform(rast, 3857, 100000.0) AS r FROM q);
+----
+100000	-100000	12	true
+
+query II
+SELECT ST_ScaleX(r)::INTEGER, ST_ScaleY(r)::INTEGER FROM (SELECT ST_Transform(rast, 'EPSG:3857', 'NearestNeighbor', 0.125, 100000.0, 50000.0) AS r FROM q);
+----
+100000	-50000
+
+# The raster lands where its outline lands
+query II
+SELECT ST_SRID(r), ST_Distance(ST_Centroid(ST_Envelope(r)), ST_Centroid(ST_Transform(ST_Envelope(rast), 'EPSG:31370', 'EPSG:4326', always_xy := true))) < 2e-5
+FROM (SELECT rast, ST_Transform(rast, 4326, 'Bilinear') AS r FROM dem);
+----
+4326	true
+
+# There and back again: the elevations are still those of the plane, to within an eighth of a pixel
+query II
+SELECT count(*) > 400, bool_and(abs(p.val - (100 + 2 * ((ST_X(p.geom) - 150000) / 10 + 0.5) + 3 * ((170000 - ST_Y(p.geom)) / 10 + 0.5))) < 0.25)
+FROM (SELECT unnest(ST_PixelAsCentroids(ST_Transform(ST_Transform(rast, 4326, 'Bilinear'), rast, 'Bilinear'))) AS p FROM dem)
+WHERE p.x BETWEEN 4 AND 29 AND p.y BETWEEN 4 AND 21 AND NOT (p.x BETWEEN 2 AND 9 AND p.y BETWEEN 2 AND 9);
+----
+true	true
+
+# Aligned to another raster
+query II
+SELECT ST_SameAlignment(r, ref), ST_SRID(r) FROM (SELECT ref, ST_Transform(rast, ref) AS r FROM q, (SELECT ST_MakeEmptyRaster(1, 1, 0, 0, 50000, -50000, 0, 0, 3857) AS ref));
+----
+true	3857
+
+statement error
+SELECT ST_Transform(ST_SetSRID(rast, 0), 3857) FROM q;
+----
+the raster has no coordinate system
+
+statement error
+SELECT ST_Transform(rast, 0) FROM q;
+----
+invalid SRID 0
+
+statement error
+SELECT ST_Transform(rast, 'EPSG:999999') FROM q;
+----
+EPSG:999999
+
+# The geometry function of the same name is untouched
+query I
+SELECT ST_AsText(ST_Transform(ST_Point(0, 0), 'EPSG:4326', 'EPSG:3857', always_xy := true));
+----
+POINT (0 0)

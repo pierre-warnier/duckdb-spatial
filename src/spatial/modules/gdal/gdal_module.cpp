@@ -1877,6 +1877,10 @@ void Register(ExtensionLoader &loader) {
 } // namespace gdal_copy
 } // namespace
 
+string GDALFileSystemPath(ClientContext &context, const string &path) {
+	return DuckDBFileSystemPrefix::GetOrCreate(context).AddPrefix(path);
+}
+
 //======================================================================================================================
 // GML / KML
 //======================================================================================================================

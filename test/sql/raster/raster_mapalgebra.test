@@ -1,0 +1,315 @@
+# name: test/sql/raster/raster_mapalgebra.test
+# group: [raster]
+
+require spatial
+
+# 32 x 24 pixels, value 100 + 2x + 3y, pixel (5, 5) is NODATA (-9999)
+statement ok
+CREATE TABLE dem AS SELECT rast FROM ST_ReadRaster('test/data/raster/dem.tif');
+
+#----------------------------------------------------------------------------------------------------------------------
+# One raster: checked against the same arithmetic in SQL over the pixels
+#----------------------------------------------------------------------------------------------------------------------
+
+query I
+SELECT ST_DumpValues(ST_MapAlgebra(ST_AddBand(ST_MakeEmptyRaster(3, 2, 0, 0, 1), '8BUI', 10), 1, '16BSI', '[rast] * 2 + [rast.x] - [rast.y]'))::VARCHAR;
+----
+[[20.0, 21.0, 22.0], [19.0, 20.0, 21.0]]
+
+query IIII
+SELECT count(*), bool_and(abs(p.val - (sqrt(o.val) * 3 - o.x + o.y % 7)) < 1e-9), bool_and(p.x = o.x AND p.y = o.y), min(p.val) > 0
+FROM (SELECT unnest(ST_PixelAsPoints(ST_MapAlgebra(rast, 1, '64BF', 'sqrt([rast]) * 3 - [rast.x] + [rast.y] % 7'))) AS p,
+             unnest(ST_PixelAsPoints(rast)) AS o FROM dem);
+----
+767	true	true	true
+
+# [rast.val] is the same as [rast], placeholders are case-insensitive, and the band number is optional
+query III
+SELECT ST_DumpValues(ST_MapAlgebra(rast, 1, '64BF', '[rast.val] + 1')) = ST_DumpValues(ST_MapAlgebra(rast, 1, '64BF', '[rast] + 1')),
+       ST_DumpValues(ST_MapAlgebra(rast, 1, '64BF', '[RAST] + [Rast.X]')) = ST_DumpValues(ST_MapAlgebra(rast, 1, '64BF', '[rast] + [rast.x]')),
+       ST_DumpValues(ST_MapAlgebra(rast, '64BF', '[rast] + 1')) = ST_DumpValues(ST_MapAlgebra(rast, 1, '64BF', '[rast] + 1'))
+FROM dem;
+----
+true	true	true
+
+# Georeference and coordinate system are those of the input; the result has one band
+query IIII
+SELECT ST_GeoReference(r) = ST_GeoReference(rast), ST_SRID(r), ST_NumBands(r), ST_BandPixelType(r) FROM (SELECT rast, ST_MapAlgebra(rast, '16BUI', '[rast]') AS r FROM dem);
+----
+true	31370	1	16BUI
+
+# The NODATA pixel stays NODATA and is not evaluated; the NODATA value is inherited or given
+query IIII
+SELECT ST_Value(r, 5, 5), ST_BandNoDataValue(r)::INTEGER, ST_Count(r), ST_Value(r, 5, 5, false)::INTEGER FROM (SELECT ST_MapAlgebra(rast, '32BF', 'coalesce([rast], 1)') AS r FROM dem);
+----
+NULL	-9999	767	-9999
+
+query III
+SELECT ST_Value(r, 5, 5), ST_BandNoDataValue(r)::INTEGER, ST_Count(r) FROM (SELECT ST_MapAlgebra(rast, 1, '32BF', '[rast]', -1) AS r FROM dem);
+----
+NULL	-1	767
+
+# A NODATA value that the pixel type cannot hold is clamped, and still marks the pixels
+query III
+SELECT ST_BandNoDataValue(r)::INTEGER, ST_Count(r), ST_Value(r, 5, 5) FROM (SELECT ST_MapAlgebra(rast, '8BUI', '[rast] - 100') AS r FROM dem);
+----
+0	767	NULL
+
+# A NULL pixel type keeps the type of the band; a literal NULL NODATA value means the default
+query II
+SELECT ST_BandPixelType(ST_MapAlgebra(rast, NULL, '[rast] + 0.5')), abs(ST_Value(ST_MapAlgebra(rast, 1, NULL, '[rast] + 0.5', NULL), 1, 1) - 105.5) < 1e-6 FROM dem;
+----
+32BF	true
+
+# Where the expression is NULL the result is NODATA; a band without NODATA value gets one when it is needed
+query IIII
+SELECT ST_Count(r), (SELECT count(*) FROM (SELECT unnest(ST_PixelAsPoints(rast)) AS p FROM dem) WHERE p.val > 200), ST_BandNoDataValue(r)::INTEGER, ST_Value(r, 1, 1)
+FROM (SELECT ST_MapAlgebra(rast, '32BF', 'CASE WHEN [rast] > 200 THEN [rast] END') AS r FROM dem);
+----
+120	120	-9999	NULL
+
+query III
+SELECT ST_DumpValues(r)::VARCHAR, ST_BandNoDataValue(r)::INTEGER, ST_BandNoDataValue(ST_MapAlgebra(flat, '16BSI', '[rast]')) IS NULL
+FROM (SELECT flat, ST_MapAlgebra(flat, '16BSI', 'nullif([rast.x], 2) * 10') AS r FROM (SELECT ST_AddBand(ST_MakeEmptyRaster(3, 1, 0, 0, 1), '8BUI', 1) AS flat));
+----
+[[10.0, NULL, 30.0]]	-32768	true
+
+# Results are rounded and clamped to the pixel type
+query I
+SELECT ST_DumpValues(ST_MapAlgebra(ST_AddBand(ST_MakeEmptyRaster(4, 1, 0, 0, 1), '8BUI', 1), '8BUI', '[rast.x] * 100.4 - 150'))::VARCHAR;
+----
+[[0.0, 51.0, 151.0, 252.0]]
+
+# Any scalar function and operator of DuckDB, including constants and lambdas
+query IIII
+SELECT ST_Value(ST_MapAlgebra(rast, '64BF', '42'), 3, 3)::INTEGER,
+       ST_Value(ST_MapAlgebra(rast, '64BF', 'greatest([rast], 200) + least([rast.x], 3)'), 1, 1)::INTEGER,
+       ST_Value(ST_MapAlgebra(rast, '64BF', 'list_sum([v * 2 FOR v IN [[rast], 1.0]])'), 1, 1)::INTEGER,
+       ST_Value(ST_MapAlgebra(rast, '64BF', 'CASE WHEN [rast.x] % 2 = 0 THEN 1 ELSE length(''[rast]'') END'), 1, 1)::INTEGER
+FROM dem;
+----
+42	201	212	6
+
+# Other bands
+query II
+SELECT ST_Value(ST_MapAlgebra(rast, 2, '16BSI', '[rast] - [rast.x]'), 3, 3)::INTEGER, ST_Value(ST_MapAlgebra(rast, 3, NULL, '[rast] + 1'), 1, 1)::INTEGER FROM ST_ReadRaster('test/data/raster/rgb.tif');
+----
+96	31
+
+# The expression is bound once and works over many rasters and threads
+query II
+SELECT count(*), bool_and(ST_Value(ST_MapAlgebra(rast, '64BF', '[rast] * 2'), 1, 1) = 2 * ST_Value(rast, 1, 1, false)) FROM ST_ReadRaster('test/data/raster/dem.tif', 3, 3) WHERE ST_Value(rast, 1, 1) IS NOT NULL;
+----
+88	true
+
+# NULL arguments
+query III
+SELECT ST_MapAlgebra(NULL::RASTER, '8BUI', '[rast]') IS NULL, ST_MapAlgebra(rast, '8BUI', NULL) IS NULL, ST_MapAlgebra(rast, NULL::INTEGER, '8BUI', '[rast]') IS NULL FROM dem;
+----
+true	true	true
+
+# Errors
+statement error
+SELECT ST_MapAlgebra(rast, '64BF', '[rast] +') FROM dem;
+----
+ST_MapAlgebra: invalid expression '[rast] +'
+
+statement error
+SELECT ST_MapAlgebra(rast, '64BF', '[rast] + elevation') FROM dem;
+----
+ST_MapAlgebra: invalid expression
+
+statement error
+SELECT ST_MapAlgebra(rast, '64BF', '[rast1] + 1') FROM dem;
+----
+ST_MapAlgebra: invalid expression
+
+statement error
+SELECT ST_MapAlgebra(rast, '64BF', 'no_such_function([rast])') FROM dem;
+----
+no_such_function
+
+statement error
+SELECT ST_MapAlgebra(rast, '64BF', 'sum([rast])') FROM dem;
+----
+aggregate functions are not allowed in a map algebra expression
+
+statement error
+SELECT ST_MapAlgebra(rast, '64BF', '(SELECT 1)') FROM dem;
+----
+subqueries are not allowed in a map algebra expression
+
+statement error
+SELECT ST_MapAlgebra(rast, '64BF', 'row_number() OVER ()') FROM dem;
+----
+window functions are not allowed in a map algebra expression
+
+statement error
+SELECT ST_MapAlgebra(rast, '64BF', '[rast], [rast]') FROM dem;
+----
+expected a single expression
+
+statement error
+SELECT ST_MapAlgebra(rast, '64BF', '''abc''') FROM dem;
+----
+Could not convert string 'abc' to DOUBLE
+
+statement error
+SELECT ST_MapAlgebra(rast, '64BF', expr) FROM dem, (VALUES ('[rast]'), ('[rast] + 1')) t(expr);
+----
+the 'expression' argument must be a constant
+
+statement error
+SELECT ST_MapAlgebra(rast, 2, '64BF', '[rast]') FROM dem;
+----
+Band 2 is out of range
+
+statement error
+SELECT ST_MapAlgebra(rast, 'FLOAT', '[rast]') FROM dem;
+----
+Unknown pixel type 'FLOAT'
+
+# A runtime error in the expression is reported
+statement error
+SELECT ST_MapAlgebra(rast, '64BF', 'error(''boom'')') FROM dem;
+----
+boom
+
+#----------------------------------------------------------------------------------------------------------------------
+# Two rasters
+#----------------------------------------------------------------------------------------------------------------------
+
+# a: 4 x 3 at (0, 0), value 10, NODATA 0, pixel (1, 1) is NODATA
+# b: 4 x 3 shifted by 2 columns and 1 row, value 3, NODATA -1, its pixel (1, 1) is NODATA
+statement ok
+CREATE TABLE a AS SELECT ST_SetValue(ST_AddBand(ST_MakeEmptyRaster(4, 3, 0, 0, 1, -1, 0, 0, 3857), '16BSI', 10, 0), 1, 1, NULL) AS rast;
+
+statement ok
+CREATE TABLE b AS SELECT ST_SetValue(ST_AddBand(ST_MakeEmptyRaster(4, 3, 2, -1, 1, -1, 0, 0, 3857), '16BSI', 3, -1), 1, 1, NULL) AS rast;
+
+# Intersection: 2 x 2 pixels; b's NODATA pixel is its upper-left one
+query IIIII
+SELECT ST_MetaData(r)::VARCHAR, ST_DumpValues(r)::VARCHAR, ST_BandPixelType(r), ST_BandNoDataValue(r)::INTEGER, ST_NumBands(r)
+FROM (SELECT ST_MapAlgebra(a.rast, b.rast, '[rast1] * [rast2] + [rast1.x] * 100 + [rast2.y] * 1000') AS r FROM a, b);
+----
+{'upperleftx': 2.0, 'upperlefty': -1.0, 'width': 2, 'height': 2, 'scalex': 1.0, 'scaley': -1.0, 'skewx': 0.0, 'skewy': 0.0, 'srid': 3857, 'numbands': 1}	[[NULL, 1430.0], [2330.0, 2430.0]]	16BSI	0	1
+
+query I
+SELECT ST_DumpValues(ST_MapAlgebra(a.rast, 1, b.rast, 1, '[rast1] + [rast2]', '32BF', 'INTERSECTION'))::VARCHAR FROM a, b;
+----
+[[NULL, 13.0], [13.0, 13.0]]
+
+# Expressions for the pixels where one raster has no value
+query I
+SELECT ST_DumpValues(ST_MapAlgebra(a.rast, b.rast, '[rast1] + [rast2]', NULL, 'INTERSECTION', '[rast2] * 2', '[rast1] * 5'))::VARCHAR FROM a, b;
+----
+[[50.0, 13.0], [13.0, 13.0]]
+
+# FIRST: the extent of a. Without the expressions, only the overlap has values
+query II
+SELECT ST_MetaData(r) = ST_MetaData(a.rast), ST_DumpValues(r)::VARCHAR FROM (SELECT a.rast, ST_MapAlgebra(a.rast, b.rast, '[rast1] + [rast2]', NULL, 'first') AS r FROM a, b) a;
+----
+true	[[NULL, NULL, NULL, NULL], [NULL, NULL, NULL, 13.0], [NULL, NULL, 13.0, 13.0]]
+
+query I
+SELECT ST_DumpValues(ST_MapAlgebra(a.rast, b.rast, '[rast1] + [rast2]', NULL, 'FIRST', '[rast2]', '[rast1]', 99))::VARCHAR FROM a, b;
+----
+[[99.0, 10.0, 10.0, 10.0], [10.0, 10.0, 10.0, 13.0], [10.0, 10.0, 13.0, 13.0]]
+
+# SECOND: the extent of b
+query II
+SELECT ST_MetaData(r) = ST_MetaData(b.rast), ST_DumpValues(r)::VARCHAR FROM (SELECT b.rast, ST_MapAlgebra(a.rast, b.rast, '[rast1] + [rast2]', NULL, 'SECOND', '[rast2]', '[rast1]', 99) AS r FROM a, b) b;
+----
+true	[[10.0, 13.0, 3.0, 3.0], [13.0, 13.0, 3.0, 3.0], [3.0, 3.0, 3.0, 3.0]]
+
+# UNION: 6 x 4 pixels
+query II
+SELECT ST_MetaData(r)::VARCHAR, ST_DumpValues(r)::VARCHAR FROM (SELECT ST_MapAlgebra(a.rast, b.rast, '[rast1] + [rast2]', NULL, 'UNION', '[rast2]', '[rast1]', 99) AS r FROM a, b);
+----
+{'upperleftx': 0.0, 'upperlefty': 0.0, 'width': 6, 'height': 4, 'scalex': 1.0, 'scaley': -1.0, 'skewx': 0.0, 'skewy': 0.0, 'srid': 3857, 'numbands': 1}	[[99.0, 10.0, 10.0, 10.0, 99.0, 99.0], [10.0, 10.0, 10.0, 13.0, 3.0, 3.0], [10.0, 10.0, 13.0, 13.0, 3.0, 3.0], [99.0, 99.0, 3.0, 3.0, 3.0, 3.0]]
+
+query I
+SELECT ST_DumpValues(ST_MapAlgebra(a.rast, b.rast, '[rast1] + [rast2]', NULL, 'UNION'))::VARCHAR FROM a, b;
+----
+[[NULL, NULL, NULL, NULL, NULL, NULL], [NULL, NULL, NULL, 13.0, NULL, NULL], [NULL, NULL, 13.0, 13.0, NULL, NULL], [NULL, NULL, NULL, NULL, NULL, NULL]]
+
+# The pixel coordinates are those of each raster
+query I
+SELECT ST_DumpValues(ST_MapAlgebra(a.rast, b.rast, '[rast1.x] * 1000 + [rast1.y] * 100 + [rast2.x] * 10 + [rast2.y]', '32BSI'))::VARCHAR FROM a, b;
+----
+[[NULL, 4221.0], [3312.0, 4322.0]]
+
+# Swapping the rasters swaps the roles
+query I
+SELECT ST_DumpValues(ST_MapAlgebra(b.rast, a.rast, '[rast1] - [rast2]', NULL, 'UNION', '-[rast2]', '[rast1]'))::VARCHAR FROM a, b;
+----
+[[NULL, -10.0, -10.0, -10.0, NULL, NULL], [-10.0, -10.0, -10.0, -7.0, 3.0, 3.0], [-10.0, -10.0, -7.0, -7.0, 3.0, 3.0], [NULL, NULL, 3.0, 3.0, 3.0, 3.0]]
+
+# A raster with itself, against SQL arithmetic; and the difference with a shifted copy of a plane is constant
+query II
+SELECT count(*), bool_and(abs(p.val - o.val * o.val / 2) < 1e-6)
+FROM (SELECT unnest(ST_PixelAsPoints(ST_MapAlgebra(rast, rast, '[rast1] * [rast2] / 2', '64BF'))) AS p, unnest(ST_PixelAsPoints(rast)) AS o FROM dem);
+----
+767	true
+
+query III
+SELECT ST_Width(r), ST_Height(r), (SELECT bool_and(p.val = 11) FROM (SELECT unnest(ST_PixelAsPoints(r)) AS p))
+FROM (SELECT ST_MapAlgebra(rast, ST_SetUpperLeft(rast, 150010, 169970), '[rast1] - [rast2]', '32BF') AS r FROM dem);
+----
+31	21	true
+
+# No overlap
+query II
+SELECT ST_MapAlgebra(a.rast, ST_SetUpperLeft(b.rast, 100, 100), '[rast1] + [rast2]') IS NULL, ST_Width(ST_MapAlgebra(a.rast, ST_SetUpperLeft(b.rast, 100, 100), '[rast1] + [rast2]', NULL, 'FIRST')) FROM a, b;
+----
+true	4
+
+# NULL arguments
+query II
+SELECT ST_MapAlgebra(a.rast, NULL::RASTER, '[rast1]') IS NULL, ST_MapAlgebra(a.rast, b.rast, NULL) IS NULL FROM a, b;
+----
+true	true
+
+statement error
+SELECT ST_MapAlgebra(a.rast, ST_SetUpperLeft(b.rast, 2.5, -1), '[rast1] + [rast2]') FROM a, b;
+----
+the rasters must have the same alignment. The rasters (pixel corner coordinates) are not aligned
+
+statement error
+SELECT ST_MapAlgebra(a.rast, ST_SetSRID(b.rast, 4326), '[rast1] + [rast2]') FROM a, b;
+----
+The rasters have different SRIDs
+
+statement error
+SELECT ST_MapAlgebra(a.rast, b.rast, '[rast1] + [rast2]', NULL, 'EVERYWHERE') FROM a, b;
+----
+unknown extent type 'EVERYWHERE'
+
+statement error
+SELECT ST_MapAlgebra(a.rast, b.rast, '[rast] + [rast2]') FROM a, b;
+----
+ST_MapAlgebra: invalid expression
+
+statement error
+SELECT ST_MapAlgebra(a.rast, b.rast, '[rast1] + [rast2]', NULL, 'UNION', '[rast2] +') FROM a, b;
+----
+ST_MapAlgebra: invalid expression '[rast2] +'
+
+statement error
+SELECT ST_MapAlgebra(a.rast, 2, b.rast, 1, '[rast1] + [rast2]') FROM a, b;
+----
+Band 2 is out of range
+
+# Prepared statements: the rasters may be parameters, the expression is part of the statement
+statement ok
+PREPARE algebra AS SELECT ST_Value(ST_MapAlgebra(rast, '64BF', '[rast] + 1'), $1::INTEGER, 1)::INTEGER FROM dem;
+
+query I
+EXECUTE algebra(1);
+----
+106
+
+query I
+EXECUTE algebra(2);
+----
+108

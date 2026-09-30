@@ -1,0 +1,252 @@
+# name: test/sql/raster/raster_aggregates.test
+# group: [raster]
+
+require spatial
+
+# 32 x 24 pixels of 10 m, value 100 + 2x + 3y, pixel (5, 5) is NODATA
+statement ok
+CREATE TABLE dem AS SELECT rast FROM ST_ReadRaster('test/data/raster/dem.tif');
+
+statement ok
+CREATE TABLE tiles AS SELECT x, y, rast FROM ST_ReadRaster('test/data/raster/dem.tif', 5, 7);
+
+# a: 4 x 3 at (0, 0), value 10, NODATA 0, pixel (1, 1) is NODATA
+# b: 4 x 3 shifted by 2 columns and 1 row, value 3, NODATA -1, its pixel (1, 1) is NODATA
+statement ok
+CREATE TABLE ab AS
+SELECT 1 AS id, ST_SetValue(ST_AddBand(ST_MakeEmptyRaster(4, 3, 0, 0, 1, -1, 0, 0, 3857), '16BSI', 10, 0), 1, 1, NULL) AS rast
+UNION ALL
+SELECT 2, ST_SetValue(ST_AddBand(ST_MakeEmptyRaster(4, 3, 2, -1, 1, -1, 0, 0, 3857), '16BSI', 3, -1), 1, 1, NULL);
+
+#----------------------------------------------------------------------------------------------------------------------
+# ST_Union_Agg
+#----------------------------------------------------------------------------------------------------------------------
+
+# Putting the tiles of a raster back together gives the raster
+query IIII
+SELECT ST_MetaData(u) = ST_MetaData(rast), ST_DumpValues(u) = ST_DumpValues(rast), ST_BandPixelType(u), ST_BandNoDataValue(u)::INTEGER
+FROM (SELECT ST_Union_Agg(rast) AS u FROM tiles), dem;
+----
+true	true	32BF	-9999
+
+# In any order, and with any union type when the tiles do not overlap
+query II
+SELECT uniontype, ST_DumpValues(u) = ST_DumpValues(rast)
+FROM (SELECT uniontype, ST_Union_Agg(rast, uniontype ORDER BY hash(x * 31 + y)) AS u FROM tiles, (VALUES ('LAST'), ('FIRST'), ('MIN'), ('MAX'), ('SUM'), ('MEAN'), ('last')) t(uniontype) GROUP BY uniontype), dem
+ORDER BY uniontype;
+----
+FIRST	true
+LAST	true
+MAX	true
+MEAN	true
+MIN	true
+SUM	true
+last	true
+
+# Overlapping rasters: the union is 6 x 4 pixels
+query III
+SELECT ST_MetaData(u)::VARCHAR, ST_DumpValues(u)::VARCHAR, ST_BandNoDataValue(u)::INTEGER FROM (SELECT ST_Union_Agg(rast ORDER BY id) AS u FROM ab);
+----
+{'upperleftx': 0.0, 'upperlefty': 0.0, 'width': 6, 'height': 4, 'scalex': 1.0, 'scaley': -1.0, 'skewx': 0.0, 'skewy': 0.0, 'srid': 3857, 'numbands': 1}	[[NULL, 10.0, 10.0, 10.0, NULL, NULL], [10.0, 10.0, 10.0, 3.0, 3.0, 3.0], [10.0, 10.0, 3.0, 3.0, 3.0, 3.0], [NULL, NULL, 3.0, 3.0, 3.0, 3.0]]	0
+
+query I
+SELECT ST_DumpValues(ST_Union_Agg(rast, 'LAST' ORDER BY id)) = ST_DumpValues(ST_Union_Agg(rast ORDER BY id)) FROM ab;
+----
+true
+
+query I
+SELECT ST_DumpValues(ST_Union_Agg(rast, 'FIRST' ORDER BY id))::VARCHAR FROM ab;
+----
+[[NULL, 10.0, 10.0, 10.0, NULL, NULL], [10.0, 10.0, 10.0, 10.0, 3.0, 3.0], [10.0, 10.0, 10.0, 10.0, 3.0, 3.0], [NULL, NULL, 3.0, 3.0, 3.0, 3.0]]
+
+# Reversing the order swaps FIRST and LAST
+query I
+SELECT ST_DumpValues(ST_Union_Agg(rast, 'FIRST' ORDER BY id DESC)) = ST_DumpValues(ST_Union_Agg(rast, 'LAST' ORDER BY id)) FROM ab;
+----
+true
+
+query I
+SELECT ST_DumpValues(ST_Union_Agg(rast, 'MIN'))::VARCHAR FROM ab;
+----
+[[NULL, 10.0, 10.0, 10.0, NULL, NULL], [10.0, 10.0, 10.0, 3.0, 3.0, 3.0], [10.0, 10.0, 3.0, 3.0, 3.0, 3.0], [NULL, NULL, 3.0, 3.0, 3.0, 3.0]]
+
+query I
+SELECT ST_DumpValues(ST_Union_Agg(rast, 'MAX'))::VARCHAR FROM ab;
+----
+[[NULL, 10.0, 10.0, 10.0, NULL, NULL], [10.0, 10.0, 10.0, 10.0, 3.0, 3.0], [10.0, 10.0, 10.0, 10.0, 3.0, 3.0], [NULL, NULL, 3.0, 3.0, 3.0, 3.0]]
+
+query I
+SELECT ST_DumpValues(ST_Union_Agg(rast, 'SUM'))::VARCHAR FROM ab;
+----
+[[NULL, 10.0, 10.0, 10.0, NULL, NULL], [10.0, 10.0, 10.0, 13.0, 3.0, 3.0], [10.0, 10.0, 13.0, 13.0, 3.0, 3.0], [NULL, NULL, 3.0, 3.0, 3.0, 3.0]]
+
+query II
+SELECT ST_DumpValues(u)::VARCHAR, ST_BandPixelType(u) FROM (SELECT ST_Union_Agg(rast, 'MEAN') AS u FROM ab);
+----
+[[NULL, 10.0, 10.0, 10.0, NULL, NULL], [10.0, 10.0, 10.0, 6.5, 3.0, 3.0], [10.0, 10.0, 6.5, 6.5, 3.0, 3.0], [NULL, NULL, 3.0, 3.0, 3.0, 3.0]]	64BF
+
+query I
+SELECT ST_DumpValues(ST_Union_Agg(rast, 'RANGE'), 1, false)::VARCHAR FROM ab WHERE id = 1 OR id = 2;
+----
+[[0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 7.0, 0.0, 0.0], [0.0, 0.0, 7.0, 7.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]]
+
+# COUNT: every pixel has a count, there is no NODATA
+query III
+SELECT ST_DumpValues(u)::VARCHAR, ST_BandPixelType(u), ST_BandNoDataValue(u) IS NULL FROM (SELECT ST_Union_Agg(rast, 'COUNT') AS u FROM ab);
+----
+[[0.0, 1.0, 1.0, 1.0, 0.0, 0.0], [1.0, 1.0, 1.0, 2.0, 1.0, 1.0], [1.0, 1.0, 2.0, 2.0, 1.0, 1.0], [0.0, 0.0, 1.0, 1.0, 1.0, 1.0]]	32BUI	true
+
+# The union against the two-raster map algebra over the same extent
+query I
+SELECT ST_DumpValues(ST_Union_Agg(rast, 'SUM')) = (SELECT ST_DumpValues(ST_MapAlgebra(a.rast, b.rast, '[rast1] + [rast2]', NULL, 'UNION', '[rast2]', '[rast1]')) FROM ab a, ab b WHERE a.id = 1 AND b.id = 2) FROM ab;
+----
+true
+
+# Band selection, several bands
+statement ok
+CREATE TABLE rgb AS SELECT x, y, rast FROM ST_ReadRaster('test/data/raster/rgb.tif', 3, 4);
+
+query IIII
+SELECT ST_NumBands(u), ST_DumpValues(u, 1) = ST_DumpValues(rast, 1), ST_DumpValues(u, 2) = ST_DumpValues(rast, 2), ST_DumpValues(u, 3) = ST_DumpValues(rast, 3)
+FROM (SELECT ST_Union_Agg(rast) AS u FROM rgb), ST_ReadRaster('test/data/raster/rgb.tif');
+----
+3	true	true	true
+
+query III
+SELECT ST_NumBands(u), ST_DumpValues(u) = ST_DumpValues(rast, 2), ST_DumpValues(u2) = ST_DumpValues(rast, 3)
+FROM (SELECT ST_Union_Agg(rast, 2) AS u, ST_Union_Agg(rast, 3, 'MAX') AS u2 FROM rgb), ST_ReadRaster('test/data/raster/rgb.tif');
+----
+1	true	true
+
+# Groups, NULL rasters, empty groups
+query III
+SELECT y, ST_Width(ST_Union_Agg(rast)), ST_Height(ST_Union_Agg(rast)) FROM tiles GROUP BY y ORDER BY y;
+----
+0	32	7
+1	32	7
+2	32	7
+3	32	3
+
+query III
+SELECT ST_Width(ST_Union_Agg(CASE WHEN x < 2 THEN rast END)), ST_Union_Agg(rast) FILTER (WHERE x > 100) IS NULL, ST_Union_Agg(NULL::RASTER) IS NULL FROM tiles;
+----
+10	true	true
+
+# Thousands of single-pixel rasters
+query II
+SELECT ST_DumpValues(u) = ST_DumpValues(rast), ST_Count(u)
+FROM (SELECT ST_Union_Agg(tile) AS u FROM (SELECT unnest(ST_Tile(rast, 1, 1)) AS tile FROM dem)), dem;
+----
+true	767
+
+statement error
+SELECT ST_Union_Agg(CASE WHEN id = 1 THEN rast ELSE ST_SetUpperLeft(rast, 2.5, -1) END) FROM ab;
+----
+ST_Union_Agg: all rasters must have the same alignment. The rasters (pixel corner coordinates) are not aligned
+
+statement error
+SELECT ST_Union_Agg(CASE WHEN id = 1 THEN rast ELSE ST_AddBand(rast, rast) END ORDER BY id) FROM ab;
+----
+all rasters must have the same number of bands
+
+statement error
+SELECT ST_Union_Agg(rast, 'MEDIAN') FROM ab;
+----
+unknown union type 'MEDIAN'
+
+statement error
+SELECT ST_Union_Agg(rast, 2) FROM ab;
+----
+Band 2 is out of range
+
+statement error
+SELECT ST_Union_Agg(rast, 0) FROM ab;
+----
+band 0 is out of range
+
+# The geometry aggregate of the same name is untouched
+query I
+SELECT ST_Area(ST_Union_Agg(g))::INTEGER FROM (VALUES (ST_MakeEnvelope(0, 0, 2, 2)), (ST_MakeEnvelope(1, 0, 3, 2))) t(g);
+----
+6
+
+#----------------------------------------------------------------------------------------------------------------------
+# ST_Retile
+#----------------------------------------------------------------------------------------------------------------------
+
+# The 5 x 7 tiling rebuilt as 16 x 12 tiles at the same pixel size: the same pixels
+query IIII
+SELECT len(t), ST_MetaData(t[1])::VARCHAR, ST_UpperLeftX(t[4])::INTEGER, ST_UpperLeftY(t[4])::INTEGER
+FROM (SELECT ST_Retile(rast, ST_MakeEnvelope(150000, 169760, 150320, 170000), 10.0, 10.0, 16, 12) AS t FROM tiles);
+----
+4	{'upperleftx': 150000.0, 'upperlefty': 170000.0, 'width': 16, 'height': 12, 'scalex': 10.0, 'scaley': -10.0, 'skewx': 0.0, 'skewy': 0.0, 'srid': 31370, 'numbands': 1}	150160	169880
+
+query II
+SELECT ST_MetaData(u) = ST_MetaData(rast), ST_DumpValues(u) = ST_DumpValues(rast)
+FROM (SELECT ST_Union_Agg(t) AS u FROM (SELECT unnest(ST_Retile(rast, ST_MakeEnvelope(150000, 169760, 150320, 170000), 10.0, 10.0, 16, 12)) AS t FROM tiles)), dem;
+----
+true	true
+
+# Tiles that do not divide the extent extend beyond it; the part outside of the coverage is NODATA
+query IIII
+SELECT len(t), min(ST_Width(u)), min(ST_Height(u)), sum(ST_Count(u))
+FROM (SELECT t, unnest(t) AS u FROM (SELECT ST_Retile(rast, ST_MakeEnvelope(150000, 169760, 150320, 170000), 10.0, 10.0, 20, 20) AS t FROM tiles)) GROUP BY t;
+----
+4	20	20	767
+
+# At half the resolution, with another algorithm; the mean elevation is preserved
+query IIII
+SELECT count(*), sum(ST_Width(t) * ST_Height(t)), bool_and(ST_ScaleX(t) = 20 AND ST_ScaleY(t) = -20 AND ST_SRID(t) = 31370), abs((ST_SummaryStatsAgg(t)).mean - (SELECT (ST_SummaryStats(rast)).mean FROM dem)) < 1.5
+FROM (SELECT unnest(ST_Retile(rast, ST_MakeEnvelope(150000, 169760, 150320, 170000), 20.0, -20.0, 8, 6, 'Bilinear')) AS t FROM tiles);
+----
+4	192	true	true
+
+# Tiles without any raster under them are left out
+query II
+SELECT len(t), ST_UpperLeftX(t[1])::INTEGER FROM (SELECT ST_Retile(rast, ST_MakeEnvelope(149000, 169760, 150320, 170000), 10.0, 10.0, 100, 24) AS t FROM tiles);
+----
+1	150000
+
+query II
+SELECT len(ST_Retile(rast, ST_MakeEnvelope(0, 0, 100, 100), 10.0, 10.0, 5, 5))  , ST_Retile(rast, ST_MakeEnvelope(0, 0, 100, 100), 10.0, 10.0, 5, 5) FILTER (WHERE x > 100) IS NULL FROM tiles;
+----
+0	true
+
+# Several bands, groups
+query III
+SELECT len(t), ST_NumBands(t[1]), ST_Value(t[1], 3, 1, 1)::INTEGER FROM (SELECT ST_Retile(rast, ST_MakeEnvelope(4, 48, 8, 51), 0.5, 0.5, 8, 6) AS t FROM rgb);
+----
+1	3	30
+
+query II
+SELECT y, len(ST_Retile(rast, ST_MakeEnvelope(150000, 169760, 150320, 170000), 10.0, 10.0, 16, 12)) FROM tiles GROUP BY y ORDER BY y;
+----
+0	2
+1	4
+2	2
+3	2
+
+statement error
+SELECT ST_Retile(rast, ST_MakeEnvelope(150000, 169760, 150320, 170000), 0.0, 10.0, 16, 12) FROM tiles;
+----
+the pixel size and the tile size must be positive
+
+statement error
+SELECT ST_Retile(rast, ST_Point(1, 1), 10.0, 10.0, 16, 12) FROM tiles;
+----
+the extent must have an area
+
+statement error
+SELECT ST_Retile(CASE WHEN x = 0 THEN ST_SetSRID(rast, 4326) ELSE rast END, ST_MakeEnvelope(150000, 169760, 150320, 170000), 10.0, 10.0, 16, 12) FROM tiles;
+----
+all rasters must have the same coordinate system
+
+statement error
+SELECT ST_Retile(rast, ST_MakeEnvelope(150000, 169760, 150320, 170000), 10.0, 10.0, 16, 12, 'Fuzzy') FROM tiles;
+----
+Unknown resampling algorithm 'Fuzzy'
+
+statement error
+SELECT ST_Retile(rast, ST_MakeEnvelope(150000, 169760, 150320, 170000), 0.001, 0.001, 1, 1) FROM tiles;
+----
+outside of the supported range

@@ -1,6 +1,7 @@
 add_subdirectory(main)
 add_subdirectory(proj)
 add_subdirectory(gdal)
+add_subdirectory(raster)
 if(SPATIAL_USE_GEOS)
   add_subdirectory(geos)
   add_subdirectory(topology)
