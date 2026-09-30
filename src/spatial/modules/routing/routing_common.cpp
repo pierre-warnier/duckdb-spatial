@@ -471,7 +471,7 @@ void InsertInputBarrier(OptimizerExtensionInput &input, unique_ptr<LogicalOperat
 	if (bindings.empty()) {
 		return;
 	}
-	// Any column would do. The identifier is cheap to sort, and edges that arrive ordered do not have to be sorted again.
+	// Any column would do. The identifier is cheap to sort, and edges that arrive ordered are not sorted again.
 	auto &names = plan->Cast<LogicalGet>().input_table_names;
 	idx_t column = 0;
 	for (idx_t i = 0; i < child->types.size() && i < names.size(); i++) {
