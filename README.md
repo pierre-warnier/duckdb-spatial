@@ -1,8 +1,8 @@
 # DuckDB Spatial Extension (Enhanced Fork)
 
-This fork of [duckdb/duckdb-spatial](https://github.com/duckdb/duckdb-spatial) extends the DuckDB spatial extension with **220 additional functions**, a **native KNN spatial join operator**, a **GEOGRAPHY type**, a **RASTER type**, **PostGIS-style topologies**, **pgRouting-style network routing**, **DBSCAN/K-means clustering**, and significant **performance optimizations** to the spatial join pipeline. The goal is PostGIS parity and SedonaDB-competitive performance within DuckDB's analytical engine.
+This fork of [duckdb/duckdb-spatial](https://github.com/duckdb/duckdb-spatial) extends the DuckDB spatial extension with **220 additional functions**, a **native KNN spatial join operator**, a **GEOG type**, a **RASTER type**, **PostGIS-style topologies**, **pgRouting-style network routing**, **DBSCAN/K-means clustering**, and significant **performance optimizations** to the spatial join pipeline. The goal is PostGIS parity and SedonaDB-competitive performance within DuckDB's analytical engine.
 
-**385 documented functions** (vs. 165 upstream) | **223 tests / 12476 assertions** | Synced with upstream v1.5-variegata
+**385 documented functions** (vs. 165 upstream) | **225 tests / 12515 assertions** | Synced with upstream v1.5-variegata
 
 **Table of contents**
 - [What's new in this fork](#whats-new-in-this-fork)
@@ -11,6 +11,7 @@ This fork of [duckdb/duckdb-spatial](https://github.com/duckdb/duckdb-spatial) e
 - [Example Usage](#example-usage)
 - [Supported Functions](#supported-functions-and-documentation)
 - [Internals and Technical Details](#internals-and-technical-details)
+- [Benchmarks against PostGIS](docs/benchmarks.md)
 
 # What's new in this fork
 
@@ -34,20 +35,21 @@ Distances are planar, in the units of the coordinates: project longitude/latitud
 
 ## Geography
 
-A `GEOGRAPHY` type for longitude/latitude data on the WGS84 ellipsoid: edges are geodesics, polygons include their interior, and results are in meters and square meters.
+A `GEOG` type for longitude/latitude data on the WGS84 ellipsoid: edges are geodesics, polygons include their interior, and results are in meters and square meters.
 
 ```sql
 SELECT ST_Distance(ST_GeogPoint(4.3517, 50.8503), ST_GeogPoint(-74.006, 40.7128));   -- 5904542.0 m
-SELECT ST_Area('POLYGON((4 50, 5 50, 5 51, 4 51, 4 50))'::GEOGRAPHY);                -- 7892061583 m²
+SELECT ST_Area('POLYGON((4 50, 5 50, 5 51, 4 51, 4 50))'::GEOG);                -- 7892061583 m²
 SELECT ST_Buffer(geog, 500), ST_DWithin(geog, ST_GeogPoint(4.3517, 50.8503), 10000) FROM places;
 ```
 
-- Constructors: `ST_GeogPoint(lon, lat)`, `ST_GeogFromText` / `ST_GeogFromWKT`, `ST_GeogFromWKB`, and explicit casts from `VARCHAR` and `GEOMETRY`. Coordinates are always longitude then latitude, whatever `geometry_always_xy` says, and out-of-range values are rejected. A geometry that carries a CRS has to drop it first (`geom::GEOMETRY::GEOGRAPHY`): nothing is reprojected.
+- Constructors: `ST_GeogPoint(lon, lat)`, `ST_GeogFromText` / `ST_GeogFromWKT`, `ST_GeogFromWKB`, and explicit casts from `VARCHAR` and `GEOMETRY`. Coordinates are always longitude then latitude, whatever `geometry_always_xy` says, and out-of-range values are rejected. A geometry that carries a CRS has to drop it first (`geom::GEOMETRY::GEOG`): nothing is reprojected.
 - Geodesic overloads: `ST_Area`, `ST_Length`, `ST_Perimeter`, `ST_Distance`, `ST_DWithin`, `ST_Intersects`, `ST_Buffer`, `ST_Azimuth`, `ST_Project`, `ST_Segmentize`, `ST_AsText`, `ST_AsWKB`. Distances between edges are computed on the ellipsoid itself (checked against an independent implementation to a few nanometers), handle polygons around a pole or across the date line, and cost the product of the vertex counts in the worst case. `ST_Buffer` works in an azimuthal equidistant projection centered on the geography, so its accuracy decreases for geographies spanning hundreds of kilometers.
+- The type is named `GEOG`, not `GEOGRAPHY`: DuckDB plans a `GEOGRAPHY` type of its own for v2.0, and this one must not collide with it.
 - There is deliberately no implicit cast to `GEOMETRY`: the planar functions do not silently apply to geographies. Cast explicitly (`geog::GEOMETRY`) to use them.
 - An untyped string literal or `NULL` still resolves to the `GEOMETRY` overload of these functions, so existing calls bind as before; next to a geography argument, a string literal is read as a geography.
 - Joins on geography predicates run as regular joins, and R-tree indexes cannot be created on geography columns.
-- A geography is stored as WKB under its own type name, so the column keeps its type in databases of any storage version. Other formats see a plain `BLOB`: cast to `GEOMETRY` before exporting to GeoParquet or through GDAL, and cast the WKB back with `::GEOGRAPHY` when reading.
+- A geography is stored as WKB under its own type name, so the column keeps its type in databases of any storage version. Other formats see a plain `BLOB`: cast to `GEOMETRY` before exporting to GeoParquet or through GDAL, and cast the WKB back with `::GEOG` when reading.
 
 ## Raster
 
@@ -118,11 +120,14 @@ Also includes `ST_ClusterIntersecting` and `ST_ClusterWithin` aggregate function
 
 ## Performance
 
+Measured against PostGIS 3.5 / pgRouting 4.0 on the same machine and the same data, this fork is faster on all 22 operations of the benchmark, on one core as well as on all cores, with identical results: see [docs/benchmarks.md](docs/benchmarks.md) for the queries, the numbers and the method.
+
+- **Point-in-polygon joins**: `ST_Intersects`, `ST_Contains`, `ST_Within`, `ST_Covers` and `ST_CoveredBy` answer point-versus-polygon with an exact ray crossing count on the serialized polygon, without GEOS, and the spatial join keeps an index of the build-side polygons it tests (about 10x faster on one thread)
+- **Parallel overlays**: `ST_Intersection`, `ST_Difference` and `ST_Union` compute the rows of a chunk as parallel tasks when the geometries are large, so a few thousand big polygons use all the cores instead of one
 - **Spatial join pipeline**: envelope pre-check before R-tree descent, BFS-to-DFS traversal (better cache locality), Hilbert sort permutation for sequential row access (~1.7x measured), batch bbox extraction
 - **R-tree STR bulk loading**: full Sort-Tile-Recursive packing for the persistent R-tree index, improving query-time fan-out
 - **Hot-path cleanups**: `pow(x,2)` replaced with `x*x` across all distance kernels, `std::sort` replaces hand-rolled quicksort in FlatRTree
-- **Robust predicates**: Shewchuk adaptive-precision `orient2d` replaces the fast-but-wrong `orient2d_fast`, eliminating false positives in point-in-polygon and intersection tests near collinear edges
-- **Native ST_Intersects**: GEOMETRY-to-GEOMETRY intersection without GEOS fallback for the common bbox-miss and point-in-polygon cases
+- **Robust predicates**: Shewchuk adaptive-precision `orient2d` for exact point-in-polygon and intersection tests near collinear edges
 
 ## 220 New Functions (PostGIS parity)
 
@@ -157,7 +162,10 @@ Databases written by duckdb-spatial before DuckDB v1.5 (when GEOMETRY was a BLOB
 - `ST_3DDistance` / `ST_DFullyWithin` restricted to POINT inputs (vertex-only computation is incorrect for lines/polygons)
 - `ST_Intersects` fallback uses exact distance instead of bbox-only heuristic
 - `robust::init()` thread safety via `std::call_once`
-- Spatial join dirty validity mask fix (cherry-picked from upstream #812)
+- Spatial join dirty validity mask fix (cherry-picked from upstream #812), and the same fix for the KNN join, which silently dropped probe rows that followed a chunk containing NULL or empty geometries
+- `ST_ClusterDBSCAN` / `ST_ClusterKMeans` assigned cluster ids to the wrong rows when a partition spanned several chunks on several threads; cluster ids now follow their rows, and `PARTITION BY` works without `ORDER BY`
+- `ST_GeometryN` counts from 1 and returns NULL out of range, as in PostGIS (it counted from 0 and raised an error)
+- Scalar functions return a constant vector for constant arguments (an assertion failure in debug builds of DuckDB), and `ST_AsEncodedPolyline` no longer shifts negative values
 
 ---
 
