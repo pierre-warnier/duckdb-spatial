@@ -187,7 +187,7 @@ struct ST_GeogFromText {
 					variant.CanThrowErrors();
 				});
 				func.SetDescription(R"(
-					Creates a GEOGRAPHY from its WKT representation.
+					Creates a GEOG from its WKT representation.
 
 					The coordinates are longitude and latitude in degrees on WGS84, in that order. Longitudes outside of [-180, 180] and latitudes outside of [-90, 90] raise an error. `ST_GeogFromText`, `ST_GeogFromWKT` and `ST_GeographyFromText` are the same function.
 				)");
@@ -219,7 +219,7 @@ struct ST_GeogFromWKB {
 				variant.CanThrowErrors();
 			});
 			func.SetDescription(R"(
-				Creates a GEOGRAPHY from its WKB representation.
+				Creates a GEOG from its WKB representation.
 
 				The coordinates are longitude and latitude in degrees on WGS84, in that order. Longitudes outside of [-180, 180] and latitudes outside of [-90, 90] raise an error.
 			)");
@@ -253,7 +253,7 @@ struct ST_GeogPoint {
 				variant.SetFunction(Execute);
 				variant.CanThrowErrors();
 			});
-			func.SetDescription("Creates a GEOGRAPHY point from a longitude and a latitude in degrees on WGS84");
+			func.SetDescription("Creates a GEOG point from a longitude and a latitude in degrees on WGS84");
 			func.SetExample("SELECT ST_GeogPoint(4.3517, 50.8503);");
 			func.SetTag("ext", "spatial");
 			func.SetTag("category", "geography");
@@ -707,7 +707,7 @@ void RegisterGeographyModule(ExtensionLoader &loader) {
 	loader.RegisterCastFunction(geography_type, LogicalType::BLOB, GeographyToBlobCast);
 
 	// Untyped NULLs and string literals cast to every type at the same cost. The geography functions share their
-	// names with geometry functions, so make GEOGRAPHY the more expensive target to keep those calls unambiguous
+	// names with geometry functions, so make GEOG the more expensive target to keep those calls unambiguous
 	loader.RegisterCastFunction(LogicalType::SQLNULL, geography_type, BoundCastInfo(NullToGeographyCast), 190);
 	loader.RegisterCastFunction(LogicalType(LogicalTypeId::STRING_LITERAL), geography_type,
 	                            BoundCastInfo(VarcharToGeographyCast, nullptr, LocalState::InitCast), 90);

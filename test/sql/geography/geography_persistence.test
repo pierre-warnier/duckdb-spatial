@@ -1,5 +1,5 @@
 # name: test/sql/geography/geography_persistence.test
-# description: GEOGRAPHY columns keep their type across restarts and round-trip through Parquet as WKB
+# description: GEOG columns keep their type across restarts and round-trip through Parquet as WKB
 # group: [geography]
 
 require spatial
@@ -20,9 +20,9 @@ restart
 query TT
 SELECT name, typeof(geog) FROM places ORDER BY name;
 ----
-Antwerp	GEOGRAPHY
-Brussels	GEOGRAPHY
-Nowhere	GEOGRAPHY
+Antwerp	GEOG
+Brussels	GEOG
+Nowhere	GEOG
 
 query I
 SELECT abs(ST_Distance(a.geog, b.geog) - 41216.30710988012) < 1e-6
@@ -34,7 +34,7 @@ statement ok
 COPY places TO '__TEST_DIR__/geography_persistence.parquet';
 
 query TT
-SELECT name, geog::GEOGRAPHY FROM '__TEST_DIR__/geography_persistence.parquet' ORDER BY name;
+SELECT name, geog::GEOG FROM '__TEST_DIR__/geography_persistence.parquet' ORDER BY name;
 ----
 Antwerp	POINT (4.4025 51.2194)
 Brussels	POINT (4.3517 50.8503)

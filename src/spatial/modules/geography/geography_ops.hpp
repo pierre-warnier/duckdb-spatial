@@ -79,8 +79,19 @@ private:
 		idx_t ring_end;
 	};
 
+	struct Node {
+		Vec3 center;
+		double radius;
+		//! Range of segments for a leaf, of nodes otherwise
+		uint32_t beg;
+		uint32_t end;
+		bool is_leaf;
+	};
+
 	struct Shape {
 		vector<Segment> segments;
+		//! Bounding sphere hierarchy over the segments, the root is the last node
+		vector<Node> nodes;
 		vector<Ring> rings;
 		vector<Polygon> polygons;
 		//! One vertex of every connected component
@@ -91,6 +102,7 @@ private:
 
 		void Clear();
 		void ComputeBounds();
+		void BuildTree();
 	};
 
 	struct Foot {
@@ -104,6 +116,9 @@ private:
 	static double ChordDistance(const Segment &lhs, const Segment &rhs);
 	static double LowerBound(const Segment &segment, const Shape &shape);
 	static double LowerBound(const Segment &lhs, const Segment &rhs);
+	static double LowerBound(const Segment &segment, const Vec3 &center, double radius);
+	void Search(Segment &query, Shape &shape, uint32_t node_idx, double &best) const;
+	double MinDistance(double best, double stop_at);
 
 	void AddVertices(Shape &shape, const sgl::geometry &part) const;
 	void AddGeometry(Shape &shape, const sgl::geometry &geom);

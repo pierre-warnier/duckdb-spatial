@@ -78,6 +78,12 @@ Other test entry points:
 - `test/python/` holds pytest suites (GeoArrow, R-tree fuzzing) that need a DuckDB Python package built from the same submodule commit; see `test/python/README.md`.
 - `benchmark/*.benchmark` are DuckDB benchmark-runner files; build with `BUILD_BENCHMARK=1`.
 
+## Validation beyond the release suite
+
+- `GEN=ninja make relassert` builds with assertions and sanitizers; run the suite on it before pushing changes to vector handling, operators or aggregates. Running the files one by one (`./build/relassert/test/unittest <file>`) keeps going after an internal error, which aborts a whole-suite run.
+- The sqllogictest runner compares floating-point results with a tolerance of about 1%: write numeric checks as boolean comparisons (`abs(x - ref) < eps`), not as expected `DOUBLE` values.
+- `docs/benchmarks.md` describes the benchmark against PostGIS; it compares results as well as timings and has caught several correctness bugs.
+
 ## Generated documentation
 
 `docs/functions.md` is generated, not hand-edited. `generate_function_reference.py` runs `./build/debug/duckdb` and reads descriptions, examples and tags out of `duckdb_functions()`, so it needs a **debug** build and picks up whatever was passed to `SetDescription` / `SetExample` / `SetTag` at registration time. Regenerate it whenever a function is added or its signature changes, and keep the function counts in `README.md` in line.
@@ -119,6 +125,8 @@ There is no SQL syntax for the join operators; they are injected by an optimizer
 
 `FlatRTree` (transient, join-only) and the persistent R-tree index are separate implementations.
 
+A point-versus-polygon predicate is answered without GEOS by `util/point_in_area.hpp`. Around the evaluation of its predicate the join makes a `PreparedAreaCache` current (thread-local), which indexes build-side polygons by the address of their serialized form; this is only valid because build rows do not move while the join runs, and only for the argument the join passes its build side as.
+
 ### Persistent R-tree index
 
 `src/spatial/index/rtree/` implements `CREATE INDEX ... USING RTREE` as a DuckDB `BoundIndex`:
@@ -134,4 +142,4 @@ Each directory under `src/spatial/modules/` is self-contained and exposes one `R
 
 ### Fork-specific surface
 
-Relative to upstream, this fork adds the `GEOGRAPHY` type with geodesic operations (`modules/geography`, a named BLOB holding WKB, no implicit cast to GEOMETRY), a `RASTER` type and raster functions on GDAL (`modules/raster`, a named BLOB holding a GeoTIFF; it must be registered after every module whose aggregates it overloads, and `test/sql/raster/generate_examples_test.py` regenerates the test that runs the documentation examples), pgRouting-style network routing (`modules/routing`, table in-out functions taking the edges as a TABLE argument; an optimizer extension puts an ORDER BY under the function so the whole input arrives through one pipeline), PostGIS-style topologies (`modules/topology`, table functions that edit the topology tables through a separate connection in their own transaction), the KNN join operator, the clustering window/aggregate functions (`spatial_functions_window.cpp`, `ST_ClusterDBSCAN` / `ST_ClusterKMeans` / `ST_ClusterIntersecting` / `ST_ClusterWithin`), robust predicates in SGL, STR bulk loading for the R-tree index, GML/KML conversion, and the other PostGIS-parity functions listed in `README.md`. Upstream merges conflict most often in `spatial_functions_scalar.cpp`, `geos_module.cpp`, `spatial_join_optimizer.cpp` and `spatial_join_physical.cpp`.
+Relative to upstream, this fork adds the `GEOG` type with geodesic operations (`modules/geography`, a named BLOB holding WKB, no implicit cast to GEOMETRY), a `RASTER` type and raster functions on GDAL (`modules/raster`, a named BLOB holding a GeoTIFF; it must be registered after every module whose aggregates it overloads, and `test/sql/raster/generate_examples_test.py` regenerates the test that runs the documentation examples), pgRouting-style network routing (`modules/routing`, table in-out functions taking the edges as a TABLE argument; an optimizer extension puts an ORDER BY under the function so the whole input arrives through one pipeline), PostGIS-style topologies (`modules/topology`, table functions that edit the topology tables through a separate connection in their own transaction), the KNN join operator, the clustering window/aggregate functions (`spatial_functions_window.cpp`, `ST_ClusterDBSCAN` / `ST_ClusterKMeans` / `ST_ClusterIntersecting` / `ST_ClusterWithin`), robust predicates in SGL, STR bulk loading for the R-tree index, GML/KML conversion, and the other PostGIS-parity functions listed in `README.md`. Upstream merges conflict most often in `spatial_functions_scalar.cpp`, `geos_module.cpp`, `spatial_join_optimizer.cpp` and `spatial_join_physical.cpp`.

@@ -100,14 +100,14 @@
 | [`ST_ForcePolygonCW`](#st_forcepolygoncw) | Forces polygon exterior rings to be clockwise |
 | [`ST_FrechetDistance`](#st_frechetdistance) | Returns the Frechet distance between two geometries |
 | [`ST_FromGDALRaster`](#st_fromgdalraster) | Creates a raster from the bytes of a raster file in any format the bundled GDAL reads from memory (GeoTIFF and Erdas Imagine; see `ST_GDALDrivers()`). |
-| [`ST_GeogFromText`](#st_geogfromtext) | Creates a GEOGRAPHY from its WKT representation. |
-| [`ST_GeogFromWKB`](#st_geogfromwkb) | Creates a GEOGRAPHY from its WKB representation. |
-| [`ST_GeogFromWKT`](#st_geogfromwkt) | Creates a GEOGRAPHY from its WKT representation. |
-| [`ST_GeogPoint`](#st_geogpoint) | Creates a GEOGRAPHY point from a longitude and a latitude in degrees on WGS84 |
-| [`ST_GeographyFromText`](#st_geographyfromtext) | Creates a GEOGRAPHY from its WKT representation. |
+| [`ST_GeogFromText`](#st_geogfromtext) | Creates a GEOG from its WKT representation. |
+| [`ST_GeogFromWKB`](#st_geogfromwkb) | Creates a GEOG from its WKB representation. |
+| [`ST_GeogFromWKT`](#st_geogfromwkt) | Creates a GEOG from its WKT representation. |
+| [`ST_GeogPoint`](#st_geogpoint) | Creates a GEOG point from a longitude and a latitude in degrees on WGS84 |
+| [`ST_GeographyFromText`](#st_geographyfromtext) | Creates a GEOG from its WKT representation. |
 | [`ST_GeoHash`](#st_geohash) | Returns the GeoHash string of a geometry's centroid at the given precision |
 | [`ST_GeometricMedian`](#st_geometricmedian) | Returns the geometric median of a geometry's vertices (Weiszfeld algorithm) |
-| [`ST_GeometryN`](#st_geometryn) | Returns the Nth geometry from a geometry collection (0-indexed) |
+| [`ST_GeometryN`](#st_geometryn) | Returns the n-th geometry of a collection or multi-geometry, counting from 1 as in PostGIS and like `ST_PointN` and `ST_InteriorRingN`. |
 | [`ST_GeometryType`](#st_geometrytype) | Returns a 'GEOMETRY_TYPE' enum identifying the input geometry type. Possible enum return types are: `POINT`, `LINESTRING`, `POLYGON`, `MULTIPOINT`, `MULTILINESTRING`, `MULTIPOLYGON`, and `GEOMETRYCOLLECTION`. |
 | [`ST_GeomFromEWKB`](#st_geomfromewkb) | Creates a geometry from EWKB (Extended Well-Known Binary) data |
 | [`ST_GeomFromEWKT`](#st_geomfromewkt) | Parses an Extended WKT (EWKT) string, optionally with SRID prefix |
@@ -711,7 +711,7 @@ DOUBLE ST_Area (polygon POLYGON_2D)
 DOUBLE ST_Area (linestring LINESTRING_2D)
 DOUBLE ST_Area (point POINT_2D)
 DOUBLE ST_Area (box BOX_2D)
-DOUBLE ST_Area (geog GEOGRAPHY)
+DOUBLE ST_Area (geog GEOG)
 ```
 
 #### Description
@@ -1131,7 +1131,7 @@ VARCHAR ST_AsText (point POINT_2D)
 VARCHAR ST_AsText (linestring LINESTRING_2D)
 VARCHAR ST_AsText (polygon POLYGON_2D)
 VARCHAR ST_AsText (box BOX_2D)
-VARCHAR ST_AsText (geog GEOGRAPHY)
+VARCHAR ST_AsText (geog GEOG)
 ```
 
 #### Description
@@ -1203,7 +1203,7 @@ SELECT ST_AsTWKB(ST_Point(1, 2), 0)
 
 ```sql
 BLOB ST_AsWKB (geom GEOMETRY)
-BLOB ST_AsWKB (geog GEOGRAPHY)
+BLOB ST_AsWKB (geog GEOG)
 ```
 
 #### Description
@@ -1226,7 +1226,7 @@ st_aswkb(ST_GeomFromWKB(X'01010000000000000000000000000000000000000000000000000'
 ```sql
 DOUBLE ST_Azimuth (origin GEOMETRY, target GEOMETRY)
 DOUBLE ST_Azimuth (origin POINT_2D, target POINT_2D)
-DOUBLE ST_Azimuth (origin GEOGRAPHY, target GEOGRAPHY)
+DOUBLE ST_Azimuth (origin GEOG, target GEOG)
 ```
 
 #### Description
@@ -1428,8 +1428,8 @@ SELECT ST_AsText(ST_Box2dFromGeoHash('dr5regw3p'))
 GEOMETRY ST_Buffer (geom GEOMETRY, distance DOUBLE)
 GEOMETRY ST_Buffer (geom GEOMETRY, distance DOUBLE, num_triangles INTEGER)
 GEOMETRY ST_Buffer (geom GEOMETRY, distance DOUBLE, num_triangles INTEGER, cap_style VARCHAR, join_style VARCHAR, mitre_limit DOUBLE)
-GEOGRAPHY ST_Buffer (geog GEOGRAPHY, distance DOUBLE)
-GEOGRAPHY ST_Buffer (geog GEOGRAPHY, distance DOUBLE, num_triangles INTEGER)
+GEOG ST_Buffer (geog GEOG, distance DOUBLE)
+GEOG ST_Buffer (geog GEOG, distance DOUBLE, num_triangles INTEGER)
 ```
 
 #### Description
@@ -2064,7 +2064,7 @@ DOUBLE ST_Distance (point1 POINT_2D, point2 POINT_2D)
 DOUBLE ST_Distance (point POINT_2D, linestring LINESTRING_2D)
 DOUBLE ST_Distance (linestring LINESTRING_2D, point POINT_2D)
 DOUBLE ST_Distance (geom1 GEOMETRY, geom2 GEOMETRY)
-DOUBLE ST_Distance (geog1 GEOGRAPHY, geog2 GEOGRAPHY)
+DOUBLE ST_Distance (geog1 GEOG, geog2 GEOG)
 ```
 
 #### Description
@@ -2248,7 +2248,7 @@ SELECT ST_DumpValues(ST_SetValue(ST_AddBand(ST_MakeEmptyRaster(2, 2, 0, 0, 1), '
 
 ```sql
 BOOLEAN ST_DWithin (geom1 GEOMETRY, geom2 GEOMETRY, distance DOUBLE)
-BOOLEAN ST_DWithin (geog1 GEOGRAPHY, geog2 GEOGRAPHY, distance DOUBLE)
+BOOLEAN ST_DWithin (geog1 GEOG, geog2 GEOG, distance DOUBLE)
 ```
 
 #### Description
@@ -2609,12 +2609,12 @@ SELECT ST_Width(ST_FromGDALRaster(ST_AsGDALRaster(ST_AddBand(ST_MakeEmptyRaster(
 #### Signature
 
 ```sql
-GEOGRAPHY ST_GeogFromText (wkt VARCHAR)
+GEOG ST_GeogFromText (wkt VARCHAR)
 ```
 
 #### Description
 
-Creates a GEOGRAPHY from its WKT representation.
+Creates a GEOG from its WKT representation.
 
 The coordinates are longitude and latitude in degrees on WGS84, in that order. Longitudes outside of [-180, 180] and latitudes outside of [-90, 90] raise an error. `ST_GeogFromText`, `ST_GeogFromWKT` and `ST_GeographyFromText` are the same function.
 
@@ -2632,12 +2632,12 @@ SELECT ST_GeogFromText('POINT(4.3517 50.8503)');
 #### Signature
 
 ```sql
-GEOGRAPHY ST_GeogFromWKB (wkb BLOB)
+GEOG ST_GeogFromWKB (wkb BLOB)
 ```
 
 #### Description
 
-Creates a GEOGRAPHY from its WKB representation.
+Creates a GEOG from its WKB representation.
 
 The coordinates are longitude and latitude in degrees on WGS84, in that order. Longitudes outside of [-180, 180] and latitudes outside of [-90, 90] raise an error.
 
@@ -2655,12 +2655,12 @@ SELECT ST_GeogFromWKB(ST_AsWKB(ST_Point(4.3517, 50.8503)));
 #### Signature
 
 ```sql
-GEOGRAPHY ST_GeogFromWKT (wkt VARCHAR)
+GEOG ST_GeogFromWKT (wkt VARCHAR)
 ```
 
 #### Description
 
-Creates a GEOGRAPHY from its WKT representation.
+Creates a GEOG from its WKT representation.
 
 The coordinates are longitude and latitude in degrees on WGS84, in that order. Longitudes outside of [-180, 180] and latitudes outside of [-90, 90] raise an error. `ST_GeogFromText`, `ST_GeogFromWKT` and `ST_GeographyFromText` are the same function.
 
@@ -2678,12 +2678,12 @@ SELECT ST_GeogFromText('POINT(4.3517 50.8503)');
 #### Signature
 
 ```sql
-GEOGRAPHY ST_GeogPoint (longitude DOUBLE, latitude DOUBLE)
+GEOG ST_GeogPoint (longitude DOUBLE, latitude DOUBLE)
 ```
 
 #### Description
 
-Creates a GEOGRAPHY point from a longitude and a latitude in degrees on WGS84
+Creates a GEOG point from a longitude and a latitude in degrees on WGS84
 
 #### Example
 
@@ -2699,12 +2699,12 @@ SELECT ST_GeogPoint(4.3517, 50.8503);
 #### Signature
 
 ```sql
-GEOGRAPHY ST_GeographyFromText (wkt VARCHAR)
+GEOG ST_GeographyFromText (wkt VARCHAR)
 ```
 
 #### Description
 
-Creates a GEOGRAPHY from its WKT representation.
+Creates a GEOG from its WKT representation.
 
 The coordinates are longitude and latitude in degrees on WGS84, in that order. Longitudes outside of [-180, 180] and latitudes outside of [-90, 90] raise an error. `ST_GeogFromText`, `ST_GeogFromWKT` and `ST_GeographyFromText` are the same function.
 
@@ -2769,7 +2769,15 @@ GEOMETRY ST_GeometryN (geom GEOMETRY, n INTEGER)
 
 #### Description
 
-Returns the Nth geometry from a geometry collection (0-indexed)
+Returns the n-th geometry of a collection or multi-geometry, counting from 1 as in PostGIS and like `ST_PointN` and `ST_InteriorRingN`.
+
+A geometry that is not a collection is its own first element. Returns NULL when `n` is out of range.
+
+#### Example
+
+```sql
+SELECT ST_GeometryN('MULTIPOINT (0 0, 1 1, 2 2)'::GEOMETRY, 2);
+```
 
 ----
 
@@ -3407,7 +3415,7 @@ Returns the intersection of two geometries
 ```sql
 BOOLEAN ST_Intersects (box1 BOX_2D, box2 BOX_2D)
 BOOLEAN ST_Intersects (geom1 GEOMETRY, geom2 GEOMETRY)
-BOOLEAN ST_Intersects (geog1 GEOGRAPHY, geog2 GEOGRAPHY)
+BOOLEAN ST_Intersects (geog1 GEOG, geog2 GEOG)
 BOOLEAN ST_Intersects (rast RASTER, geom GEOMETRY)
 BOOLEAN ST_Intersects (rast RASTER, geom GEOMETRY, nband INTEGER)
 BOOLEAN ST_Intersects (geom GEOMETRY, rast RASTER)
@@ -3665,7 +3673,7 @@ Returns the largest empty circle within a geometry
 ```sql
 DOUBLE ST_Length (geom GEOMETRY)
 DOUBLE ST_Length (linestring LINESTRING_2D)
-DOUBLE ST_Length (geog GEOGRAPHY)
+DOUBLE ST_Length (geog GEOG)
 ```
 
 #### Description
@@ -4679,7 +4687,7 @@ Returns true if the geometries overlap
 DOUBLE ST_Perimeter (geom GEOMETRY)
 DOUBLE ST_Perimeter (polygon POLYGON_2D)
 DOUBLE ST_Perimeter (box BOX_2D)
-DOUBLE ST_Perimeter (geog GEOGRAPHY)
+DOUBLE ST_Perimeter (geog GEOG)
 ```
 
 #### Description
@@ -5111,7 +5119,7 @@ GEOMETRYCOLLECTION (POLYGON ((0 0, 0 10, 10 10, 10 0, 0 0)))
 
 ```sql
 GEOMETRY ST_Project (point GEOMETRY, distance DOUBLE, azimuth DOUBLE)
-GEOGRAPHY ST_Project (origin GEOGRAPHY, distance DOUBLE, azimuth DOUBLE)
+GEOG ST_Project (origin GEOG, distance DOUBLE, azimuth DOUBLE)
 ```
 
 #### Description
@@ -5705,7 +5713,7 @@ SELECT ST_AsText(ST_Scroll(ST_GeomFromText('LINESTRING(0 0, 1 0, 1 1, 0 1, 0 0)'
 
 ```sql
 GEOMETRY ST_Segmentize (geom GEOMETRY, max_segment_length DOUBLE)
-GEOGRAPHY ST_Segmentize (geog GEOGRAPHY, max_segment_length DOUBLE)
+GEOG ST_Segmentize (geog GEOG, max_segment_length DOUBLE)
 ```
 
 #### Description

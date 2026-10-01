@@ -1,5 +1,5 @@
 # name: test/sql/geography/geography.test
-# description: GEOGRAPHY type: constructors, casts, geodesic measures, distance, buffer
+# description: GEOG type: constructors, casts, geodesic measures, distance, buffer
 # group: [geography]
 
 require spatial
@@ -8,7 +8,7 @@ require spatial
 query TT
 SELECT typeof(ST_GeogPoint(4.3517, 50.8503)), ST_GeogPoint(4.3517, 50.8503);
 ----
-GEOGRAPHY	POINT (4.3517 50.8503)
+GEOG	POINT (4.3517 50.8503)
 
 query TTT
 SELECT ST_GeogFromText('POINT(1 2)'), ST_GeogFromWKT('LINESTRING(0 0, 1 1)'), ST_GeographyFromText('POLYGON((0 0, 1 0, 1 1, 0 0))');
@@ -21,7 +21,7 @@ SELECT ST_GeogFromWKB(ST_AsWKB(ST_Point(1, 2))), ST_AsText(ST_GeogFromWKB(ST_AsW
 POINT (1 2)	POINT (1 2)
 
 query TTT
-SELECT 'POINT(1 2)'::GEOGRAPHY, ST_Point(1, 2)::GEOGRAPHY, typeof(ST_GeogPoint(1, 2)::GEOMETRY);
+SELECT 'POINT(1 2)'::GEOG, ST_Point(1, 2)::GEOG, typeof(ST_GeogPoint(1, 2)::GEOMETRY);
 ----
 POINT (1 2)	POINT (1 2)	GEOMETRY
 
@@ -31,7 +31,7 @@ SELECT ST_GeogPoint(1, 2)::VARCHAR;
 POINT (1 2)
 
 query TTT
-SELECT ST_GeogPoint(NULL, 2), ST_GeogFromText(NULL), NULL::GEOMETRY::GEOGRAPHY;
+SELECT ST_GeogPoint(NULL, 2), ST_GeogFromText(NULL), NULL::GEOMETRY::GEOG;
 ----
 NULL	NULL	NULL
 
@@ -39,22 +39,22 @@ NULL	NULL	NULL
 statement error
 SELECT ST_GeogPoint(200, 2);
 ----
-GEOGRAPHY coordinates must be (longitude, latitude) in degrees
+GEOG coordinates must be (longitude, latitude) in degrees
 
 statement error
-SELECT ST_Point(4, 95)::GEOGRAPHY;
+SELECT ST_Point(4, 95)::GEOG;
 ----
-GEOGRAPHY coordinates must be (longitude, latitude) in degrees
+GEOG coordinates must be (longitude, latitude) in degrees
 
 statement error
-SELECT 'LINESTRING(0 0, 152000 167000)'::GEOGRAPHY;
+SELECT 'LINESTRING(0 0, 152000 167000)'::GEOG;
 ----
-GEOGRAPHY coordinates must be (longitude, latitude) in degrees
+GEOG coordinates must be (longitude, latitude) in degrees
 
 statement error
 SELECT ST_GeogFromWKB(ST_AsWKB(ST_Point(-181, 0)));
 ----
-GEOGRAPHY coordinates must be (longitude, latitude) in degrees
+GEOG coordinates must be (longitude, latitude) in degrees
 
 # There is no implicit cast to GEOMETRY: planar functions do not silently apply to geographies
 statement error
@@ -64,7 +64,7 @@ No function matches
 
 # Stored in tables
 statement ok
-CREATE TABLE places (name VARCHAR, geog GEOGRAPHY);
+CREATE TABLE places (name VARCHAR, geog GEOG);
 
 statement ok
 INSERT INTO places VALUES ('Brussels', ST_GeogPoint(4.3517, 50.8503)), ('Antwerp', 'POINT(4.4025 51.2194)'), ('New York', ST_GeogPoint(-74.006, 40.7128)), ('Nowhere', NULL);
@@ -72,7 +72,7 @@ INSERT INTO places VALUES ('Brussels', ST_GeogPoint(4.3517, 50.8503)), ('Antwerp
 query TT
 SELECT name, typeof(geog) FROM places ORDER BY name LIMIT 1;
 ----
-Antwerp	GEOGRAPHY
+Antwerp	GEOG
 
 statement error
 CREATE INDEX places_idx ON places USING RTREE (geog);
@@ -99,47 +99,47 @@ SELECT ST_Distance(ST_GeogPoint(0, 0), ST_GeogPoint(0, 0)), ST_Distance(geog, ST
 0.0	NULL
 
 query II
-SELECT ST_Distance('POINT EMPTY'::GEOGRAPHY, ST_GeogPoint(0, 0)), ST_DWithin('POINT EMPTY'::GEOGRAPHY, ST_GeogPoint(0, 0), 1e9);
+SELECT ST_Distance('POINT EMPTY'::GEOG, ST_GeogPoint(0, 0)), ST_DWithin('POINT EMPTY'::GEOG, ST_GeogPoint(0, 0), 1e9);
 ----
 NULL	false
 
 # Distance to an edge is measured to the geodesic, not to the straight line in longitude/latitude
 query I
-SELECT abs(ST_Distance('POINT(-72.1235 42.3521)'::GEOGRAPHY, 'LINESTRING(-72.1260 42.45, -72.123 42.1546)'::GEOGRAPHY) - 123.8016040841) < 1e-6;
+SELECT abs(ST_Distance('POINT(-72.1235 42.3521)'::GEOG, 'LINESTRING(-72.1260 42.45, -72.123 42.1546)'::GEOG) - 123.8016040841) < 1e-6;
 ----
 true
 
 # The geodesic between two points at 50N passes north of 50N in between
 query II
-SELECT ST_Distance('LINESTRING(0 50, 40 50)'::GEOGRAPHY, ST_GeogPoint(20, 50)) > 150000,
-       ST_Distance('LINESTRING(0 50, 40 50)'::GEOGRAPHY, ST_GeogPoint(20, 50)) < ST_Distance(ST_GeogPoint(0, 50), ST_GeogPoint(20, 50));
+SELECT ST_Distance('LINESTRING(0 50, 40 50)'::GEOG, ST_GeogPoint(20, 50)) > 150000,
+       ST_Distance('LINESTRING(0 50, 40 50)'::GEOG, ST_GeogPoint(20, 50)) < ST_Distance(ST_GeogPoint(0, 50), ST_GeogPoint(20, 50));
 ----
 true	true
 
 # Distance to a densified edge agrees with the distance to the edge
 query I
-SELECT abs(ST_Distance('LINESTRING(0 50, 40 50)'::GEOGRAPHY, ST_GeogPoint(15, 49))
+SELECT abs(ST_Distance('LINESTRING(0 50, 40 50)'::GEOG, ST_GeogPoint(15, 49))
          - (SELECT min(ST_Distance(ST_GeogFromWKB(ST_AsWKB(p.geom)), ST_GeogPoint(15, 49)))
-            FROM (SELECT unnest(ST_Dump(ST_Points(ST_Segmentize('LINESTRING(0 50, 40 50)'::GEOGRAPHY, 100)::GEOMETRY))) AS p))) < 0.01;
+            FROM (SELECT unnest(ST_Dump(ST_Points(ST_Segmentize('LINESTRING(0 50, 40 50)'::GEOG, 100)::GEOMETRY))) AS p))) < 0.01;
 ----
 true
 
 # Crossing edges, parallel edges
 query II
-SELECT ST_Distance('LINESTRING(0 0, 10 10)'::GEOGRAPHY, 'LINESTRING(0 10, 10 0)'::GEOGRAPHY),
-       abs(ST_Distance('LINESTRING(0 0, 10 0)'::GEOGRAPHY, 'LINESTRING(0 1, 10 1)'::GEOGRAPHY) - ST_Distance(ST_GeogPoint(0, 0), ST_GeogPoint(0, 1))) < 1e-6;
+SELECT ST_Distance('LINESTRING(0 0, 10 10)'::GEOG, 'LINESTRING(0 10, 10 0)'::GEOG),
+       abs(ST_Distance('LINESTRING(0 0, 10 0)'::GEOG, 'LINESTRING(0 1, 10 1)'::GEOG) - ST_Distance(ST_GeogPoint(0, 0), ST_GeogPoint(0, 1))) < 1e-6;
 ----
 0.0	true
 
 # Polygons include their interior
 statement ok
 CREATE TABLE polys AS SELECT * FROM (VALUES
-	('square', 'POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))'::GEOGRAPHY),
-	('donut', 'POLYGON((0 0, 10 0, 10 10, 0 10, 0 0), (4 4, 6 4, 6 6, 4 6, 4 4))'::GEOGRAPHY),
-	('north cap', 'POLYGON((0 80, 90 80, 180 80, -90 80, 0 80))'::GEOGRAPHY),
-	('north cap, clockwise', 'POLYGON((0 80, -90 80, 180 80, 90 80, 0 80))'::GEOGRAPHY),
-	('south cap', 'POLYGON((0 -80, 90 -80, 180 -80, -90 -80, 0 -80))'::GEOGRAPHY),
-	('date line', 'POLYGON((170 -10, -170 -10, -170 10, 170 10, 170 -10))'::GEOGRAPHY)
+	('square', 'POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))'::GEOG),
+	('donut', 'POLYGON((0 0, 10 0, 10 10, 0 10, 0 0), (4 4, 6 4, 6 6, 4 6, 4 4))'::GEOG),
+	('north cap', 'POLYGON((0 80, 90 80, 180 80, -90 80, 0 80))'::GEOG),
+	('north cap, clockwise', 'POLYGON((0 80, -90 80, 180 80, 90 80, 0 80))'::GEOG),
+	('south cap', 'POLYGON((0 -80, 90 -80, 180 -80, -90 -80, 0 -80))'::GEOG),
+	('date line', 'POLYGON((170 -10, -170 -10, -170 10, 170 10, 170 -10))'::GEOG)
 ) t(name, geog);
 
 query TI
@@ -185,13 +185,13 @@ true	false
 
 # Inside the hole of the donut the distance is to the inner ring
 query II
-SELECT abs(ST_Distance(geog, ST_GeogPoint(5, 5)) - ST_Distance('LINESTRING(4 4, 6 4)'::GEOGRAPHY, ST_GeogPoint(5, 5))) < 1e-6, ST_Distance(geog, ST_GeogPoint(2, 2)) FROM polys WHERE name = 'donut';
+SELECT abs(ST_Distance(geog, ST_GeogPoint(5, 5)) - ST_Distance('LINESTRING(4 4, 6 4)'::GEOG, ST_GeogPoint(5, 5))) < 1e-6, ST_Distance(geog, ST_GeogPoint(2, 2)) FROM polys WHERE name = 'donut';
 ----
 true	0.0
 
 query II
-SELECT ST_Distance(a.geog, 'POLYGON((4.5 4.5, 5.5 4.5, 5.5 5.5, 4.5 5.5, 4.5 4.5))'::GEOGRAPHY) = 0,
-       ST_Distance(b.geog, 'POLYGON((4.5 4.5, 5.5 4.5, 5.5 5.5, 4.5 5.5, 4.5 4.5))'::GEOGRAPHY) > 50000
+SELECT ST_Distance(a.geog, 'POLYGON((4.5 4.5, 5.5 4.5, 5.5 5.5, 4.5 5.5, 4.5 4.5))'::GEOG) = 0,
+       ST_Distance(b.geog, 'POLYGON((4.5 4.5, 5.5 4.5, 5.5 5.5, 4.5 5.5, 4.5 4.5))'::GEOG) > 50000
 FROM polys a, polys b WHERE a.name = 'square' AND b.name = 'donut';
 ----
 true	true
@@ -222,14 +222,14 @@ SELECT count(*) FROM places a JOIN places b ON ST_DWithin(a.geog, b.geog, 100000
 
 # Area: the interior of a ring is its smaller side, whatever the winding
 query II
-SELECT abs(ST_Area('POLYGON((4 50, 5 50, 5 51, 4 51, 4 50))'::GEOGRAPHY) - 7892061583.206543) < 1e-3,
-       abs(ST_Area('POLYGON((4 50, 4 51, 5 51, 5 50, 4 50))'::GEOGRAPHY) - 7892061583.206543) < 1e-3;
+SELECT abs(ST_Area('POLYGON((4 50, 5 50, 5 51, 4 51, 4 50))'::GEOG) - 7892061583.206543) < 1e-3,
+       abs(ST_Area('POLYGON((4 50, 4 51, 5 51, 5 50, 4 50))'::GEOG) - 7892061583.206543) < 1e-3;
 ----
 true	true
 
 # ST_Area_Spheroid takes latitude, longitude
 query I
-SELECT abs(ST_Area('POLYGON((4 50, 5 50, 5 51, 4 51, 4 50))'::GEOGRAPHY) - ST_Area_Spheroid('POLYGON((50 4, 50 5, 51 5, 51 4, 50 4))'::GEOMETRY)) < 1e-3;
+SELECT abs(ST_Area('POLYGON((4 50, 5 50, 5 51, 4 51, 4 50))'::GEOG) - ST_Area_Spheroid('POLYGON((50 4, 50 5, 51 5, 51 4, 50 4))'::GEOMETRY)) < 1e-3;
 ----
 true
 
@@ -244,26 +244,26 @@ SELECT abs(a.area - b.area) < 1 FROM (SELECT ST_Area(geog) AS area FROM polys WH
 true
 
 query I
-SELECT abs(d.area - (s.area - ST_Area('POLYGON((4 4, 6 4, 6 6, 4 6, 4 4))'::GEOGRAPHY))) < 1e-3
+SELECT abs(d.area - (s.area - ST_Area('POLYGON((4 4, 6 4, 6 6, 4 6, 4 4))'::GEOG))) < 1e-3
 FROM (SELECT ST_Area(geog) AS area FROM polys WHERE name = 'donut') d, (SELECT ST_Area(geog) AS area FROM polys WHERE name = 'square') s;
 ----
 true
 
 query III
-SELECT ST_Area(ST_GeogPoint(1, 2)), ST_Area('LINESTRING(0 0, 1 1)'::GEOGRAPHY), ST_Area('MULTIPOLYGON(((4 50, 5 50, 5 51, 4 51, 4 50)), ((14 50, 15 50, 15 51, 14 51, 14 50)))'::GEOGRAPHY) = 2 * ST_Area('POLYGON((4 50, 5 50, 5 51, 4 51, 4 50))'::GEOGRAPHY);
+SELECT ST_Area(ST_GeogPoint(1, 2)), ST_Area('LINESTRING(0 0, 1 1)'::GEOG), ST_Area('MULTIPOLYGON(((4 50, 5 50, 5 51, 4 51, 4 50)), ((14 50, 15 50, 15 51, 14 51, 14 50)))'::GEOG) = 2 * ST_Area('POLYGON((4 50, 5 50, 5 51, 4 51, 4 50))'::GEOG);
 ----
 0.0	0.0	true
 
 # Length and perimeter
 query III
-SELECT abs(ST_Length('LINESTRING(4.3517 50.8503, 4.4025 51.2194)'::GEOGRAPHY) - 41216.30710988012) < 1e-6,
-       ST_Length('POLYGON((4 50, 5 50, 5 51, 4 51, 4 50))'::GEOGRAPHY),
-       abs(ST_Perimeter('POLYGON((4 50, 5 50, 5 51, 4 51, 4 50))'::GEOGRAPHY) - 364369.7208799893) < 1e-6;
+SELECT abs(ST_Length('LINESTRING(4.3517 50.8503, 4.4025 51.2194)'::GEOG) - 41216.30710988012) < 1e-6,
+       ST_Length('POLYGON((4 50, 5 50, 5 51, 4 51, 4 50))'::GEOG),
+       abs(ST_Perimeter('POLYGON((4 50, 5 50, 5 51, 4 51, 4 50))'::GEOG) - 364369.7208799893) < 1e-6;
 ----
 true	0.0	true
 
 query I
-SELECT abs(ST_Length('LINESTRING(0 0, 10 0, 10 10)'::GEOGRAPHY) - (ST_Distance(ST_GeogPoint(0, 0), ST_GeogPoint(10, 0)) + ST_Distance(ST_GeogPoint(10, 0), ST_GeogPoint(10, 10)))) < 1e-6;
+SELECT abs(ST_Length('LINESTRING(0 0, 10 0, 10 10)'::GEOG) - (ST_Distance(ST_GeogPoint(0, 0), ST_GeogPoint(10, 0)) + ST_Distance(ST_GeogPoint(10, 0), ST_GeogPoint(10, 10)))) < 1e-6;
 ----
 true
 
@@ -275,26 +275,26 @@ SELECT abs(ST_Distance(ST_GeogPoint(4.3517, 50.8503), ST_Project(ST_GeogPoint(4.
 true	POINT (0 0)
 
 statement error
-SELECT ST_Project('LINESTRING(0 0, 1 1)'::GEOGRAPHY, 10, 0);
+SELECT ST_Project('LINESTRING(0 0, 1 1)'::GEOG, 10, 0);
 ----
 ST_Project only accepts non-empty POINT geographies
 
 # ST_Segmentize adds vertices along the geodesic
 query III
 SELECT ST_NPoints(s::GEOMETRY), abs(ST_Length(s) - ST_Length(g)) < 1e-6, round(ST_Y(ST_PointN(s::GEOMETRY, 31)), 2)
-FROM (SELECT g, ST_Segmentize(g, 100000) AS s FROM (SELECT 'LINESTRING(4.3517 50.8503, -74.006 40.7128)'::GEOGRAPHY AS g));
+FROM (SELECT g, ST_Segmentize(g, 100000) AS s FROM (SELECT 'LINESTRING(4.3517 50.8503, -74.006 40.7128)'::GEOG AS g));
 ----
 61	true	52.92
 
 query I
-SELECT ST_AsText(ST_Segmentize('POLYGON((0 0, 1 0, 1 1, 0 0))'::GEOGRAPHY, 1e9));
+SELECT ST_AsText(ST_Segmentize('POLYGON((0 0, 1 0, 1 1, 0 0))'::GEOG, 1e9));
 ----
 POLYGON ((0 0, 1 0, 1 1, 0 0))
 
 query IIII
-SELECT max(ST_Distance(ST_PointN(g, i::INT)::GEOGRAPHY, ST_PointN(g, i::INT + 1)::GEOGRAPHY)) <= 1000.0000001, count(*) > 70,
+SELECT max(ST_Distance(ST_PointN(g, i::INT)::GEOG, ST_PointN(g, i::INT + 1)::GEOG)) <= 1000.0000001, count(*) > 70,
        max(ST_Z(ST_PointN(g, i::INT + 1))), min(ST_Z(ST_PointN(g, i::INT)))
-FROM (SELECT ST_Segmentize('LINESTRING Z(0 0 0, 0.5 0.5 100)'::GEOGRAPHY, 1000)::GEOMETRY AS g), range(1, 1000) t(i)
+FROM (SELECT ST_Segmentize('LINESTRING Z(0 0 0, 0.5 0.5 100)'::GEOG, 1000)::GEOMETRY AS g), range(1, 1000) t(i)
 WHERE i < ST_NPoints(g);
 ----
 true	true	100.0	0.0
@@ -315,7 +315,7 @@ true	true
 query II
 SELECT typeof(ST_Buffer(ST_GeogPoint(0, 89.99), 5000)), ST_NPoints(ST_Buffer(ST_GeogPoint(4, 50), 1000, 16)::GEOMETRY);
 ----
-GEOGRAPHY	65
+GEOG	65
 
 # A buffer around the pole contains it, a buffer across the date line contains points on both sides
 query III
@@ -326,34 +326,34 @@ SELECT ST_Intersects(ST_Buffer(ST_GeogPoint(0, 89.99), 5000), ST_GeogPoint(123, 
 true	true	false
 
 query I
-SELECT abs(ST_Area(ST_Buffer('LINESTRING(4 50, 4.1 50)'::GEOGRAPHY, 500, 32)) - (2 * 500 * ST_Length('LINESTRING(4 50, 4.1 50)'::GEOGRAPHY) + pi() * 500 * 500)) / ST_Area(ST_Buffer('LINESTRING(4 50, 4.1 50)'::GEOGRAPHY, 500, 32)) < 1e-3;
+SELECT abs(ST_Area(ST_Buffer('LINESTRING(4 50, 4.1 50)'::GEOG, 500, 32)) - (2 * 500 * ST_Length('LINESTRING(4 50, 4.1 50)'::GEOG) + pi() * 500 * 500)) / ST_Area(ST_Buffer('LINESTRING(4 50, 4.1 50)'::GEOG, 500, 32)) < 1e-3;
 ----
 true
 
 query II
-SELECT ST_Buffer('POINT EMPTY'::GEOGRAPHY, 10), ST_Buffer(NULL::GEOGRAPHY, 10);
+SELECT ST_Buffer('POINT EMPTY'::GEOG, 10), ST_Buffer(NULL::GEOG, 10);
 ----
 NULL	NULL
 
 # Geometries with a CRS have to drop it first: there is no reprojection
 statement error
-SELECT ST_Point(1, 2)::GEOMETRY('EPSG:3812')::GEOGRAPHY;
+SELECT ST_Point(1, 2)::GEOMETRY('EPSG:3812')::GEOG;
 ----
 Unimplemented type for cast
 
 # Casting to and from BLOB goes through WKB
 query II
-SELECT ST_GeogPoint(1, 2)::BLOB = ST_AsWKB(ST_Point(1, 2)), ST_AsWKB(ST_Point(1, 2))::GEOGRAPHY;
+SELECT ST_GeogPoint(1, 2)::BLOB = ST_AsWKB(ST_Point(1, 2)), ST_AsWKB(ST_Point(1, 2))::GEOG;
 ----
 true	POINT (1 2)
 
 statement error
-SELECT ST_AsWKB(ST_Point(1, 200))::GEOGRAPHY;
+SELECT ST_AsWKB(ST_Point(1, 200))::GEOG;
 ----
-GEOGRAPHY coordinates must be (longitude, latitude) in degrees
+GEOG coordinates must be (longitude, latitude) in degrees
 
 query T
-SELECT ST_Transform(ST_Point(650000, 667000)::GEOMETRY('EPSG:3812'), 'OGC:CRS84')::GEOMETRY::GEOGRAPHY IS NOT NULL;
+SELECT ST_Transform(ST_Point(650000, 667000)::GEOMETRY('EPSG:3812'), 'OGC:CRS84')::GEOMETRY::GEOG IS NOT NULL;
 ----
 true
 
@@ -377,7 +377,7 @@ SELECT ST_Distance(ST_GeogPoint(0, 0), 'POINT(0 0)'), ST_DWithin(ST_GeogPoint(0,
 statement error
 SELECT ST_Distance(ST_GeogPoint(0, 0), 'POINT(500 0)');
 ----
-GEOGRAPHY coordinates must be (longitude, latitude) in degrees
+GEOG coordinates must be (longitude, latitude) in degrees
 
 # Azimuth of a geodesic, clockwise from north
 query III
@@ -393,6 +393,6 @@ SELECT abs(ST_Distance(ST_Project(ST_GeogPoint(4.3517, 50.8503), 41216.307109880
 true
 
 statement error
-SELECT ST_Azimuth('LINESTRING(0 0, 1 1)'::GEOGRAPHY, ST_GeogPoint(0, 0));
+SELECT ST_Azimuth('LINESTRING(0 0, 1 1)'::GEOG, ST_GeogPoint(0, 0));
 ----
 ST_Azimuth only accepts non-empty POINT geographies

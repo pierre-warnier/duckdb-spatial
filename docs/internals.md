@@ -1,5 +1,7 @@
 # Spatial Internals
 
+> The first sections below come from the upstream extension and predate DuckDB v1.5. Since v1.5 `GEOMETRY` is a type of DuckDB itself (stored as WKB, optionally carrying a coordinate reference system) rather than a `BLOB` alias defined by this extension; the columnar `POINT_2D`, `LINESTRING_2D`, `POLYGON_2D` and `BOX_2D` types are unchanged. The [last section](#additions-of-this-fork) describes what this fork adds.
+
 ## Multi-tiered Geometry Type System
 This extension implements 5 different geometry types. Like almost all geospatial databases we include a `GEOMETRY` type that (at least strives) to follow the Simple Features geometry model. This includes support for the standard subtypes, such as `POINT`, `LINESTRING`, `POLYGON`, `MULTIPOINT`, `MULTILINESTRING`, `MULTIPOLYGON`, `GEOMETRYCOLLECTION` that we all know and love, internally represented in a row-wise fashion on top of DuckDB `BLOB`s. The internal binary format is very similar to the one used by PostGIS - basically `double` aligned WKB, and we may eventually look into enforcing the format to be properly compatible with PostGIS (which may be useful for the PostGIS scanner extension). Most functions that are implemented for this type uses the [GEOS library](https://github.com/libgeos/geos), which is a battle-tested C++ port of the famous `JTS` library, to perform the actual operations on the geometries.
 
@@ -85,3 +87,32 @@ Note that far from all of these formats have been tested properly, if you run in
 `ST_Read` also allows using GDAL's virtual filesystem abstractions to read data from remote sources such as S3, or from compressed archives such as zip files.
 
 **Note**: This functionality does not make full use of parallelism due to GDAL not being thread-safe, so you should expect this to be slower than using e.g. the DuckDB Parquet extension to read the same GeoParquet or DuckDBs native csv reader to read csv files. Once we implement support for reading more vector formats natively through this extension (e.g. GeoJSON, GeoBuf, ShapeFile) we will probably split this entire GDAL part into a separate extension.
+
+## Additions of this fork
+
+### KNN join
+`ST_KNN(a, b, k [, partition])` is a marker function that only the optimizer understands: it replaces the join with a `SPATIAL_KNN_JOIN` operator. The build side is indexed in a flat R-tree (one per partition value). For each probe row the tree yields candidates by increasing bounding-box distance, a lower bound of the real distance; candidates are refined with the exact geometry distance and the search stops when the next lower bound cannot beat the current k-th best. The result is therefore exact for any geometry type, not only points.
+
+### Point in polygon
+A point-versus-polygon predicate never goes through GEOS. `ST_Intersects`, `ST_Contains`, `ST_Within`, `ST_Covers` and `ST_CoveredBy` locate the point with a ray crossing count over the serialized polygon, using the exact orientation predicate, and derive their answer from the location (interior, boundary or exterior). Inside a spatial join, the serialized polygons of the build side do not move for as long as the join runs, so each thread keeps a y-interval index of the rings it has tested, keyed by the address of the polygon; a test then only reads the edges level with the point. Outside of a join nothing can be cached and the polygon is scanned linearly.
+
+### Parallel overlays
+DuckDB parallelizes over the rows of the scanned tables, in units of about 120 000 rows, so a table of a few thousand large polygons is processed by one thread. `ST_Intersection`, `ST_Difference` and `ST_Union` therefore look at the chunk they are given: above 256 KB of input geometry, the rows are computed as tasks of DuckDB's scheduler (each with its own GEOS context) while the calling thread takes part, and the results are copied into the result vector afterwards. Below the threshold the functions run as before.
+
+### Clustering window functions
+`ST_ClusterDBSCAN` and `ST_ClusterKMeans` are aggregates with a window callback: the whole partition is clustered once, and the callback hands out the value of the current row. DuckDB does not tell a window callback which row it is evaluating, only its frame, so an optimizer rule gives these functions the frame `ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW`, whose end is the position of the row. DBSCAN finds neighbours through a grid of cells of size `eps`.
+
+### Geography
+`GEOG` is a `BLOB` holding WKB under its own type name, with longitude/latitude coordinates on WGS84 and geodesic edges. It is deliberately not a `GEOMETRY`: there is no implicit cast, so planar functions do not apply to it by accident, and it keeps its type in databases of any storage version. Areas, lengths and point distances use GeographicLib. The distance to an edge is solved on the ellipsoid by iterating the spherical solution along the geodesic; pairs of edges are pruned with a chord-distance bound; point-in-polygon counts meridian crossings, which handles rings around a pole and across the antimeridian.
+
+### Raster
+`RASTER` is a `BLOB` holding an uncompressed GeoTIFF, opened by GDAL from memory without a copy. Functions are thin wrappers over GDAL (warp, DEM processing, rasterize, polygonize) plus native code for pixel access, statistics and map algebra. `ST_MapAlgebra` binds its expression with DuckDB's own binder against a synthetic pixel row and evaluates it with the vectorized expression executor, so any scalar SQL expression can be used.
+
+### Topology
+A topology is a schema with `node`, `edge_data` and `face` tables, as in PostGIS. The functions are table functions that run once per call and edit those tables through a separate connection, in a transaction of their own: DuckDB does not let a function modify tables in the statement that calls it. The computation happens in C++ on the rows around the edit.
+
+### Routing
+The `pgr_*` functions are table in-out functions: the edge table is a table-valued argument that streams into the function, which builds a compressed adjacency structure and runs the algorithm when the input ends. Since a table in-out function is flushed at the end of every pipeline that feeds it, an optimizer rule places a sort under the function so that the whole input arrives through a single pipeline.
+
+### Overloads and untyped arguments
+Several names are shared by the geometry, geography and raster versions of a function. Casting an untyped `NULL` or a string literal to `GEOG` or `RASTER` is registered with a higher cost than casting it to `GEOMETRY`, so calls written before these types existed keep resolving to the geometry functions.

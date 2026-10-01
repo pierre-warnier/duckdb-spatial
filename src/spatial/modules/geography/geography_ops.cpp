@@ -39,7 +39,7 @@ const sgl::geometry *FirstPart(const sgl::geometry &geom) {
 
 void VerifyVertex(void *, const sgl::vertex_xy &vertex) {
 	if (!(vertex.x >= -180.0 && vertex.x <= 180.0 && vertex.y >= -90.0 && vertex.y <= 90.0)) {
-		throw InvalidInputException("GEOGRAPHY coordinates must be (longitude, latitude) in degrees, with longitude in "
+		throw InvalidInputException("GEOG coordinates must be (longitude, latitude) in degrees, with longitude in "
 		                            "[-180, 180] and latitude in [-90, 90], got (%s, %s)",
 		                            std::to_string(vertex.x), std::to_string(vertex.y));
 	}
@@ -553,6 +553,129 @@ void GeographyOps::Shape::ComputeBounds() {
 			radius = std::max(radius, std::sqrt(dx * dx + dy * dy + dz * dz) + segment.sagitta);
 		}
 	}
+	BuildTree();
+}
+
+// A hierarchy of bounding spheres over the segments, in their order: consecutive edges of a line or ring are close
+// to each other, so groups of consecutive segments make tight spheres without any sorting.
+void GeographyOps::Shape::BuildTree() {
+	static constexpr uint32_t FANOUT = 8;
+	nodes.clear();
+
+	const auto distance = [](const Vec3 &a, const Vec3 &b) {
+		const auto dx = a.x - b.x;
+		const auto dy = a.y - b.y;
+		const auto dz = a.z - b.z;
+		return std::sqrt(dx * dx + dy * dy + dz * dz);
+	};
+
+	const auto segment_count = static_cast<uint32_t>(segments.size());
+	for (uint32_t beg = 0; beg < segment_count; beg += FANOUT) {
+		Node node;
+		node.is_leaf = true;
+		node.beg = beg;
+		node.end = std::min(beg + FANOUT, segment_count);
+		node.center = {0, 0, 0};
+		for (auto i = node.beg; i < node.end; i++) {
+			node.center.x += segments[i].a3.x + segments[i].b3.x;
+			node.center.y += segments[i].a3.y + segments[i].b3.y;
+			node.center.z += segments[i].a3.z + segments[i].b3.z;
+		}
+		const auto points = 2.0 * (node.end - node.beg);
+		node.center = {node.center.x / points, node.center.y / points, node.center.z / points};
+		node.radius = 0;
+		for (auto i = node.beg; i < node.end; i++) {
+			node.radius = std::max(node.radius, distance(node.center, segments[i].a3) + segments[i].sagitta);
+			node.radius = std::max(node.radius, distance(node.center, segments[i].b3) + segments[i].sagitta);
+		}
+		nodes.push_back(node);
+	}
+
+	uint32_t level_beg = 0;
+	auto level_end = static_cast<uint32_t>(nodes.size());
+	while (level_end - level_beg > 1) {
+		for (auto beg = level_beg; beg < level_end; beg += FANOUT) {
+			Node node;
+			node.is_leaf = false;
+			node.beg = beg;
+			node.end = std::min(beg + FANOUT, level_end);
+			node.center = {0, 0, 0};
+			for (auto i = node.beg; i < node.end; i++) {
+				node.center.x += nodes[i].center.x;
+				node.center.y += nodes[i].center.y;
+				node.center.z += nodes[i].center.z;
+			}
+			const auto children = static_cast<double>(node.end - node.beg);
+			node.center = {node.center.x / children, node.center.y / children, node.center.z / children};
+			node.radius = 0;
+			for (auto i = node.beg; i < node.end; i++) {
+				node.radius = std::max(node.radius, distance(node.center, nodes[i].center) + nodes[i].radius);
+			}
+			nodes.push_back(node);
+		}
+		level_beg = level_end;
+		level_end = static_cast<uint32_t>(nodes.size());
+	}
+}
+
+double GeographyOps::LowerBound(const Segment &segment, const Vec3 &center, double radius) {
+	Segment point;
+	point.a3 = center;
+	point.b3 = center;
+	return std::max(0.0, ChordDistance(segment, point) - segment.sagitta - radius);
+}
+
+// Branch and bound: children are visited nearest first, and a subtree is skipped as soon as its sphere cannot hold
+// anything closer than the best distance found so far
+void GeographyOps::Search(Segment &query, Shape &shape, uint32_t node_idx, double &best) const {
+	const auto node = shape.nodes[node_idx];
+	if (node.is_leaf) {
+		for (auto i = node.beg; i < node.end && best > 0; i++) {
+			auto &segment = shape.segments[i];
+			if (LowerBound(query, segment) < best) {
+				best = std::min(best, SegmentDistance(query, segment));
+			}
+		}
+		return;
+	}
+
+	struct Child {
+		double bound;
+		uint32_t idx;
+	};
+	Child children[8];
+	uint32_t count = 0;
+	for (auto i = node.beg; i < node.end; i++) {
+		const Child child = {LowerBound(query, shape.nodes[i].center, shape.nodes[i].radius), i};
+		auto pos = count++;
+		while (pos > 0 && children[pos - 1].bound > child.bound) {
+			children[pos] = children[pos - 1];
+			pos--;
+		}
+		children[pos] = child;
+	}
+	for (uint32_t i = 0; i < count && children[i].bound < best; i++) {
+		Search(query, shape, children[i].idx, best);
+	}
+}
+
+// Smallest distance between the two prepared shapes that is below `best`, or `best` if there is none
+double GeographyOps::MinDistance(double best, double stop_at) {
+	const auto lhs_is_smaller = lhs_shape.segments.size() <= rhs_shape.segments.size();
+	auto &small = lhs_is_smaller ? lhs_shape : rhs_shape;
+	auto &large = lhs_is_smaller ? rhs_shape : lhs_shape;
+	const auto root = static_cast<uint32_t>(large.nodes.size() - 1);
+
+	for (auto &segment : small.segments) {
+		if (LowerBound(segment, large.center, large.radius) >= best) {
+			continue;
+		}
+		Search(segment, large, root, best);
+		if (best <= stop_at) {
+			break;
+		}
+	}
+	return best;
 }
 
 // Lower bound on the distance between a segment and anything within the bounding sphere of a shape
@@ -622,41 +745,7 @@ double GeographyOps::Distance(const sgl::geometry &lhs, const sgl::geometry &rhs
 		return 0;
 	}
 
-	// Start from a pair that is likely to be close, so that most of the other pairs can be skipped
-	idx_t nearest_lhs = 0;
-	auto nearest_bound = std::numeric_limits<double>::infinity();
-	for (idx_t i = 0; i < lhs_shape.segments.size(); i++) {
-		const auto bound = LowerBound(lhs_shape.segments[i], rhs_shape);
-		if (bound < nearest_bound) {
-			nearest_bound = bound;
-			nearest_lhs = i;
-		}
-	}
-	idx_t nearest_rhs = 0;
-	nearest_bound = std::numeric_limits<double>::infinity();
-	for (idx_t j = 0; j < rhs_shape.segments.size(); j++) {
-		const auto bound = LowerBound(lhs_shape.segments[nearest_lhs], rhs_shape.segments[j]);
-		if (bound < nearest_bound) {
-			nearest_bound = bound;
-			nearest_rhs = j;
-		}
-	}
-
-	auto best = SegmentDistance(lhs_shape.segments[nearest_lhs], rhs_shape.segments[nearest_rhs]);
-	for (idx_t i = 0; i < lhs_shape.segments.size() && best > 0; i++) {
-		auto &lhs_segment = lhs_shape.segments[i];
-		if (LowerBound(lhs_segment, rhs_shape) >= best) {
-			continue;
-		}
-		for (idx_t j = 0; j < rhs_shape.segments.size() && best > 0; j++) {
-			auto &rhs_segment = rhs_shape.segments[j];
-			if (LowerBound(lhs_segment, rhs_segment) >= best) {
-				continue;
-			}
-			best = std::min(best, SegmentDistance(lhs_segment, rhs_segment));
-		}
-	}
-	return best;
+	return MinDistance(std::numeric_limits<double>::infinity(), 0);
 }
 
 bool GeographyOps::IsWithinDistance(const sgl::geometry &lhs, const sgl::geometry &rhs, double limit) {
@@ -675,20 +764,12 @@ bool GeographyOps::IsWithinDistance(const sgl::geometry &lhs, const sgl::geometr
 	if (AnyContained()) {
 		return limit >= 0;
 	}
-	for (auto &lhs_segment : lhs_shape.segments) {
-		if (LowerBound(lhs_segment, rhs_shape) > limit) {
-			continue;
-		}
-		for (auto &rhs_segment : rhs_shape.segments) {
-			if (LowerBound(lhs_segment, rhs_segment) > limit) {
-				continue;
-			}
-			if (SegmentDistance(lhs_segment, rhs_segment) <= limit) {
-				return true;
-			}
-		}
+	if (limit < 0) {
+		return false;
 	}
-	return false;
+	// Only pairs that can be within the limit are examined
+	const auto start = std::nextafter(limit, std::numeric_limits<double>::infinity());
+	return MinDistance(start, limit) <= limit;
 }
 
 //----------------------------------------------------------------------------------------------------------------------
