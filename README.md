@@ -1,8 +1,8 @@
 # DuckDB Spatial Extension (Enhanced Fork)
 
-This fork of [duckdb/duckdb-spatial](https://github.com/duckdb/duckdb-spatial) extends the DuckDB spatial extension with **197 additional functions**, a **native KNN spatial join operator**, a **GEOGRAPHY type**, a **RASTER type**, **PostGIS-style topologies**, **DBSCAN/K-means clustering**, and significant **performance optimizations** to the spatial join pipeline. The goal is PostGIS parity and SedonaDB-competitive performance within DuckDB's analytical engine.
+This fork of [duckdb/duckdb-spatial](https://github.com/duckdb/duckdb-spatial) extends the DuckDB spatial extension with **220 additional functions**, a **native KNN spatial join operator**, a **GEOGRAPHY type**, a **RASTER type**, **PostGIS-style topologies**, **pgRouting-style network routing**, **DBSCAN/K-means clustering**, and significant **performance optimizations** to the spatial join pipeline. The goal is PostGIS parity and SedonaDB-competitive performance within DuckDB's analytical engine.
 
-**362 documented functions** (vs. 165 upstream) | **212 tests / 8323 assertions** | Synced with upstream v1.5-variegata
+**385 documented functions** (vs. 165 upstream) | **223 tests / 12476 assertions** | Synced with upstream v1.5-variegata
 
 **Table of contents**
 - [What's new in this fork](#whats-new-in-this-fork)
@@ -84,6 +84,22 @@ SELECT * FROM ValidateTopology('parcels');
 - An edit runs in its own transaction on a separate connection and is committed when the call returns: a later `ROLLBACK` of the caller does not undo it, and a failed edit changes nothing. An edit is refused while the caller has uncommitted changes in an explicit transaction.
 - Topologies are two-dimensional, the topology tables have no spatial index (the cost of an edit grows with the size of the topology), and the functions need GEOS.
 
+## Network routing
+
+pgRouting's functions over any edge table, passed as a table-valued argument and matched by column name (`id, source, target, cost [, reverse_cost, capacity, x1, y1, x2, y2]`). A negative cost means the edge cannot be used in that direction.
+
+```sql
+SELECT * FROM pgr_dijkstra((SELECT id, source, target, cost, reverse_cost FROM edges), 1, 5);
+SELECT * FROM pgr_dijkstra(TABLE edges, [1, 2], [5, 6], directed := false);
+SELECT * FROM pgr_drivingDistance((SELECT * FROM edges), 1, 600);
+SELECT * FROM pgr_TSP((SELECT * FROM pgr_dijkstraCostMatrix((SELECT * FROM edges), [1, 2, 3, 4])), 1);
+```
+
+- Shortest paths: `pgr_dijkstra`, `pgr_aStar`, `pgr_bdDijkstra`, `pgr_bdAstar`, `pgr_dijkstraCost`, `pgr_dijkstraCostMatrix`, `pgr_KSP`, `pgr_drivingDistance`, `pgr_withPoints`, `pgr_trsp`; `pgr_TSP`; flows `pgr_maxFlow`, `pgr_maxFlowMinCost` / `pgr_minCostMaxFlow`, `pgr_pushRelabel`, `pgr_edmondsKarp`, `pgr_boykovKolmogorov`; `pgr_connectedComponents`, `pgr_strongComponents`; and the topology helpers `pgr_extractVertices`, `pgr_createTopology`, `pgr_nodeNetwork`, `pgr_analyzeGraph`, which return rows instead of altering tables. Results match pgRouting's documentation on its sample data.
+- The edges arrive through a single table argument, inside the caller's transaction, so CTEs, temp tables and uncommitted rows work. A second table cannot be passed, so points of interest, turn restrictions and the TSP matrix are given as a list of structs, typically `SET VARIABLE points = (SELECT list(p) FROM pois p)` then `getvariable('points')`.
+- About 1 s per call on a 2M-edge grid, almost all of it spent loading the graph; the search itself is a binary-heap Dijkstra over a CSR adjacency.
+- Not implemented: the "combinations" signatures; equal-cost ties may choose a different path than pgRouting. Road routing with turn costs, traffic and matrices at scale remains the job of a dedicated routing engine.
+
 ## Spatial Clustering
 
 PostGIS-compatible window functions for density-based and partition-based clustering.
@@ -108,7 +124,7 @@ Also includes `ST_ClusterIntersecting` and `ST_ClusterWithin` aggregate function
 - **Robust predicates**: Shewchuk adaptive-precision `orient2d` replaces the fast-but-wrong `orient2d_fast`, eliminating false positives in point-in-polygon and intersection tests near collinear edges
 - **Native ST_Intersects**: GEOMETRY-to-GEOMETRY intersection without GEOS fallback for the common bbox-miss and point-in-polygon cases
 
-## 197 New Functions (PostGIS parity)
+## 220 New Functions (PostGIS parity)
 
 | Category | Functions |
 |---|---|
@@ -123,6 +139,7 @@ Also includes `ST_ClusterIntersecting` and `ST_ClusterWithin` aggregate function
 | **Decomposition** (3) | `ST_DumpPoints`, `ST_DumpRings`, `ST_DumpSegments` |
 | **Constructors** (2) | `ST_LineFromMultiPoint`, `ST_Polygon` |
 | **Grids** (2) | `ST_HexagonGrid`, `ST_SquareGrid` |
+| **Routing** (23) | see [Network routing](#network-routing) |
 | **Raster** (78 names, 94 functions with overloads of existing names) | see [Raster](#raster) |
 | **Topology** (30) | see [Topology](#topology) |
 | **Geography** (5) | `ST_GeogPoint`, `ST_GeogFromText`, `ST_GeogFromWKT`, `ST_GeographyFromText`, `ST_GeogFromWKB` |

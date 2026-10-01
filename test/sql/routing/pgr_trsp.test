@@ -1,0 +1,261 @@
+# name: test/sql/routing/pgr_trsp.test
+# description: Test pgr_trsp
+# group: [routing]
+
+require spatial
+
+# The pgRouting sample graph and restrictions
+statement ok
+CREATE TABLE edges AS SELECT * FROM (VALUES
+	(1, 5, 6, 1, 1), (2, 6, 10, -1, 1), (3, 10, 15, -1, 1), (4, 6, 7, 1, 1), (5, 10, 11, 1, -1), (6, 1, 3, 1, 1),
+	(7, 3, 7, 1, 1), (8, 7, 11, 1, 1), (9, 11, 16, 1, 1), (10, 7, 8, 1, 1), (11, 11, 12, 1, -1), (12, 8, 12, 1, -1),
+	(13, 12, 17, 1, -1), (14, 8, 9, 1, 1), (15, 16, 17, 1, 1), (16, 15, 16, 1, 1), (17, 2, 4, 1, 1), (18, 13, 14, 1, 1)
+) t(id, source, target, cost, reverse_cost);
+
+statement ok
+CREATE TABLE restrictions AS SELECT * FROM (VALUES
+	(1, [4, 7], 100), (2, [8, 11], 100), (3, [7, 10], 100), (4, [3, 5, 9], 4), (5, [9, 16], 100)
+) t(id, path, cost);
+
+statement ok
+SET VARIABLE restrictions = (SELECT list(r) FROM restrictions r);
+
+# The queries of the pgRouting documentation.
+# One to one on an undirected graph: no restriction on the way
+query IIIIIIRR
+SELECT * FROM pgr_trsp((SELECT id, source, target, cost, reverse_cost FROM edges), getvariable('restrictions'), 6, 10, false);
+----
+1	1	6	10	6	2	1.0	0.0
+2	2	6	10	10	-1	0.0	1.0
+
+# One to many, undirected and without reverse costs: going from 6 to 1 through the edges 4 and 7 is restricted,
+# and so is the detour through the edges 8 and 11
+query IIIIIIRR
+SELECT * FROM pgr_trsp((SELECT id, source, target, cost FROM edges), getvariable('restrictions'), 6, [10, 1], false);
+----
+1	1	6	1	6	4	1.0	0.0
+2	2	6	1	7	10	1.0	1.0
+3	3	6	1	8	12	1.0	2.0
+4	4	6	1	12	11	1.0	3.0
+5	5	6	1	11	8	1.0	4.0
+6	6	6	1	7	7	1.0	5.0
+7	7	6	1	3	6	1.0	6.0
+8	8	6	1	1	-1	0.0	7.0
+9	1	6	10	6	4	1.0	0.0
+10	2	6	10	7	8	1.0	1.0
+11	3	6	10	11	5	1.0	2.0
+12	4	6	10	10	-1	0.0	3.0
+
+# Many to one: from 1 the restricted turn costs less than any detour, its cost is on the edge that completes it
+query IIIIIITT
+SELECT * REPLACE (cost::VARCHAR AS cost, agg_cost::VARCHAR AS agg_cost) FROM pgr_trsp((SELECT id, source, target, cost, reverse_cost FROM edges), getvariable('restrictions'), [6, 1], 8);
+----
+1	1	1	8	1	6	1.0	0.0
+2	2	1	8	3	7	1.0	1.0
+3	3	1	8	7	10	101.0	2.0
+4	4	1	8	8	-1	0.0	103.0
+5	1	6	8	6	4	1.0	0.0
+6	2	6	8	7	10	1.0	1.0
+7	3	6	8	8	-1	0.0	2.0
+
+# Many to many, undirected
+query IIIR
+SELECT start_vid, end_vid, string_agg(node::VARCHAR, '-' ORDER BY path_seq), max(agg_cost)::VARCHAR
+FROM pgr_trsp((SELECT id, source, target, cost, reverse_cost FROM edges), getvariable('restrictions'), [6, 1], [10, 8], false) GROUP BY ALL ORDER BY ALL;
+----
+1	8	1-3-7-6-10-11-7-8	7.0
+1	10	1-3-7-6-10	4.0
+6	8	6-7-8	2.0
+6	10	6-10	1.0
+
+# A forbidden manoeuvre
+query IIIIIIRR
+SELECT * FROM pgr_trsp((SELECT * FROM edges), [{'path': [7, 10], 'cost': 'infinity'::DOUBLE}], 1, 8);
+----
+1	1	1	8	1	6	1.0	0.0
+2	2	1	8	3	7	1.0	1.0
+3	3	1	8	7	8	1.0	2.0
+4	4	1	8	11	9	1.0	3.0
+5	5	1	8	16	16	1.0	4.0
+6	6	1	8	15	3	1.0	5.0
+7	7	1	8	10	2	1.0	6.0
+8	8	1	8	6	4	1.0	7.0
+9	9	1	8	7	10	1.0	8.0
+10	10	1	8	8	-1	0.0	9.0
+
+# A restriction over three edges applies only when the three are travelled in a row
+statement ok
+CREATE TABLE line AS SELECT * FROM (VALUES
+	(1, 1, 2, 1.0), (2, 2, 3, 1.0), (3, 3, 4, 1.0), (4, 2, 5, 1.0), (5, 5, 3, 1.0), (6, 0, 2, 1.0), (7, 1, 4, 10.0)
+) t(id, source, target, cost);
+
+query IIR
+SELECT end_vid, string_agg(edge::VARCHAR, ',' ORDER BY path_seq), max(agg_cost)::VARCHAR
+FROM pgr_trsp((SELECT * FROM line), [{'path': [1, 2, 3], 'cost': 5}], 1, [3, 4]) GROUP BY ALL ORDER BY ALL;
+----
+3	1,2,-1	2.0
+4	1,4,5,3,-1	4.0
+
+# Starting in the middle of the restricted sequence is not restricted
+query IIR
+SELECT start_vid, string_agg(edge::VARCHAR, ',' ORDER BY path_seq), max(agg_cost)::VARCHAR
+FROM pgr_trsp((SELECT * FROM line), [{'path': [1, 2, 3], 'cost': 5}], [0, 2], 4) GROUP BY ALL ORDER BY ALL;
+----
+0	6,2,3,-1	3.0
+2	2,3,-1	2.0
+
+# Overlapping restrictions add up, the detour through 5 becomes the cheapest
+query IIR
+SELECT end_vid, string_agg(edge::VARCHAR, ',' ORDER BY path_seq), max(agg_cost)::VARCHAR
+FROM pgr_trsp((SELECT * FROM line), [{'path': [1, 2, 3], 'cost': 0.5}, {'path': [2, 3], 'cost': 0.75}], 1, 4) GROUP BY ALL ORDER BY ALL;
+----
+4	1,4,5,3,-1	4.0
+
+query IIR
+SELECT end_vid, string_agg(edge::VARCHAR, ',' ORDER BY path_seq), max(agg_cost)::VARCHAR
+FROM pgr_trsp((SELECT * FROM line), [{'path': [1, 2, 3], 'cost': 0.5}, {'path': [2, 3], 'cost': 0.25}], 1, 4) GROUP BY ALL ORDER BY ALL;
+----
+4	1,2,3,-1	3.75
+
+# When every way is forbidden there is no path
+query I
+SELECT count(*) FROM pgr_trsp((SELECT * FROM line WHERE id <> 7),
+	[{'path': [1, 2], 'cost': 'infinity'::DOUBLE}, {'path': [1, 4], 'cost': 'infinity'::DOUBLE}], 1, 4);
+----
+0
+
+# Without restrictions the result is the one of pgr_dijkstra
+query I
+SELECT count(*) FROM (
+	SELECT * FROM pgr_trsp((SELECT * FROM edges), [], [6, 1], [10, 17])
+	EXCEPT SELECT * FROM pgr_dijkstra((SELECT * FROM edges), [6, 1], [10, 17]));
+----
+0
+
+# Restrictions that never apply do not change the costs
+query I
+SELECT count(*) FROM (
+	SELECT start_vid, end_vid, agg_cost FROM pgr_dijkstra((SELECT * FROM edges), [6, 1], [10, 17]) WHERE edge = -1
+	EXCEPT SELECT start_vid, end_vid, agg_cost FROM pgr_trsp((SELECT * FROM edges), [{'path': [100, 101], 'cost': 5}, {'path': [3], 'cost': 5}], [6, 1], [10, 17]) WHERE edge = -1);
+----
+0
+
+# No rows
+query I
+SELECT count(*) FROM pgr_trsp((SELECT * FROM edges), getvariable('restrictions'), 6, [6, 2, 99]);
+----
+0
+
+query I
+SELECT count(*) FROM pgr_trsp((SELECT * FROM edges), NULL, 6, 10);
+----
+0
+
+# Errors
+statement error
+SELECT * FROM pgr_trsp((SELECT * FROM edges), [{'path': [7, 10]}], 1, 8);
+----
+the restrictions need the fields "path" and "cost"
+
+statement error
+SELECT * FROM pgr_trsp((SELECT * FROM edges), [{'path': 7, 'cost': 1}], 1, 8);
+----
+must be a list of integers
+
+statement error
+SELECT * FROM pgr_trsp((SELECT * FROM edges), [{'path': [7, 10], 'cost': -1}], 1, 8);
+----
+the cost of a restriction must be non-negative
+
+statement error
+SELECT * FROM pgr_trsp((SELECT * FROM edges), 5, 1, 8);
+----
+must be a list of structs
+
+# Randomized cross-check against a search on the line graph done by hand: a state is an edge direction,
+# a turn costs the second edge plus the cost of the two-edge restriction, and U-turns on an edge are not allowed
+statement ok
+CREATE TABLE random_edges AS SELECT
+	i AS id,
+	(hash(i + 1000) % 25)::BIGINT AS source,
+	(hash(i + 2000) % 25)::BIGINT AS target,
+	(1 + hash(i + 3000) % 20)::DOUBLE AS cost,
+	CASE WHEN hash(i + 4000) % 3 = 0 THEN -1 ELSE 1 + hash(i + 5000) % 20 END::DOUBLE AS reverse_cost
+FROM range(1, 61) t(i);
+
+statement ok
+CREATE TABLE arcs AS
+	SELECT id * 2 AS arc, id, source AS u, target AS v, cost AS c FROM random_edges WHERE cost >= 0
+	UNION ALL
+	SELECT id * 2 + 1, id, target, source, reverse_cost FROM random_edges WHERE reverse_cost >= 0;
+
+statement ok
+CREATE TABLE random_restrictions AS
+	SELECT DISTINCT [a.id, b.id] AS path, (5 + hash(a.id * 1000 + b.id) % 30)::DOUBLE AS cost
+	FROM arcs a JOIN arcs b ON a.v = b.u AND a.id <> b.id WHERE hash(a.id * 1000 + b.id + 500000) % 4 = 0;
+
+statement ok
+SET VARIABLE random_restrictions = (SELECT list(r) FROM random_restrictions r);
+
+query I
+SELECT count(*) > 20 FROM random_restrictions;
+----
+true
+
+# Line graph: from arc a to arc b
+statement ok
+CREATE TABLE turns AS
+	SELECT a.arc AS u, b.arc AS v, b.c + coalesce((SELECT r.cost FROM random_restrictions r WHERE r.path = [a.id, b.id]), 0) AS c
+	FROM arcs a JOIN arcs b ON a.v = b.u AND a.id <> b.id;
+
+statement ok
+CREATE TABLE turn_reference AS
+	SELECT u, v, min(c) AS c FROM (SELECT u, v, c FROM turns UNION ALL SELECT arc, arc, 0 FROM arcs) GROUP BY ALL;
+
+loop i 0 7
+
+statement ok
+CREATE OR REPLACE TABLE turn_reference AS
+	SELECT a.u, b.v, min(a.c + b.c) AS c FROM turn_reference a JOIN turn_reference b ON a.v = b.u GROUP BY ALL;
+
+endloop
+
+# Cost from vertex s to vertex t: the first arc leaves s, the last arc enters t
+statement ok
+CREATE TABLE vertex_reference AS
+	SELECT a.u AS start_vid, b.v AS end_vid, min(a.c + r.c) AS agg_cost
+	FROM arcs a JOIN turn_reference r ON r.u = a.arc JOIN arcs b ON b.arc = r.v
+	WHERE a.u <> b.v GROUP BY ALL;
+
+statement ok
+SET VARIABLE everything = (SELECT list(i) FROM range(25) t(i));
+
+query I
+SELECT count(*) > 200 FROM vertex_reference;
+----
+true
+
+query I
+SELECT count(*) FROM (
+	SELECT start_vid, end_vid, agg_cost FROM pgr_trsp((SELECT * FROM random_edges), getvariable('random_restrictions'), getvariable('everything'), getvariable('everything')) WHERE edge = -1) p
+FULL JOIN vertex_reference c USING (start_vid, end_vid)
+WHERE p.agg_cost IS NULL OR c.agg_cost IS NULL OR p.agg_cost <> c.agg_cost;
+----
+0
+
+# The restrictions make some paths more expensive than the shortest path, never cheaper
+query II
+SELECT count(*) FILTER (p.agg_cost > c.agg_cost) > 0, count(*) FILTER (p.agg_cost < c.agg_cost)
+FROM (SELECT start_vid, end_vid, agg_cost FROM pgr_trsp((SELECT * FROM random_edges), getvariable('random_restrictions'), getvariable('everything'), getvariable('everything')) WHERE edge = -1) p
+JOIN pgr_dijkstraCostMatrix((SELECT * FROM random_edges), getvariable('everything')) c USING (start_vid, end_vid);
+----
+true	0
+
+# The cost column of every path adds up
+query I
+SELECT count(*) FROM (
+	SELECT p.*, lead(agg_cost) OVER (PARTITION BY start_vid, end_vid ORDER BY path_seq) AS next_agg
+	FROM pgr_trsp((SELECT * FROM random_edges), getvariable('random_restrictions'), [0, 1, 2], getvariable('everything')) p)
+WHERE edge <> -1 AND next_agg <> agg_cost + cost;
+----
+0

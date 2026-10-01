@@ -350,6 +350,29 @@
 | [`GetTopologyID`](#gettopologyid) | Returns the id of the topology with the given name, or NULL if there is none. |
 | [`GetTopologyName`](#gettopologyname) | Returns the name of the topology with the given id, or NULL if there is none. |
 | [`GetTopologySRID`](#gettopologysrid) | Returns the SRID the topology with the given name was created with, or NULL if there is no such topology. |
+| [`pgr_analyzeGraph`](#pgr_analyzegraph) | Summary of the usual problems of a network topology. |
+| [`pgr_aStar`](#pgr_astar) | Shortest path(s) using the A* algorithm. |
+| [`pgr_bdAstar`](#pgr_bdastar) | Shortest path(s) using a bidirectional A* search. |
+| [`pgr_bdDijkstra`](#pgr_bddijkstra) | Shortest path(s) using a bidirectional Dijkstra search, which grows one search from the start vertex and one from the end vertex. One search is run per pair of start and end vertices. |
+| [`pgr_boykovKolmogorov`](#pgr_boykovkolmogorov) | Maximum flow from the source(s) to the sink(s), with the flow carried by each edge. |
+| [`pgr_connectedComponents`](#pgr_connectedcomponents) | Connected components of an undirected graph: two vertices are in the same component when a path exists between them, whatever the direction of the edges. |
+| [`pgr_createTopology`](#pgr_createtopology) | Builds the topology of a network: gives each edge the identifier of its start and end vertex, snapping end points that are within a tolerance of each other to the same vertex. |
+| [`pgr_dijkstra`](#pgr_dijkstra) | Shortest path(s) using Dijkstra's algorithm. |
+| [`pgr_dijkstraCost`](#pgr_dijkstracost) | Cost of the shortest path(s) using Dijkstra's algorithm, without the paths themselves. |
+| [`pgr_dijkstraCostMatrix`](#pgr_dijkstracostmatrix) | Cost matrix between a set of vertices using Dijkstra's algorithm. The result can be fed to `pgr_TSP`. |
+| [`pgr_drivingDistance`](#pgr_drivingdistance) | Vertices whose shortest path cost from the root vertex is less than or equal to a distance, together with the shortest path tree that reaches them. |
+| [`pgr_edmondsKarp`](#pgr_edmondskarp) | Maximum flow from the source(s) to the sink(s), with the flow carried by each edge. |
+| [`pgr_extractVertices`](#pgr_extractvertices) | Vertices of a graph, extracted from its edges. |
+| [`pgr_KSP`](#pgr_ksp) | K shortest loopless paths using Yen's algorithm. |
+| [`pgr_maxFlow`](#pgr_maxflow) | Value of the maximum flow from the source(s) to the sink(s), computed with Dinic's algorithm. |
+| [`pgr_maxFlowMinCost`](#pgr_maxflowmincost) | Maximum flow of minimum cost from the source(s) to the sink(s): among all the maximum flows, one whose total cost is the smallest. |
+| [`pgr_minCostMaxFlow`](#pgr_mincostmaxflow) | Maximum flow of minimum cost from the source(s) to the sink(s): among all the maximum flows, one whose total cost is the smallest. |
+| [`pgr_nodeNetwork`](#pgr_nodenetwork) | Nodes a network: splits the lines where they meet, so that lines only touch at their end points. |
+| [`pgr_pushRelabel`](#pgr_pushrelabel) | Maximum flow from the source(s) to the sink(s), with the flow carried by each edge. |
+| [`pgr_strongComponents`](#pgr_strongcomponents) | Strongly connected components of a directed graph, using Tarjan's algorithm: two vertices are in the same component when each one can be reached from the other. |
+| [`pgr_trsp`](#pgr_trsp) | Shortest path(s) with turn restrictions. |
+| [`pgr_TSP`](#pgr_tsp) | Travelling salesperson tour over a cost matrix: a round trip that visits every node once. |
+| [`pgr_withPoints`](#pgr_withpoints) | Shortest path(s) using Dijkstra's algorithm on a graph to which points located on the edges are added as temporary vertices. |
 | [`ST_AddEdgeModFace`](#st_addedgemodface) | Adds an edge between two existing nodes and returns its id. If the edge splits a face, the face is kept for one side and a new face is added for the other. |
 | [`ST_AddEdgeNewFaces`](#st_addedgenewfaces) | Adds an edge between two existing nodes and returns its id. If the edge splits a face, the face is deleted and replaced by two new faces. |
 | [`ST_AddIsoEdge`](#st_addisoedge) | Adds an isolated edge between two isolated nodes of the same face and returns its id. |
@@ -7172,12 +7195,7 @@ Parameters:
 
 Compatible with PostGIS ST_ClusterDBSCAN.
 
-Note: OVER (PARTITION BY ...) currently requires an ORDER BY clause
-(e.g. OVER (PARTITION BY grp ORDER BY id)). Without an ORDER BY,
-DuckDB's window_self_join optimizer rewrites the query into a grouped
-aggregate, which this function cannot satisfy. The ORDER BY expression
-does not affect clustering results — the whole partition is always
-used — it only disables the rewrite.
+The whole partition is always clustered: the frame clause and ORDER BY of the window do not affect the result.
 
 #### Example
 
@@ -7218,8 +7236,7 @@ Assigns a k-means cluster ID to each geometry.
 Returns integer cluster IDs (0 to k-1). Must be used as a window function.
 Compatible with PostGIS ST_ClusterKMeans.
 
-Note: OVER (PARTITION BY ...) requires an ORDER BY clause — see
-ST_ClusterDBSCAN for the rationale.
+The whole partition is always clustered: the frame clause and ORDER BY of the window do not affect the result.
 
 #### Example
 
@@ -7885,6 +7902,1094 @@ The function reads through a separate connection and sees committed data only. A
 ```sql
 CALL CreateTopology('city', 31370);
 SELECT * FROM GetTopologySRID('city');
+```
+
+----
+
+### pgr_analyzeGraph
+
+#### Signature
+
+```sql
+pgr_analyzeGraph (col0 TABLE, col1 ANY)
+```
+
+#### Description
+
+Summary of the usual problems of a network topology.
+
+`pgr_analyzeGraph(edges, tolerance)`
+
+The edges are a table-valued argument with the columns `id`, `source`, `target` (integers) and `geom` (LINESTRING). `tolerance` is a non-negative constant in the unit of the coordinates.
+
+The result has the columns `metric` (VARCHAR) and `count` (BIGINT), with one row per metric, in this order:
+
+| Metric | Description |
+| --- | --- |
+| `isolated_segments` | Edges whose two end vertices are not used by any other edge |
+| `dead_ends` | Vertices that are used by a single edge end |
+| `potential_gaps` | Dead ends that are within the tolerance of an edge that is not connected to them: probably a missing connection |
+| `intersections` | Pairs of edges that cross each other away from their end points: probably a missing vertex |
+| `ring_geometries` | Edges whose geometry is a closed and simple line |
+
+Edges with a NULL or empty geometry count for the first two metrics only.
+
+Differences with pgRouting: `pgr_analyzeGraph` reported the counts as notices and stored flags in the vertices table. A table function cannot alter tables, so the counts are returned as rows and the vertices are derived from the `source` and `target` columns of the edges. The function was removed from pgRouting 4.0 and is kept here for convenience.
+
+#### Example
+
+```sql
+SELECT * FROM pgr_analyzeGraph((SELECT id, source, target, geom FROM edges), 0.001);
+```
+
+----
+
+### pgr_aStar
+
+#### Signature
+
+```sql
+pgr_aStar (col0 TABLE, col1 ANY, col2 ANY, epsilon DOUBLE, factor DOUBLE, heuristic INTEGER, directed BOOLEAN)
+```
+
+#### Description
+
+Shortest path(s) using the A* algorithm.
+
+`pgr_aStar(edges, start vids, end vids, [directed := true, heuristic := 5, factor := 1, epsilon := 1])`
+
+The edges are passed as a table-valued argument, i.e. a parenthesised subquery, and its columns are matched by name:
+
+| Column | Type | Description |
+| --- | --- | --- |
+| `id` | integer | Identifier of the edge |
+| `source` | integer | Identifier of the first end point vertex |
+| `target` | integer | Identifier of the second end point vertex |
+| `cost` | numeric | Weight of the edge (`source`, `target`). A negative value means the edge does not exist in that direction |
+| `reverse_cost` | numeric | Optional. Weight of the edge (`target`, `source`). A negative value, or a missing column, means the edge does not exist in that direction |
+
+When `directed` is false every non-negative `cost` and `reverse_cost` is usable in both directions.
+A NULL in any of these columns raises an error.
+
+The edges additionally need the numeric columns `x1`, `y1` (coordinates of the `source` vertex) and `x2`, `y2` (coordinates of the `target` vertex).
+
+Options:
+
+- `heuristic` (INTEGER, default 5): 0: `h(v) = 0`, 1: `abs(max(dx, dy))`, 2: `abs(min(dx, dy))`, 3: `dx * dx + dy * dy`, 4: `sqrt(dx * dx + dy * dy)`, 5: `abs(dx) + abs(dy)`
+- `factor` (DOUBLE, default 1): multiplier that brings the heuristic to the unit of the costs, must be positive
+- `epsilon` (DOUBLE, default 1): weight of the heuristic, must be greater than or equal to 1. A larger value is faster and less accurate
+
+The path is a shortest path only when the scaled heuristic never overestimates the remaining cost. With many start or end vertices one search is run per pair.
+
+`start vids` and `end vids` are either a single integer or a list of integers, which covers the one-to-one, one-to-many, many-to-one and many-to-many signatures of pgRouting. Duplicates are ignored and vertices that are not part of the graph are skipped.
+They have to be constants: a literal, a prepared statement parameter or `getvariable('name')`.
+
+The result has one row per vertex of each path, ordered by `start_vid`, `end_vid` and position in the path:
+
+| Column | Type | Description |
+| --- | --- | --- |
+| `seq` | INTEGER | Sequential value starting from 1 |
+| `path_seq` | INTEGER | Position in the path, starting from 1 |
+| `start_vid` | BIGINT | Identifier of the starting vertex of the path |
+| `end_vid` | BIGINT | Identifier of the ending vertex of the path |
+| `node` | BIGINT | Identifier of the vertex at this position |
+| `edge` | BIGINT | Identifier of the edge used to go to the next vertex, -1 for the last vertex |
+| `cost` | DOUBLE | Cost to traverse `edge`, 0 for the last vertex |
+| `agg_cost` | DOUBLE | Aggregate cost from `start_vid` to `node` |
+
+No rows are returned for a pair whose end vertex cannot be reached, or whose start and end vertex are the same.
+
+Differences with pgRouting: the edges are a table-valued argument instead of an SQL string, so the query runs inside the calling transaction and can read CTEs and temporary tables; the combinations signature is not available; and when several paths have the same cost the one that is returned may differ from pgRouting's choice (it is deterministic and does not depend on the order of the input rows).
+
+#### Example
+
+```sql
+SELECT * FROM pgr_aStar((SELECT id, source, target, cost, reverse_cost, x1, y1, x2, y2 FROM edges), 6, 10, heuristic := 4);
+```
+
+----
+
+### pgr_bdAstar
+
+#### Signature
+
+```sql
+pgr_bdAstar (col0 TABLE, col1 ANY, col2 ANY, epsilon DOUBLE, factor DOUBLE, heuristic INTEGER, directed BOOLEAN)
+```
+
+#### Description
+
+Shortest path(s) using a bidirectional A* search.
+
+`pgr_bdAstar(edges, start vids, end vids, [directed := true, heuristic := 5, factor := 1, epsilon := 1])`
+
+The edges are passed as a table-valued argument, i.e. a parenthesised subquery, and its columns are matched by name:
+
+| Column | Type | Description |
+| --- | --- | --- |
+| `id` | integer | Identifier of the edge |
+| `source` | integer | Identifier of the first end point vertex |
+| `target` | integer | Identifier of the second end point vertex |
+| `cost` | numeric | Weight of the edge (`source`, `target`). A negative value means the edge does not exist in that direction |
+| `reverse_cost` | numeric | Optional. Weight of the edge (`target`, `source`). A negative value, or a missing column, means the edge does not exist in that direction |
+
+When `directed` is false every non-negative `cost` and `reverse_cost` is usable in both directions.
+A NULL in any of these columns raises an error.
+
+The edges additionally need the numeric columns `x1`, `y1` (coordinates of the `source` vertex) and `x2`, `y2` (coordinates of the `target` vertex).
+
+Options:
+
+- `heuristic` (INTEGER, default 5): 0: `h(v) = 0`, 1: `abs(max(dx, dy))`, 2: `abs(min(dx, dy))`, 3: `dx * dx + dy * dy`, 4: `sqrt(dx * dx + dy * dy)`, 5: `abs(dx) + abs(dy)`
+- `factor` (DOUBLE, default 1): multiplier that brings the heuristic to the unit of the costs, must be positive
+- `epsilon` (DOUBLE, default 1): weight of the heuristic, must be greater than or equal to 1. A larger value is faster and less accurate
+
+The path is a shortest path only when the scaled heuristic never overestimates the remaining cost. With many start or end vertices one search is run per pair.
+
+`start vids` and `end vids` are either a single integer or a list of integers, which covers the one-to-one, one-to-many, many-to-one and many-to-many signatures of pgRouting. Duplicates are ignored and vertices that are not part of the graph are skipped.
+They have to be constants: a literal, a prepared statement parameter or `getvariable('name')`.
+
+The result has one row per vertex of each path, ordered by `start_vid`, `end_vid` and position in the path:
+
+| Column | Type | Description |
+| --- | --- | --- |
+| `seq` | INTEGER | Sequential value starting from 1 |
+| `path_seq` | INTEGER | Position in the path, starting from 1 |
+| `start_vid` | BIGINT | Identifier of the starting vertex of the path |
+| `end_vid` | BIGINT | Identifier of the ending vertex of the path |
+| `node` | BIGINT | Identifier of the vertex at this position |
+| `edge` | BIGINT | Identifier of the edge used to go to the next vertex, -1 for the last vertex |
+| `cost` | DOUBLE | Cost to traverse `edge`, 0 for the last vertex |
+| `agg_cost` | DOUBLE | Aggregate cost from `start_vid` to `node` |
+
+No rows are returned for a pair whose end vertex cannot be reached, or whose start and end vertex are the same.
+
+Differences with pgRouting: the edges are a table-valued argument instead of an SQL string, so the query runs inside the calling transaction and can read CTEs and temporary tables; the combinations signature is not available; and when several paths have the same cost the one that is returned may differ from pgRouting's choice (it is deterministic and does not depend on the order of the input rows).
+
+#### Example
+
+```sql
+SELECT * FROM pgr_bdAstar((SELECT id, source, target, cost, reverse_cost, x1, y1, x2, y2 FROM edges), 6, 10);
+```
+
+----
+
+### pgr_bdDijkstra
+
+#### Signature
+
+```sql
+pgr_bdDijkstra (col0 TABLE, col1 ANY, col2 ANY, directed BOOLEAN)
+```
+
+#### Description
+
+Shortest path(s) using a bidirectional Dijkstra search, which grows one search from the start vertex and one from the end vertex. One search is run per pair of start and end vertices.
+
+`pgr_bdDijkstra(edges, start vids, end vids, [directed := true])`
+
+The edges are passed as a table-valued argument, i.e. a parenthesised subquery, and its columns are matched by name:
+
+| Column | Type | Description |
+| --- | --- | --- |
+| `id` | integer | Identifier of the edge |
+| `source` | integer | Identifier of the first end point vertex |
+| `target` | integer | Identifier of the second end point vertex |
+| `cost` | numeric | Weight of the edge (`source`, `target`). A negative value means the edge does not exist in that direction |
+| `reverse_cost` | numeric | Optional. Weight of the edge (`target`, `source`). A negative value, or a missing column, means the edge does not exist in that direction |
+
+When `directed` is false every non-negative `cost` and `reverse_cost` is usable in both directions.
+A NULL in any of these columns raises an error.
+
+`start vids` and `end vids` are either a single integer or a list of integers, which covers the one-to-one, one-to-many, many-to-one and many-to-many signatures of pgRouting. Duplicates are ignored and vertices that are not part of the graph are skipped.
+They have to be constants: a literal, a prepared statement parameter or `getvariable('name')`.
+
+The result has one row per vertex of each path, ordered by `start_vid`, `end_vid` and position in the path:
+
+| Column | Type | Description |
+| --- | --- | --- |
+| `seq` | INTEGER | Sequential value starting from 1 |
+| `path_seq` | INTEGER | Position in the path, starting from 1 |
+| `start_vid` | BIGINT | Identifier of the starting vertex of the path |
+| `end_vid` | BIGINT | Identifier of the ending vertex of the path |
+| `node` | BIGINT | Identifier of the vertex at this position |
+| `edge` | BIGINT | Identifier of the edge used to go to the next vertex, -1 for the last vertex |
+| `cost` | DOUBLE | Cost to traverse `edge`, 0 for the last vertex |
+| `agg_cost` | DOUBLE | Aggregate cost from `start_vid` to `node` |
+
+No rows are returned for a pair whose end vertex cannot be reached, or whose start and end vertex are the same.
+
+Differences with pgRouting: the edges are a table-valued argument instead of an SQL string, so the query runs inside the calling transaction and can read CTEs and temporary tables; the combinations signature is not available; and when several paths have the same cost the one that is returned may differ from pgRouting's choice (it is deterministic and does not depend on the order of the input rows).
+
+#### Example
+
+```sql
+SELECT * FROM pgr_bdDijkstra((SELECT id, source, target, cost, reverse_cost FROM edges), 6, 10);
+```
+
+----
+
+### pgr_boykovKolmogorov
+
+#### Signature
+
+```sql
+pgr_boykovKolmogorov (col0 TABLE, col1 ANY, col2 ANY)
+```
+
+#### Description
+
+Maximum flow from the source(s) to the sink(s), with the flow carried by each edge.
+
+`pgr_boykovKolmogorov(edges, start vids, end vids)`
+
+The edges are a table-valued argument, i.e. a parenthesised subquery, whose columns are matched by name:
+
+| Column | Type | Description |
+| --- | --- | --- |
+| `id` | integer | Identifier of the edge |
+| `source` | integer | Identifier of the first end point vertex |
+| `target` | integer | Identifier of the second end point vertex |
+| `capacity` | integer | Capacity of the edge (`source`, `target`). A value that is not positive means the edge does not exist in that direction |
+| `reverse_capacity` | integer | Optional. Capacity of the edge (`target`, `source`). A value that is not positive, or a missing column, means the edge does not exist in that direction |
+
+`start vids` and `end vids` are a single integer or a list of integers, given as constants. With several sources or sinks the flow goes from any source to any sink. A vertex cannot be on both sides.
+
+The result has one row per edge direction that carries flow, ordered by `start_vid`, `end_vid` and `edge`:
+
+| Column | Type | Description |
+| --- | --- | --- |
+| `seq` | INTEGER | Sequential value starting from 1 |
+| `edge` | BIGINT | Identifier of the edge |
+| `start_vid` | BIGINT | Vertex the flow leaves from |
+| `end_vid` | BIGINT | Vertex the flow goes to |
+| `flow` | BIGINT | Flow through the edge in that direction |
+| `residual_capacity` | BIGINT | Capacity left in that direction |
+
+Differences with pgRouting: the edges are a table-valued argument instead of an SQL string and the combinations signature is not available. `pgr_pushRelabel`, `pgr_edmondsKarp` and `pgr_boykovKolmogorov` are the same function here: the maximum flow is computed with Dinic's algorithm whatever the name. The total flow is the same as with pgRouting, but a maximum flow is generally not unique, so the flow of individual edges may differ.
+
+#### Example
+
+```sql
+SELECT * FROM pgr_boykovKolmogorov((SELECT id, source, target, capacity, reverse_capacity FROM edges), 11, 12);
+```
+
+----
+
+### pgr_connectedComponents
+
+#### Signature
+
+```sql
+pgr_connectedComponents (col0 TABLE)
+```
+
+#### Description
+
+Connected components of an undirected graph: two vertices are in the same component when a path exists between them, whatever the direction of the edges.
+
+`pgr_connectedComponents(edges)`
+
+The edges are a table-valued argument with the columns `id`, `source`, `target`, `cost` and optionally `reverse_cost`, as for `pgr_dijkstra`. A negative `cost` or `reverse_cost` means the edge does not exist in that direction; its end points are still vertices of the graph.
+
+The result is ordered by `component` and `node`:
+
+| Column | Type | Description |
+| --- | --- | --- |
+| `seq` | BIGINT | Sequential value starting from 1 |
+| `component` | BIGINT | Identifier of the component: the smallest vertex identifier it contains |
+| `node` | BIGINT | Identifier of a vertex of the component |
+
+Differences with pgRouting: the edges are a table-valued argument instead of an SQL string.
+
+#### Example
+
+```sql
+SELECT * FROM pgr_connectedComponents((SELECT id, source, target, cost, reverse_cost FROM edges));
+```
+
+----
+
+### pgr_createTopology
+
+#### Signature
+
+```sql
+pgr_createTopology (col0 TABLE, col1 ANY)
+```
+
+#### Description
+
+Builds the topology of a network: gives each edge the identifier of its start and end vertex, snapping end points that are within a tolerance of each other to the same vertex.
+
+`pgr_createTopology(edges, tolerance)`
+
+The edges are a table-valued argument with the columns `id` (integer) and `geom` (LINESTRING). `tolerance` is a non-negative constant in the unit of the coordinates; with 0 only identical points are merged.
+
+The edges are processed by increasing `id`, the start point before the end point. A point takes the identifier of the nearest existing vertex within the tolerance, otherwise it becomes a new vertex with the next identifier, starting from 1. The result therefore does not depend on the order of the input rows.
+
+| Column | Type | Description |
+| --- | --- | --- |
+| `id` | BIGINT | Identifier of the edge |
+| `source` | BIGINT | Identifier of the vertex at the start of the edge, NULL when the geometry is NULL or empty |
+| `target` | BIGINT | Identifier of the vertex at the end of the edge, NULL when the geometry is NULL or empty |
+
+Differences with pgRouting: `pgr_createTopology` updated the `source` and `target` columns of the edge table and created a vertices table. A table function cannot alter its input, so the assignment is returned as rows instead, to be joined back or stored by the caller; the vertices can be obtained with `pgr_extractVertices`. The function was removed from pgRouting 4.0 and is kept here for convenience.
+
+#### Example
+
+```sql
+CREATE TABLE network AS
+SELECT e.*, t.source, t.target
+FROM edges e JOIN pgr_createTopology((SELECT id, geom FROM edges), 0.001) t USING (id);
+```
+
+----
+
+### pgr_dijkstra
+
+#### Signature
+
+```sql
+pgr_dijkstra (col0 TABLE, col1 ANY, col2 ANY, directed BOOLEAN)
+```
+
+#### Description
+
+Shortest path(s) using Dijkstra's algorithm.
+
+`pgr_dijkstra(edges, start vids, end vids, [directed := true])`
+
+The edges are passed as a table-valued argument, i.e. a parenthesised subquery, and its columns are matched by name:
+
+| Column | Type | Description |
+| --- | --- | --- |
+| `id` | integer | Identifier of the edge |
+| `source` | integer | Identifier of the first end point vertex |
+| `target` | integer | Identifier of the second end point vertex |
+| `cost` | numeric | Weight of the edge (`source`, `target`). A negative value means the edge does not exist in that direction |
+| `reverse_cost` | numeric | Optional. Weight of the edge (`target`, `source`). A negative value, or a missing column, means the edge does not exist in that direction |
+
+When `directed` is false every non-negative `cost` and `reverse_cost` is usable in both directions.
+A NULL in any of these columns raises an error.
+
+`start vids` and `end vids` are either a single integer or a list of integers, which covers the one-to-one, one-to-many, many-to-one and many-to-many signatures of pgRouting. Duplicates are ignored and vertices that are not part of the graph are skipped.
+They have to be constants: a literal, a prepared statement parameter or `getvariable('name')`.
+
+The result has one row per vertex of each path, ordered by `start_vid`, `end_vid` and position in the path:
+
+| Column | Type | Description |
+| --- | --- | --- |
+| `seq` | INTEGER | Sequential value starting from 1 |
+| `path_seq` | INTEGER | Position in the path, starting from 1 |
+| `start_vid` | BIGINT | Identifier of the starting vertex of the path |
+| `end_vid` | BIGINT | Identifier of the ending vertex of the path |
+| `node` | BIGINT | Identifier of the vertex at this position |
+| `edge` | BIGINT | Identifier of the edge used to go to the next vertex, -1 for the last vertex |
+| `cost` | DOUBLE | Cost to traverse `edge`, 0 for the last vertex |
+| `agg_cost` | DOUBLE | Aggregate cost from `start_vid` to `node` |
+
+No rows are returned for a pair whose end vertex cannot be reached, or whose start and end vertex are the same.
+
+Differences with pgRouting: the edges are a table-valued argument instead of an SQL string, so the query runs inside the calling transaction and can read CTEs and temporary tables; the combinations signature is not available; and when several paths have the same cost the one that is returned may differ from pgRouting's choice (it is deterministic and does not depend on the order of the input rows).
+
+#### Example
+
+```sql
+SELECT * FROM pgr_dijkstra((SELECT id, source, target, cost, reverse_cost FROM edges), 6, 10);
+
+-- one to many on an undirected graph
+SELECT * FROM pgr_dijkstra((SELECT id, source, target, cost, reverse_cost FROM edges), 6, [10, 17], directed := false);
+```
+
+----
+
+### pgr_dijkstraCost
+
+#### Signature
+
+```sql
+pgr_dijkstraCost (col0 TABLE, col1 ANY, col2 ANY, directed BOOLEAN)
+```
+
+#### Description
+
+Cost of the shortest path(s) using Dijkstra's algorithm, without the paths themselves.
+
+`pgr_dijkstraCost(edges, start vids, end vids, [directed := true])`
+
+The edges are passed as a table-valued argument, i.e. a parenthesised subquery, and its columns are matched by name:
+
+| Column | Type | Description |
+| --- | --- | --- |
+| `id` | integer | Identifier of the edge |
+| `source` | integer | Identifier of the first end point vertex |
+| `target` | integer | Identifier of the second end point vertex |
+| `cost` | numeric | Weight of the edge (`source`, `target`). A negative value means the edge does not exist in that direction |
+| `reverse_cost` | numeric | Optional. Weight of the edge (`target`, `source`). A negative value, or a missing column, means the edge does not exist in that direction |
+
+When `directed` is false every non-negative `cost` and `reverse_cost` is usable in both directions.
+A NULL in any of these columns raises an error.
+
+`start vids` and `end vids` are either a single integer or a list of integers, which covers the one-to-one, one-to-many, many-to-one and many-to-many signatures of pgRouting. Duplicates are ignored and vertices that are not part of the graph are skipped.
+They have to be constants: a literal, a prepared statement parameter or `getvariable('name')`.
+
+The result has one row per pair, ordered by `start_vid` and `end_vid`:
+
+| Column | Type | Description |
+| --- | --- | --- |
+| `start_vid` | BIGINT | Identifier of the starting vertex |
+| `end_vid` | BIGINT | Identifier of the ending vertex |
+| `agg_cost` | DOUBLE | Cost of the shortest path from `start_vid` to `end_vid` |
+
+Pairs without a path and pairs made of the same vertex twice are not returned.
+
+Differences with pgRouting: the edges are a table-valued argument instead of an SQL string, so the query runs inside the calling transaction and can read CTEs and temporary tables; the combinations signature is not available; and when several paths have the same cost the one that is returned may differ from pgRouting's choice (it is deterministic and does not depend on the order of the input rows).
+
+#### Example
+
+```sql
+SELECT * FROM pgr_dijkstraCost((SELECT id, source, target, cost, reverse_cost FROM edges), [6, 1], [10, 17]);
+```
+
+----
+
+### pgr_dijkstraCostMatrix
+
+#### Signature
+
+```sql
+pgr_dijkstraCostMatrix (col0 TABLE, col1 ANY, directed BOOLEAN)
+```
+
+#### Description
+
+Cost matrix between a set of vertices using Dijkstra's algorithm. The result can be fed to `pgr_TSP`.
+
+`pgr_dijkstraCostMatrix(edges, vids, [directed := true])`
+
+`vids` is a constant list of vertex identifiers.
+
+The edges are passed as a table-valued argument, i.e. a parenthesised subquery, and its columns are matched by name:
+
+| Column | Type | Description |
+| --- | --- | --- |
+| `id` | integer | Identifier of the edge |
+| `source` | integer | Identifier of the first end point vertex |
+| `target` | integer | Identifier of the second end point vertex |
+| `cost` | numeric | Weight of the edge (`source`, `target`). A negative value means the edge does not exist in that direction |
+| `reverse_cost` | numeric | Optional. Weight of the edge (`target`, `source`). A negative value, or a missing column, means the edge does not exist in that direction |
+
+When `directed` is false every non-negative `cost` and `reverse_cost` is usable in both directions.
+A NULL in any of these columns raises an error.
+
+The result has one row per pair, ordered by `start_vid` and `end_vid`:
+
+| Column | Type | Description |
+| --- | --- | --- |
+| `start_vid` | BIGINT | Identifier of the starting vertex |
+| `end_vid` | BIGINT | Identifier of the ending vertex |
+| `agg_cost` | DOUBLE | Cost of the shortest path from `start_vid` to `end_vid` |
+
+Pairs without a path and pairs made of the same vertex twice are not returned.
+
+Differences with pgRouting: the edges are a table-valued argument instead of an SQL string, so the query runs inside the calling transaction and can read CTEs and temporary tables; the combinations signature is not available; and when several paths have the same cost the one that is returned may differ from pgRouting's choice (it is deterministic and does not depend on the order of the input rows).
+
+#### Example
+
+```sql
+SELECT * FROM pgr_dijkstraCostMatrix((SELECT id, source, target, cost, reverse_cost FROM edges), [5, 6, 10, 15], directed := false);
+```
+
+----
+
+### pgr_drivingDistance
+
+#### Signature
+
+```sql
+pgr_drivingDistance (col0 TABLE, col1 ANY, col2 ANY, equicost BOOLEAN, directed BOOLEAN)
+```
+
+#### Description
+
+Vertices whose shortest path cost from the root vertex is less than or equal to a distance, together with the shortest path tree that reaches them.
+
+`pgr_drivingDistance(edges, root vids, distance, [directed := true, equicost := false])`
+
+`root vids` is a single integer or a list of integers. When `equicost` is true a vertex is only reported for the root it is closest to (the smallest root identifier wins ties).
+
+The edges are passed as a table-valued argument, i.e. a parenthesised subquery, and its columns are matched by name:
+
+| Column | Type | Description |
+| --- | --- | --- |
+| `id` | integer | Identifier of the edge |
+| `source` | integer | Identifier of the first end point vertex |
+| `target` | integer | Identifier of the second end point vertex |
+| `cost` | numeric | Weight of the edge (`source`, `target`). A negative value means the edge does not exist in that direction |
+| `reverse_cost` | numeric | Optional. Weight of the edge (`target`, `source`). A negative value, or a missing column, means the edge does not exist in that direction |
+
+When `directed` is false every non-negative `cost` and `reverse_cost` is usable in both directions.
+A NULL in any of these columns raises an error.
+
+The result is ordered by `start_vid`, `depth` and `node`:
+
+| Column | Type | Description |
+| --- | --- | --- |
+| `seq` | BIGINT | Sequential value starting from 1 |
+| `depth` | BIGINT | Number of edges between `start_vid` and `node` in the shortest path tree |
+| `start_vid` | BIGINT | Identifier of the root vertex |
+| `pred` | BIGINT | Predecessor of `node` in the tree, the root itself for the root |
+| `node` | BIGINT | Identifier of the reached vertex |
+| `edge` | BIGINT | Identifier of the edge used to arrive to `node`, -1 for the root |
+| `cost` | DOUBLE | Cost to traverse `edge` |
+| `agg_cost` | DOUBLE | Aggregate cost from `start_vid` to `node` |
+
+Differences with pgRouting: the edges are a table-valued argument instead of an SQL string, so the query runs inside the calling transaction and can read CTEs and temporary tables; the combinations signature is not available; and when several paths have the same cost the one that is returned may differ from pgRouting's choice (it is deterministic and does not depend on the order of the input rows).
+
+#### Example
+
+```sql
+SELECT * FROM pgr_drivingDistance((SELECT id, source, target, cost, reverse_cost FROM edges), 11, 3.0);
+
+SELECT * FROM pgr_drivingDistance((SELECT id, source, target, cost, reverse_cost FROM edges), [11, 16], 3.0, equicost := true);
+```
+
+----
+
+### pgr_edmondsKarp
+
+#### Signature
+
+```sql
+pgr_edmondsKarp (col0 TABLE, col1 ANY, col2 ANY)
+```
+
+#### Description
+
+Maximum flow from the source(s) to the sink(s), with the flow carried by each edge.
+
+`pgr_edmondsKarp(edges, start vids, end vids)`
+
+The edges are a table-valued argument, i.e. a parenthesised subquery, whose columns are matched by name:
+
+| Column | Type | Description |
+| --- | --- | --- |
+| `id` | integer | Identifier of the edge |
+| `source` | integer | Identifier of the first end point vertex |
+| `target` | integer | Identifier of the second end point vertex |
+| `capacity` | integer | Capacity of the edge (`source`, `target`). A value that is not positive means the edge does not exist in that direction |
+| `reverse_capacity` | integer | Optional. Capacity of the edge (`target`, `source`). A value that is not positive, or a missing column, means the edge does not exist in that direction |
+
+`start vids` and `end vids` are a single integer or a list of integers, given as constants. With several sources or sinks the flow goes from any source to any sink. A vertex cannot be on both sides.
+
+The result has one row per edge direction that carries flow, ordered by `start_vid`, `end_vid` and `edge`:
+
+| Column | Type | Description |
+| --- | --- | --- |
+| `seq` | INTEGER | Sequential value starting from 1 |
+| `edge` | BIGINT | Identifier of the edge |
+| `start_vid` | BIGINT | Vertex the flow leaves from |
+| `end_vid` | BIGINT | Vertex the flow goes to |
+| `flow` | BIGINT | Flow through the edge in that direction |
+| `residual_capacity` | BIGINT | Capacity left in that direction |
+
+Differences with pgRouting: the edges are a table-valued argument instead of an SQL string and the combinations signature is not available. `pgr_pushRelabel`, `pgr_edmondsKarp` and `pgr_boykovKolmogorov` are the same function here: the maximum flow is computed with Dinic's algorithm whatever the name. The total flow is the same as with pgRouting, but a maximum flow is generally not unique, so the flow of individual edges may differ.
+
+#### Example
+
+```sql
+SELECT * FROM pgr_edmondsKarp((SELECT id, source, target, capacity, reverse_capacity FROM edges), 11, 12);
+```
+
+----
+
+### pgr_extractVertices
+
+#### Signature
+
+```sql
+pgr_extractVertices (col0 TABLE)
+```
+
+#### Description
+
+Vertices of a graph, extracted from its edges.
+
+`pgr_extractVertices(edges)`
+
+The edges are a table-valued argument, i.e. a parenthesised subquery, whose columns are matched by name. One of the following sets of columns is used, in this order of preference:
+
+- `geom` (LINESTRING): the vertices are the distinct start and end points of the lines. They are numbered from 1 by increasing `x`, then `y`.
+- `startpoint` and `endpoint` (POINT): same as above, with the end points given explicitly.
+- `source` and `target` (integer): the vertices are the distinct identifiers. `x`, `y` and `geom` are NULL.
+
+`id` (integer) is optional. When it is present `in_edges` and `out_edges` are filled, otherwise they are NULL. Rows whose geometry is NULL or empty are skipped.
+
+| Column | Type | Description |
+| --- | --- | --- |
+| `id` | BIGINT | Identifier of the vertex |
+| `in_edges` | BIGINT[] | Sorted identifiers of the edges that end at the vertex, NULL when there is none |
+| `out_edges` | BIGINT[] | Sorted identifiers of the edges that start at the vertex, NULL when there is none |
+| `x` | DOUBLE | X coordinate of the vertex |
+| `y` | DOUBLE | Y coordinate of the vertex |
+| `geom` | GEOMETRY | POINT geometry of the vertex, in the coordinate system of the input |
+
+Differences with pgRouting: the edges are a table-valued argument instead of an SQL string, there is no `dryrun` option, and only the X and Y coordinates are considered.
+
+#### Example
+
+```sql
+CREATE TABLE vertices AS SELECT * FROM pgr_extractVertices((SELECT id, geom FROM edges));
+
+-- fill the source and target of the edges
+SELECT e.id, s.id AS source, t.id AS target
+FROM edges e
+JOIN vertices s ON ST_Equals(ST_StartPoint(e.geom), s.geom)
+JOIN vertices t ON ST_Equals(ST_EndPoint(e.geom), t.geom);
+```
+
+----
+
+### pgr_KSP
+
+#### Signature
+
+```sql
+pgr_KSP (col0 TABLE, col1 ANY, col2 ANY, col3 ANY, heap_paths BOOLEAN, directed BOOLEAN)
+```
+
+#### Description
+
+K shortest loopless paths using Yen's algorithm.
+
+`pgr_KSP(edges, start vids, end vids, K, [directed := true, heap_paths := false])`
+
+At most `K` paths are returned per pair of start and end vertices, by increasing cost. When `heap_paths` is true the candidate paths that were found while searching are returned as well, after the K shortest ones.
+
+The edges are passed as a table-valued argument, i.e. a parenthesised subquery, and its columns are matched by name:
+
+| Column | Type | Description |
+| --- | --- | --- |
+| `id` | integer | Identifier of the edge |
+| `source` | integer | Identifier of the first end point vertex |
+| `target` | integer | Identifier of the second end point vertex |
+| `cost` | numeric | Weight of the edge (`source`, `target`). A negative value means the edge does not exist in that direction |
+| `reverse_cost` | numeric | Optional. Weight of the edge (`target`, `source`). A negative value, or a missing column, means the edge does not exist in that direction |
+
+When `directed` is false every non-negative `cost` and `reverse_cost` is usable in both directions.
+A NULL in any of these columns raises an error.
+
+`start vids` and `end vids` are either a single integer or a list of integers, which covers the one-to-one, one-to-many, many-to-one and many-to-many signatures of pgRouting. Duplicates are ignored and vertices that are not part of the graph are skipped.
+They have to be constants: a literal, a prepared statement parameter or `getvariable('name')`.
+
+The result has the columns `seq`, `path_id`, `path_seq`, `start_vid`, `end_vid`, `node`, `edge`, `cost` and `agg_cost`. `path_id` numbers the paths from 1 across the whole result, the other columns are those of `pgr_dijkstra`.
+
+Differences with pgRouting: the edges are a table-valued argument instead of an SQL string, so the query runs inside the calling transaction and can read CTEs and temporary tables; the combinations signature is not available; and when several paths have the same cost the one that is returned may differ from pgRouting's choice (it is deterministic and does not depend on the order of the input rows).
+
+#### Example
+
+```sql
+SELECT * FROM pgr_KSP((SELECT id, source, target, cost, reverse_cost FROM edges), 6, 17, 2);
+```
+
+----
+
+### pgr_maxFlow
+
+#### Signature
+
+```sql
+pgr_maxFlow (col0 TABLE, col1 ANY, col2 ANY)
+```
+
+#### Description
+
+Value of the maximum flow from the source(s) to the sink(s), computed with Dinic's algorithm.
+
+`pgr_maxFlow(edges, start vids, end vids)`
+
+The edges are a table-valued argument, i.e. a parenthesised subquery, whose columns are matched by name:
+
+| Column | Type | Description |
+| --- | --- | --- |
+| `id` | integer | Identifier of the edge |
+| `source` | integer | Identifier of the first end point vertex |
+| `target` | integer | Identifier of the second end point vertex |
+| `capacity` | integer | Capacity of the edge (`source`, `target`). A value that is not positive means the edge does not exist in that direction |
+| `reverse_capacity` | integer | Optional. Capacity of the edge (`target`, `source`). A value that is not positive, or a missing column, means the edge does not exist in that direction |
+
+`start vids` and `end vids` are a single integer or a list of integers, given as constants. With several sources or sinks the flow goes from any source to any sink. A vertex cannot be on both sides.
+
+The result is a single row with the column `pgr_maxflow` (BIGINT), which is 0 when no sink can be reached. By the max-flow min-cut theorem it is also the capacity of the minimum cut that separates the sources from the sinks.
+
+Differences with pgRouting: the edges are a table-valued argument instead of an SQL string, the function is a table function that returns one row instead of a scalar, and the combinations signature is not available.
+
+#### Example
+
+```sql
+SELECT * FROM pgr_maxFlow((SELECT id, source, target, capacity, reverse_capacity FROM edges), 11, 12);
+```
+
+----
+
+### pgr_maxFlowMinCost
+
+#### Signature
+
+```sql
+pgr_maxFlowMinCost (col0 TABLE, col1 ANY, col2 ANY)
+```
+
+#### Description
+
+Maximum flow of minimum cost from the source(s) to the sink(s): among all the maximum flows, one whose total cost is the smallest.
+
+`pgr_maxFlowMinCost(edges, start vids, end vids)`
+
+The edges are a table-valued argument, i.e. a parenthesised subquery, whose columns are matched by name:
+
+| Column | Type | Description |
+| --- | --- | --- |
+| `id` | integer | Identifier of the edge |
+| `source` | integer | Identifier of the first end point vertex |
+| `target` | integer | Identifier of the second end point vertex |
+| `capacity` | integer | Capacity of the edge (`source`, `target`). A value that is not positive means the edge does not exist in that direction |
+| `reverse_capacity` | integer | Optional. Capacity of the edge (`target`, `source`). A value that is not positive, or a missing column, means the edge does not exist in that direction |
+
+`start vids` and `end vids` are a single integer or a list of integers, given as constants. With several sources or sinks the flow goes from any source to any sink. A vertex cannot be on both sides.
+
+In addition to the columns above the edges need `cost` (numeric): the cost of sending one unit of flow from `source` to `target`, and `reverse_cost` (numeric, required when `reverse_capacity` is used): the cost of one unit from `target` to `source`. The existence of an edge direction is decided by its capacity only, and the cost of a usable direction cannot be negative.
+
+The result has one row per edge direction that carries flow, ordered by `source`, `target` and `edge`:
+
+| Column | Type | Description |
+| --- | --- | --- |
+| `seq` | INTEGER | Sequential value starting from 1 |
+| `edge` | BIGINT | Identifier of the edge |
+| `source` | BIGINT | Vertex the flow leaves from |
+| `target` | BIGINT | Vertex the flow goes to |
+| `flow` | BIGINT | Flow through the edge in that direction |
+| `residual_capacity` | BIGINT | Capacity left in that direction |
+| `cost` | DOUBLE | Cost of the flow through the edge: `flow` times the unit cost |
+| `agg_cost` | DOUBLE | Aggregate cost up to this row, the last row holds the total cost |
+
+The flow is computed with the successive shortest path algorithm, which runs one shortest path search per augmentation.
+
+Differences with pgRouting: the edges are a table-valued argument instead of an SQL string and the combinations signature is not available. `pgr_maxFlowMinCost` is the pgRouting name, `pgr_minCostMaxFlow` is an alias. The total flow and the total cost are the same as with pgRouting, but the optimal flow is generally not unique, so the flow of individual edges may differ.
+
+#### Example
+
+```sql
+SELECT * FROM pgr_maxFlowMinCost((SELECT id, source, target, capacity, reverse_capacity, cost, reverse_cost FROM edges), 11, 12);
+```
+
+----
+
+### pgr_minCostMaxFlow
+
+#### Signature
+
+```sql
+pgr_minCostMaxFlow (col0 TABLE, col1 ANY, col2 ANY)
+```
+
+#### Description
+
+Maximum flow of minimum cost from the source(s) to the sink(s): among all the maximum flows, one whose total cost is the smallest.
+
+`pgr_minCostMaxFlow(edges, start vids, end vids)`
+
+The edges are a table-valued argument, i.e. a parenthesised subquery, whose columns are matched by name:
+
+| Column | Type | Description |
+| --- | --- | --- |
+| `id` | integer | Identifier of the edge |
+| `source` | integer | Identifier of the first end point vertex |
+| `target` | integer | Identifier of the second end point vertex |
+| `capacity` | integer | Capacity of the edge (`source`, `target`). A value that is not positive means the edge does not exist in that direction |
+| `reverse_capacity` | integer | Optional. Capacity of the edge (`target`, `source`). A value that is not positive, or a missing column, means the edge does not exist in that direction |
+
+`start vids` and `end vids` are a single integer or a list of integers, given as constants. With several sources or sinks the flow goes from any source to any sink. A vertex cannot be on both sides.
+
+In addition to the columns above the edges need `cost` (numeric): the cost of sending one unit of flow from `source` to `target`, and `reverse_cost` (numeric, required when `reverse_capacity` is used): the cost of one unit from `target` to `source`. The existence of an edge direction is decided by its capacity only, and the cost of a usable direction cannot be negative.
+
+The result has one row per edge direction that carries flow, ordered by `source`, `target` and `edge`:
+
+| Column | Type | Description |
+| --- | --- | --- |
+| `seq` | INTEGER | Sequential value starting from 1 |
+| `edge` | BIGINT | Identifier of the edge |
+| `source` | BIGINT | Vertex the flow leaves from |
+| `target` | BIGINT | Vertex the flow goes to |
+| `flow` | BIGINT | Flow through the edge in that direction |
+| `residual_capacity` | BIGINT | Capacity left in that direction |
+| `cost` | DOUBLE | Cost of the flow through the edge: `flow` times the unit cost |
+| `agg_cost` | DOUBLE | Aggregate cost up to this row, the last row holds the total cost |
+
+The flow is computed with the successive shortest path algorithm, which runs one shortest path search per augmentation.
+
+Differences with pgRouting: the edges are a table-valued argument instead of an SQL string and the combinations signature is not available. `pgr_maxFlowMinCost` is the pgRouting name, `pgr_minCostMaxFlow` is an alias. The total flow and the total cost are the same as with pgRouting, but the optimal flow is generally not unique, so the flow of individual edges may differ.
+
+#### Example
+
+```sql
+SELECT * FROM pgr_minCostMaxFlow((SELECT id, source, target, capacity, reverse_capacity, cost, reverse_cost FROM edges), 11, 12);
+```
+
+----
+
+### pgr_nodeNetwork
+
+#### Signature
+
+```sql
+pgr_nodeNetwork (col0 TABLE, col1 ANY)
+```
+
+#### Description
+
+Nodes a network: splits the lines where they meet, so that lines only touch at their end points.
+
+`pgr_nodeNetwork(edges, tolerance)`
+
+The edges are a table-valued argument with the columns `id` (integer) and `geom` (LINESTRING). `tolerance` is a non-negative constant in the unit of the coordinates.
+
+A line is split where another line crosses or touches it, at both ends of a stretch it shares with another line, and where another line ends within the tolerance of it without touching it. No split is made within the tolerance of an end of the line or of the previous split. A line does not split itself. Every line is returned, in one piece when nothing splits it.
+
+| Column | Type | Description |
+| --- | --- | --- |
+| `id` | BIGINT | Identifier of the new edge, from 1, by `old_id` and `sub_id` |
+| `old_id` | BIGINT | Identifier of the original edge |
+| `sub_id` | INTEGER | Position of the piece along the original edge, starting from 1 |
+| `geom` | GEOMETRY | LINESTRING geometry of the piece, in the coordinate system of the input |
+
+Rows whose geometry is NULL or empty are skipped. Only the X and Y coordinates are kept.
+
+Differences with pgRouting: `pgr_nodeNetwork` created a new table. A table function cannot create tables, so the noded edges are returned as rows. The function was removed from pgRouting 4.0 and is kept here for convenience.
+
+#### Example
+
+```sql
+CREATE TABLE edges_noded AS SELECT * FROM pgr_nodeNetwork((SELECT id, geom FROM edges), 0.001);
+```
+
+----
+
+### pgr_pushRelabel
+
+#### Signature
+
+```sql
+pgr_pushRelabel (col0 TABLE, col1 ANY, col2 ANY)
+```
+
+#### Description
+
+Maximum flow from the source(s) to the sink(s), with the flow carried by each edge.
+
+`pgr_pushRelabel(edges, start vids, end vids)`
+
+The edges are a table-valued argument, i.e. a parenthesised subquery, whose columns are matched by name:
+
+| Column | Type | Description |
+| --- | --- | --- |
+| `id` | integer | Identifier of the edge |
+| `source` | integer | Identifier of the first end point vertex |
+| `target` | integer | Identifier of the second end point vertex |
+| `capacity` | integer | Capacity of the edge (`source`, `target`). A value that is not positive means the edge does not exist in that direction |
+| `reverse_capacity` | integer | Optional. Capacity of the edge (`target`, `source`). A value that is not positive, or a missing column, means the edge does not exist in that direction |
+
+`start vids` and `end vids` are a single integer or a list of integers, given as constants. With several sources or sinks the flow goes from any source to any sink. A vertex cannot be on both sides.
+
+The result has one row per edge direction that carries flow, ordered by `start_vid`, `end_vid` and `edge`:
+
+| Column | Type | Description |
+| --- | --- | --- |
+| `seq` | INTEGER | Sequential value starting from 1 |
+| `edge` | BIGINT | Identifier of the edge |
+| `start_vid` | BIGINT | Vertex the flow leaves from |
+| `end_vid` | BIGINT | Vertex the flow goes to |
+| `flow` | BIGINT | Flow through the edge in that direction |
+| `residual_capacity` | BIGINT | Capacity left in that direction |
+
+Differences with pgRouting: the edges are a table-valued argument instead of an SQL string and the combinations signature is not available. `pgr_pushRelabel`, `pgr_edmondsKarp` and `pgr_boykovKolmogorov` are the same function here: the maximum flow is computed with Dinic's algorithm whatever the name. The total flow is the same as with pgRouting, but a maximum flow is generally not unique, so the flow of individual edges may differ.
+
+#### Example
+
+```sql
+SELECT * FROM pgr_pushRelabel((SELECT id, source, target, capacity, reverse_capacity FROM edges), 11, 12);
+```
+
+----
+
+### pgr_strongComponents
+
+#### Signature
+
+```sql
+pgr_strongComponents (col0 TABLE)
+```
+
+#### Description
+
+Strongly connected components of a directed graph, using Tarjan's algorithm: two vertices are in the same component when each one can be reached from the other.
+
+`pgr_strongComponents(edges)`
+
+The edges are a table-valued argument with the columns `id`, `source`, `target`, `cost` and optionally `reverse_cost`, as for `pgr_dijkstra`. A negative `cost` or `reverse_cost` means the edge does not exist in that direction; its end points are still vertices of the graph.
+
+The result is ordered by `component` and `node`:
+
+| Column | Type | Description |
+| --- | --- | --- |
+| `seq` | BIGINT | Sequential value starting from 1 |
+| `component` | BIGINT | Identifier of the component: the smallest vertex identifier it contains |
+| `node` | BIGINT | Identifier of a vertex of the component |
+
+Differences with pgRouting: the edges are a table-valued argument instead of an SQL string.
+
+#### Example
+
+```sql
+SELECT * FROM pgr_strongComponents((SELECT id, source, target, cost, reverse_cost FROM edges));
+```
+
+----
+
+### pgr_trsp
+
+#### Signature
+
+```sql
+pgr_trsp (col0 TABLE, col1 ANY, col2 ANY, col3 ANY, directed BOOLEAN)
+```
+
+#### Description
+
+Shortest path(s) with turn restrictions.
+
+`pgr_trsp(edges, restrictions, start vids, end vids, [directed := true])`
+
+The edges are a table-valued argument with the columns `id`, `source`, `target`, `cost` and optionally `reverse_cost`, as for `pgr_dijkstra`.
+
+The restrictions are a constant list of structs with the fields:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `path` | list of integers | Sequence of edge identifiers that make up the restricted manoeuvre |
+| `cost` | numeric | Cost that is added when the whole sequence is travelled. Use `'infinity'::DOUBLE` to forbid the manoeuvre |
+
+Other fields, such as an identifier, are ignored. A table-valued argument can only be used once per call, so the list has to be built beforehand, for example with `SET VARIABLE restrictions = (SELECT list(r) FROM restrictions r)` and passed as `getvariable('restrictions')`.
+
+`start vids` and `end vids` are a single integer or a list of integers.
+
+The result has the columns `seq`, `path_seq`, `start_vid`, `end_vid`, `node`, `edge`, `cost` and `agg_cost` of `pgr_dijkstra`. The cost of a restriction is included in the `cost` of the edge that completes it. A vertex can appear more than once in a path when a detour is cheaper than a restricted manoeuvre, but as in pgRouting an edge is never followed by a U-turn on that same edge.
+
+Differences with pgRouting: the edges are a table-valued argument and the restrictions a list of structs instead of two SQL strings; the combinations signature is not available; and the search tracks how much of each restriction has been travelled, so that the result is the cheapest path for restrictions of any length, including overlapping ones.
+
+#### Example
+
+```sql
+SET VARIABLE restrictions = (SELECT list(r) FROM (SELECT path, cost FROM restrictions) r);
+
+SELECT * FROM pgr_trsp((SELECT id, source, target, cost, reverse_cost FROM edges), getvariable('restrictions'), 6, 10);
+```
+
+----
+
+### pgr_TSP
+
+#### Signature
+
+```sql
+pgr_TSP (col0 TABLE, end_id BIGINT, start_id BIGINT)
+```
+
+#### Description
+
+Travelling salesperson tour over a cost matrix: a round trip that visits every node once.
+
+`pgr_TSP(matrix, [start_id := 0, end_id := 0])`
+
+The matrix is a table-valued argument, typically the result of `pgr_dijkstraCostMatrix` with `directed := false`, whose columns are matched by name:
+
+| Column | Type | Description |
+| --- | --- | --- |
+| `start_vid` | integer | Identifier of the starting node |
+| `end_vid` | integer | Identifier of the ending node |
+| `agg_cost` | numeric | Cost to go from `start_vid` to `end_vid` |
+
+The problem is solved on an undirected graph: when the costs of the two directions differ the smallest one is used, rows with a negative cost and rows from a node to itself are ignored, and missing cells are completed with the cost of the shortest path through the other nodes. Nodes that cannot be reached from the start node are left out of the tour.
+
+`start_id` is the node where the tour starts and ends, by default (0) the smallest node identifier. When `end_id` is given and differs from `start_id`, it is the last node visited before returning to the start.
+
+The result is ordered by `seq`:
+
+| Column | Type | Description |
+| --- | --- | --- |
+| `seq` | INTEGER | Sequential value starting from 1 |
+| `node` | BIGINT | Identifier of the node at this position. The start node is repeated in the last row |
+| `cost` | DOUBLE | Cost to travel from the previous node to `node`, 0 for the first row |
+| `agg_cost` | DOUBLE | Aggregate cost from the start node to `node` |
+
+The tour is optimal up to 12 nodes (exact dynamic programming). Beyond that it is a heuristic: a nearest neighbour tour improved with 2-opt and Or-opt moves until no move shortens it, which gives a good but not necessarily optimal tour.
+
+Differences with pgRouting: the matrix is a table-valued argument instead of an SQL string; pgRouting uses the metric approximation of the Boost graph library, so the tours differ although both are valid (the tour returned here is never longer than the nearest neighbour tour, and does not depend on the order of the input rows); and a start and end node that are not connected raise an error instead of being joined with an estimated cost.
+
+#### Example
+
+```sql
+SELECT * FROM pgr_TSP((
+    SELECT * FROM pgr_dijkstraCostMatrix((SELECT id, source, target, cost, reverse_cost FROM edges), [1, 5, 9, 15], directed := false)
+), start_id := 1);
+```
+
+----
+
+### pgr_withPoints
+
+#### Signature
+
+```sql
+pgr_withPoints (col0 TABLE, col1 ANY, col2 ANY, col3 ANY, details BOOLEAN, directed BOOLEAN, driving_side VARCHAR)
+```
+
+#### Description
+
+Shortest path(s) using Dijkstra's algorithm on a graph to which points located on the edges are added as temporary vertices.
+
+`pgr_withPoints(edges, points, start vids, end vids, [driving_side], [directed := true, details := false])`
+
+The edges are a table-valued argument with the columns `id`, `source`, `target`, `cost` and optionally `reverse_cost`, as for `pgr_dijkstra`.
+
+The points are a constant list of structs with the fields:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `pid` | integer | Optional. Identifier of the point, which becomes the vertex `-pid`. Defaults to the position in the list, starting from 1 |
+| `edge_id` | integer | Identifier of the edge the point is on. Points on unknown edges are ignored |
+| `fraction` | numeric | Position on the edge, between 0 (at `source`) and 1 (at `target`) |
+| `side` | VARCHAR | Optional. `r`, `l` or `b` (default, also used for NULL): the side of the edge the point is on, looking from `source` to `target` |
+
+A table-valued argument can only be used once per call, so the list has to be built beforehand, for example with `SET VARIABLE points = (SELECT list(p) FROM points_of_interest p)` and passed as `getvariable('points')`.
+
+`start vids` and `end vids` are a single integer or a list of integers. Negative values designate points, positive values vertices of the graph.
+
+`driving_side` is `r` (default on a directed graph), `l` or `b` (always used on an undirected graph). With right side driving a point on the right side of an edge can only be reached while travelling from `source` to `target`, and a point on the left side while travelling from `target` to `source`; left side driving is the opposite. It can be given as the fifth positional argument or by name.
+
+When `details` is false, consecutive rows of a path that are on the same edge are merged, which hides the points that are passed along the way. When it is true every point that is passed is returned as a row with a negative `node`.
+
+The result has the columns `seq`, `path_seq`, `start_vid`, `end_vid`, `node`, `edge`, `cost` and `agg_cost` of `pgr_dijkstra`, ordered by `start_vid` and `end_vid`.
+
+Differences with pgRouting: the edges are a table-valued argument and the points a list of structs instead of two SQL strings, and the combinations signature is not available.
+
+#### Example
+
+```sql
+SET VARIABLE points = (SELECT list(p) FROM (SELECT pid, edge_id, fraction, side FROM points_of_interest) p);
+
+SELECT * FROM pgr_withPoints((SELECT id, source, target, cost, reverse_cost FROM edges), getvariable('points'), -1, [10, -3], 'r', details := true);
 ```
 
 ----

@@ -1,0 +1,249 @@
+# name: test/sql/routing/pgr_tsp.test
+# description: Test pgr_TSP
+# group: [routing]
+
+require spatial
+
+# The pgRouting sample graph
+statement ok
+CREATE TABLE edges AS SELECT * FROM (VALUES
+	(1, 5, 6, 1, 1), (2, 6, 10, -1, 1), (3, 10, 15, -1, 1), (4, 6, 7, 1, 1), (5, 10, 11, 1, -1), (6, 1, 3, 1, 1),
+	(7, 3, 7, 1, 1), (8, 7, 11, 1, 1), (9, 11, 16, 1, 1), (10, 7, 8, 1, 1), (11, 11, 12, 1, -1), (12, 8, 12, 1, -1),
+	(13, 12, 17, 1, -1), (14, 8, 9, 1, 1), (15, 16, 17, 1, 1), (16, 15, 16, 1, 1), (17, 2, 4, 1, 1), (18, 13, 14, 1, 1)
+) t(id, source, target, cost, reverse_cost);
+
+# A square with one expensive diagonal: the tour follows the sides
+statement ok
+CREATE TABLE square AS SELECT * FROM (VALUES
+	(1, 2, 1.0), (2, 3, 1.0), (3, 4, 1.0), (4, 1, 1.0), (1, 3, 5.0), (2, 4, 5.0),
+	(2, 1, 1.0), (3, 2, 1.0), (4, 3, 1.0), (1, 4, 1.0), (3, 1, 5.0), (4, 2, 5.0)
+) t(start_vid, end_vid, agg_cost);
+
+query IITT
+SELECT * REPLACE (cost::VARCHAR AS cost, agg_cost::VARCHAR AS agg_cost) FROM pgr_TSP((SELECT * FROM square));
+----
+1	1	0.0	0.0
+2	4	1.0	1.0
+3	3	1.0	2.0
+4	2	1.0	3.0
+5	1	1.0	4.0
+
+query IITT
+SELECT * REPLACE (cost::VARCHAR AS cost, agg_cost::VARCHAR AS agg_cost) FROM pgr_TSP((SELECT * FROM square), start_id := 3);
+----
+1	3	0.0	0.0
+2	4	1.0	1.0
+3	1	1.0	2.0
+4	2	1.0	3.0
+5	3	1.0	4.0
+
+# The end node is the last one before the return to the start
+query IITT
+SELECT * REPLACE (cost::VARCHAR AS cost, agg_cost::VARCHAR AS agg_cost) FROM pgr_TSP((SELECT * FROM square), 1, 3);
+----
+1	1	0.0	0.0
+2	4	1.0	1.0
+3	2	5.0	6.0
+4	3	1.0	7.0
+5	1	5.0	12.0
+
+# Only the end is given: it is used as the start
+query IITT
+SELECT * REPLACE (cost::VARCHAR AS cost, agg_cost::VARCHAR AS agg_cost) FROM pgr_TSP((SELECT * FROM square), end_id := 2);
+----
+1	2	0.0	0.0
+2	3	1.0	1.0
+3	4	1.0	2.0
+4	1	1.0	3.0
+5	2	1.0	4.0
+
+# An asymmetric matrix uses the cheapest direction, a missing cell the shortest path through the other nodes
+query IITT
+SELECT * REPLACE (cost::VARCHAR AS cost, agg_cost::VARCHAR AS agg_cost) FROM pgr_TSP((SELECT * FROM (VALUES (1, 2, 1.0), (2, 1, 9.0), (2, 3, 2.0), (3, 4, 1.0), (4, 1, 7.0), (4, 4, 100.0), (1, 3, -1.0)) t(start_vid, end_vid, agg_cost)));
+----
+1	1	0.0	0.0
+2	4	4.0	4.0
+3	3	1.0	5.0
+4	2	2.0	7.0
+5	1	1.0	8.0
+
+# Nodes that cannot be reached from the start are left out
+query IITT
+SELECT * REPLACE (cost::VARCHAR AS cost, agg_cost::VARCHAR AS agg_cost) FROM pgr_TSP((SELECT * FROM (VALUES (1, 2, 1.0), (2, 3, 2.0), (1, 3, 2.5), (7, 8, 1.0)) t(start_vid, end_vid, agg_cost)));
+----
+1	1	0.0	0.0
+2	2	1.0	1.0
+3	3	2.0	3.0
+4	1	2.5	5.5
+
+query IITT
+SELECT * REPLACE (cost::VARCHAR AS cost, agg_cost::VARCHAR AS agg_cost) FROM pgr_TSP((SELECT * FROM (VALUES (1, 2, 1.0), (2, 3, 2.0), (1, 3, 2.5), (7, 8, 1.0)) t(start_vid, end_vid, agg_cost)), start_id := 8);
+----
+1	8	0.0	0.0
+2	7	1.0	1.0
+3	8	1.0	2.0
+
+query I
+SELECT count(*) FROM pgr_TSP((SELECT * FROM square WHERE false));
+----
+0
+
+query I
+SELECT count(*) FROM pgr_TSP((SELECT * FROM square), start_id := NULL);
+----
+0
+
+statement error
+SELECT * FROM pgr_TSP((SELECT * FROM square), start_id := 9);
+----
+start_id 9 does not exist in the matrix
+
+statement error
+SELECT * FROM pgr_TSP((SELECT * FROM square), 1, 9);
+----
+end_id 9 does not exist in the matrix
+
+statement error
+SELECT * FROM pgr_TSP((SELECT * FROM (VALUES (1, 2, 1.0), (7, 8, 1.0)) t(start_vid, end_vid, agg_cost)), 1, 8);
+----
+are not connected
+
+statement error
+SELECT * FROM pgr_TSP((SELECT start_vid, end_vid FROM square));
+----
+missing the required column "agg_cost"
+
+# With pgr_dijkstraCostMatrix, as in the pgRouting documentation (whose metric approximation costs 20)
+query IITT
+SELECT * REPLACE (cost::VARCHAR AS cost, agg_cost::VARCHAR AS agg_cost) FROM pgr_TSP((
+	SELECT * FROM pgr_dijkstraCostMatrix((SELECT * FROM edges), [1, 3, 5, 6, 7, 8, 9, 10, 11, 12, 15, 16, 17], directed := false)));
+----
+1	1	0.0	0.0
+2	3	1.0	1.0
+3	7	1.0	2.0
+4	6	1.0	3.0
+5	5	1.0	4.0
+6	10	2.0	6.0
+7	15	1.0	7.0
+8	16	1.0	8.0
+9	17	1.0	9.0
+10	9	3.0	12.0
+11	8	1.0	13.0
+12	12	1.0	14.0
+13	11	1.0	15.0
+14	1	3.0	18.0
+
+# Up to 12 nodes the tour is optimal: compare with every permutation of 8 random points
+statement ok
+CREATE TABLE cities AS SELECT i AS id, (hash(i + 1000) % 1000)::DOUBLE AS x, (hash(i + 2000) % 1000)::DOUBLE AS y FROM range(1, 9) t(i);
+
+statement ok
+CREATE TABLE distances AS
+	SELECT a.id AS start_vid, b.id AS end_vid, sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2) AS agg_cost FROM cities a, cities b WHERE a.id <> b.id;
+
+statement ok
+CREATE TABLE tours AS
+WITH RECURSIVE walk(nodes, last, cost) AS (
+	SELECT [1::BIGINT], 1::BIGINT, 0::DOUBLE
+	UNION ALL
+	SELECT list_append(nodes, d.end_vid), d.end_vid, cost + d.agg_cost
+	FROM walk w JOIN distances d ON d.start_vid = w.last WHERE NOT list_contains(nodes, d.end_vid)
+)
+SELECT w.nodes, w.last, w.cost + d.agg_cost AS cost FROM walk w JOIN distances d ON d.start_vid = w.last AND d.end_vid = 1 WHERE len(nodes) = 8;
+
+query I
+SELECT count(*) FROM tours;
+----
+5040
+
+query I
+SELECT abs((SELECT max(agg_cost) FROM pgr_TSP((SELECT * FROM distances), start_id := 1)) - (SELECT min(cost) FROM tours)) < 1e-6;
+----
+true
+
+query I
+SELECT abs((SELECT max(agg_cost) FROM pgr_TSP((SELECT * FROM distances), 1, 5)) - (SELECT min(cost) FROM tours WHERE last = 5)) < 1e-6;
+----
+true
+
+query II
+SELECT count(*), count(DISTINCT node) FROM pgr_TSP((SELECT * FROM distances), 1, 5);
+----
+9	8
+
+query II
+SELECT node, seq FROM pgr_TSP((SELECT * FROM distances), 1, 5) WHERE seq IN (1, 8, 9) ORDER BY seq;
+----
+1	1
+5	8
+1	9
+
+# Beyond 12 nodes the tour is a heuristic: check that it is a valid tour, consistent with the matrix,
+# never longer than the nearest neighbour tour, and independent of the order of the rows
+statement ok
+CREATE TABLE many_cities AS SELECT i AS id, (hash(i + 3000) % 1000)::DOUBLE AS x, (hash(i + 4000) % 1000)::DOUBLE AS y FROM range(1, 61) t(i);
+
+statement ok
+CREATE TABLE many_distances AS
+	SELECT a.id AS start_vid, b.id AS end_vid, sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2) AS agg_cost FROM many_cities a, many_cities b WHERE a.id <> b.id;
+
+statement ok
+CREATE TABLE tour AS SELECT * FROM pgr_TSP((SELECT * FROM many_distances), start_id := 7);
+
+query IIII
+SELECT count(*), count(DISTINCT node), min(node), max(node) FROM tour;
+----
+61	60	1	60
+
+query II
+SELECT node, cost FROM tour WHERE seq = 1;
+----
+7	0.0
+
+query I
+SELECT node FROM tour WHERE seq = 61;
+----
+7
+
+query I
+SELECT count(*) FROM (SELECT t.*, lag(node) OVER (ORDER BY seq) AS previous, lag(agg_cost) OVER (ORDER BY seq) AS previous_agg FROM tour t) t
+LEFT JOIN many_distances d ON d.start_vid = t.previous AND d.end_vid = t.node
+WHERE seq > 1 AND (d.agg_cost IS NULL OR abs(d.agg_cost - t.cost) > 1e-9 OR abs(t.previous_agg + t.cost - t.agg_cost) > 1e-6);
+----
+0
+
+statement ok
+CREATE TABLE greedy AS
+WITH RECURSIVE walk(nodes, last, cost) AS (
+	SELECT [7::BIGINT], 7::BIGINT, 0::DOUBLE
+	UNION ALL
+	(SELECT list_append(nodes, d.end_vid), d.end_vid, cost + d.agg_cost
+	 FROM walk w JOIN many_distances d ON d.start_vid = w.last WHERE NOT list_contains(nodes, d.end_vid)
+	 ORDER BY d.agg_cost, d.end_vid LIMIT 1)
+)
+SELECT w.cost + d.agg_cost AS cost FROM walk w JOIN many_distances d ON d.start_vid = w.last AND d.end_vid = 7 WHERE len(nodes) = 60;
+
+query I
+SELECT (SELECT max(agg_cost) FROM tour) <= (SELECT cost FROM greedy) + 1e-6;
+----
+true
+
+query I
+SELECT count(*) FROM (
+	SELECT * FROM pgr_TSP((SELECT * FROM many_distances ORDER BY hash(start_vid, end_vid)), start_id := 7)
+	EXCEPT SELECT * FROM tour);
+----
+0
+
+# A fixed end node stays last
+query II
+SELECT node, seq FROM pgr_TSP((SELECT * FROM many_distances), 7, 33) WHERE seq IN (1, 60, 61) ORDER BY seq;
+----
+7	1
+33	60
+7	61
+
+query II
+SELECT count(*), count(DISTINCT node) FROM pgr_TSP((SELECT * FROM many_distances), 7, 33);
+----
+61	60
