@@ -273,18 +273,8 @@ SELECT count(*) FROM (
 # =====================================================================
 # OVER (PARTITION BY ... ORDER BY ...)
 #
-# Known limitation: OVER (PARTITION BY grp) WITHOUT an ORDER BY is
-# rewritten by DuckDB's `window_self_join` optimizer into a grouped
-# aggregate + inner join, which requires the aggregate to provide a
-# combine() method. ST_ClusterDBSCAN and ST_ClusterKMeans compute their
-# state in window_init from the full partition and have no combine, so
-# this rewrite triggers a physical plan crash.
-#
-# Adding an ORDER BY clause makes `window_self_join::CanOptimize` bail
-# out early, so the planner routes the window through the custom window
-# aggregator (which is what we want). This test exercises:
-#  - l_state counter reset across partition boundaries (different g_state)
-#  - the ORDER BY code path through the window callback
+# The whole partition is clustered whatever the ORDER BY and frame of the
+# window. PARTITION BY without ORDER BY is covered further down.
 # =====================================================================
 
 statement ok
@@ -319,3 +309,71 @@ ORDER BY grp;
 ----
 a	2
 b	2
+
+# ---------------------------------------------------------------------------
+# Every row gets the cluster of its own geometry, whatever the number of
+# threads and the size of the partition
+# ---------------------------------------------------------------------------
+
+statement ok
+SET threads = 8;
+
+# Isolated points, each a cluster of its own: the cluster id must follow the row
+query IIIII
+WITH t AS (SELECT i, ST_Point(i * 10.0 + (i % 2), 0) AS g FROM range(100000) x(i)),
+     c AS (SELECT i, ST_ClusterDBSCAN(g, 1.0, 1) OVER () AS c FROM t)
+SELECT count(DISTINCT c), count(*), min(c), max(c), count(*) FILTER (WHERE c <> i) FROM c;
+----
+100000	100000	0	99999	0
+
+# Two points of every cluster are 1 apart, the clusters are 100 apart: rows of the same pair share a cluster
+query II
+WITH t AS (SELECT i, ST_Point((i // 2) * 100.0 + (i % 2), 0) AS g FROM range(60000) x(i)),
+     c AS (SELECT i, ST_ClusterDBSCAN(g, 1.5, 2) OVER () AS c FROM t)
+SELECT count(DISTINCT c), count(*) FROM (SELECT i // 2 AS pair, min(c) AS c FROM c GROUP BY 1 HAVING count(DISTINCT c) = 1);
+----
+30000	30000
+
+# Noise stays on the rows it belongs to
+query II
+WITH t AS (SELECT i, CASE WHEN i % 10 = 0 THEN ST_Point(-1000.0 - i * 50, 500) ELSE ST_Point((i % 10) * 0.1, 0) END AS g FROM range(50000) x(i)),
+     c AS (SELECT i, ST_ClusterDBSCAN(g, 0.5, 3) OVER () AS c FROM t)
+SELECT count(*) FILTER (WHERE (c IS NULL) <> (i % 10 = 0)), count(DISTINCT c) FROM c;
+----
+0	1
+
+# PARTITION BY without ORDER BY, several large partitions
+query IIII
+WITH t AS (SELECT i % 3 AS grp, i, ST_Point((i % 1000) * 1.0, (i // 1000) % 7 * 100.0) AS g FROM range(300000) x(i)),
+     c AS (SELECT grp, i, ST_ClusterDBSCAN(g, 1.5, 2) OVER (PARTITION BY grp) AS c FROM t)
+SELECT grp, count(DISTINCT c), count(*) FILTER (WHERE c IS NULL), count(*) FROM c GROUP BY 1 ORDER BY 1;
+----
+0	7	0	100000
+1	7	0	100000
+2	7	0	100000
+
+# The frame clause of the window does not change the result
+query I
+WITH t AS (SELECT i, ST_Point((i // 2) * 100.0 + (i % 2), 0) AS g FROM range(10000) x(i))
+SELECT count(*) FROM (
+	SELECT ST_ClusterDBSCAN(g, 1.5, 2) OVER () AS a,
+	       ST_ClusterDBSCAN(g, 1.5, 2) OVER (ORDER BY i ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) AS b
+	FROM t) WHERE a IS DISTINCT FROM b;
+----
+0
+
+# K-means: two well separated groups, large partition
+query III
+WITH t AS (SELECT i, ST_Point(CASE WHEN i % 2 = 0 THEN 0 ELSE 1000 END + (i % 97) * 0.01, (i % 89) * 0.01) AS g FROM range(100000) x(i)),
+     c AS (SELECT i, ST_ClusterKMeans(g, 2) OVER () AS c FROM t)
+SELECT i % 2, count(DISTINCT c), count(*) FROM c GROUP BY 1 ORDER BY 1;
+----
+0	1	50000
+1	1	50000
+
+query I
+WITH t AS (SELECT i, ST_Point(CASE WHEN i % 2 = 0 THEN 0 ELSE 1000 END + (i % 97) * 0.01, (i % 89) * 0.01) AS g FROM range(100000) x(i)),
+     c AS (SELECT i, ST_ClusterKMeans(g, 2) OVER (PARTITION BY i % 4 >= 2) AS c FROM t)
+SELECT count(*) FROM (SELECT i % 4 >= 2 AS grp, i % 2 AS side, count(DISTINCT c) AS n FROM c GROUP BY 1, 2) WHERE n = 1;
+----
+4

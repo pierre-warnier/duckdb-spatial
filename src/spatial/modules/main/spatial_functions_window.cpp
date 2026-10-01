@@ -7,7 +7,10 @@
 
 #include "duckdb/common/types/column/column_data_collection.hpp"
 #include "duckdb/execution/expression_executor.hpp"
+#include "duckdb/main/database.hpp"
+#include "duckdb/optimizer/optimizer_extension.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
+#include "duckdb/planner/expression/bound_window_expression.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -29,19 +32,37 @@ namespace {
 static constexpr int32_t DBSCAN_NOISE = -1;
 static constexpr int32_t DBSCAN_UNVISITED = -2;
 
-struct DBSCANBindData final : public FunctionData {
+// The clustering functions compute a value for every row of the partition up front, and the window callback only has
+// to hand out the value of the current row. DuckDB does not tell the callback which row that is, only its frame, and
+// callbacks run on several threads in no particular order. An optimizer rule therefore gives these functions the
+// frame ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW, whose end is the position of the current row.
+struct ClusterBindData : public FunctionData {
+	bool has_row_frame = false;
+};
+
+static idx_t GetPartitionRow(AggregateInputData &aggr_input_data, const SubFrames &frames, const char *name) {
+	if (!aggr_input_data.bind_data->Cast<ClusterBindData>().has_row_frame || frames.empty()) {
+		throw InvalidInputException("%s cannot be used when the query optimizer or its extensions are disabled",
+		                            name);
+	}
+	return frames.back().end - 1;
+}
+
+struct DBSCANBindData final : public ClusterBindData {
 	double epsilon;
 	int32_t min_points;
 
 	DBSCANBindData(double eps, int32_t minpts) : epsilon(eps), min_points(minpts) {}
 
 	unique_ptr<FunctionData> Copy() const override {
-		return make_uniq<DBSCANBindData>(epsilon, min_points);
+		auto result = make_uniq<DBSCANBindData>(epsilon, min_points);
+		result->has_row_frame = has_row_frame;
+		return std::move(result);
 	}
 
 	bool Equals(const FunctionData &other) const override {
 		auto &o = other.Cast<DBSCANBindData>();
-		return epsilon == o.epsilon && min_points == o.min_points;
+		return epsilon == o.epsilon && min_points == o.min_points && has_row_frame == o.has_row_frame;
 	}
 };
 
@@ -51,14 +72,6 @@ struct DBSCANGlobalState {
 	// machinery may memcpy the state struct, which breaks vector internals.
 	int32_t *cluster_ids = nullptr;
 	idx_t count = 0;
-
-	// These fields are only used when the struct serves as the per-thread
-	// local state passed to the window callback. DuckDB uses the same
-	// StateSize for g_state and l_state, so l_state is a zero-initialized
-	// DBSCANGlobalState; we repurpose unused space to track the partition
-	// row counter. cluster_ids stays nullptr in l_state so Destroy() is safe.
-	idx_t l_next_row = 0;
-	const void *l_last_gstate = nullptr;
 
 	void Allocate(idx_t n) {
 		count = n;
@@ -327,31 +340,14 @@ static void DBSCANWindowInit(AggregateInputData &aggr_input_data, const WindowPa
 	}
 }
 
-// Per-row window callback: return the pre-computed cluster ID.
-// `rid` is the index into the current output DataChunk — it resets to 0 every
-// batch, so it is NOT the partition row index when a partition spans multiple
-// output chunks. DuckDB does not expose the absolute `row_idx` to the callback,
-// and `frames[0].end - 1` only tracks the current row for ORDER BY frames (for
-// the default `OVER ()` whole-partition frame it is constant).
-//
-// To recover the absolute index we run a monotonic counter in `l_state`,
-// resetting it when `g_state` changes (which marks a new partition, since
-// `window_init` allocates a fresh g_state per partition). Within a partition
-// the window operator calls the callback in row order on a single thread, so
-// the counter is accurate.
-static void DBSCANWindow(AggregateInputData &, const WindowPartitionInput &, const_data_ptr_t g_state,
-                         data_ptr_t l_state, const SubFrames &, Vector &result, idx_t rid) {
+static void DBSCANWindow(AggregateInputData &aggr_input_data, const WindowPartitionInput &,
+                         const_data_ptr_t g_state, data_ptr_t, const SubFrames &frames, Vector &result, idx_t rid) {
 
 	auto &state = *reinterpret_cast<const DBSCANGlobalState *>(g_state);
-	auto &lstate = *reinterpret_cast<DBSCANGlobalState *>(l_state);
 	auto result_data = FlatVector::GetData<int32_t>(result);
 	auto &result_validity = FlatVector::Validity(result);
 
-	if (lstate.l_last_gstate != g_state) {
-		lstate.l_last_gstate = g_state;
-		lstate.l_next_row = 0;
-	}
-	const auto partition_rid = lstate.l_next_row++;
+	const auto partition_rid = GetPartitionRow(aggr_input_data, frames, "ST_ClusterDBSCAN");
 
 	if (state.cluster_ids && partition_rid < state.count) {
 		auto cluster_id = state.cluster_ids[partition_rid];
@@ -380,19 +376,23 @@ static void DBSCANFinalize(Vector &, AggregateInputData &, Vector &, idx_t, idx_
 // ST_ClusterKMeans
 //======================================================================================================================
 
-struct KMeansBindData final : public FunctionData {
+struct KMeansBindData final : public ClusterBindData {
 	int32_t k;
 	KMeansBindData(int32_t k_p) : k(k_p) {}
-	unique_ptr<FunctionData> Copy() const override { return make_uniq<KMeansBindData>(k); }
-	bool Equals(const FunctionData &other) const override { return k == other.Cast<KMeansBindData>().k; }
+	unique_ptr<FunctionData> Copy() const override {
+		auto result = make_uniq<KMeansBindData>(k);
+		result->has_row_frame = has_row_frame;
+		return std::move(result);
+	}
+	bool Equals(const FunctionData &other) const override {
+		auto &o = other.Cast<KMeansBindData>();
+		return k == o.k && has_row_frame == o.has_row_frame;
+	}
 };
 
 struct KMeansGlobalState {
 	int32_t *cluster_ids = nullptr;
 	idx_t count = 0;
-	// Used when serving as l_state — see DBSCANGlobalState for the rationale.
-	idx_t l_next_row = 0;
-	const void *l_last_gstate = nullptr;
 	void Allocate(idx_t n) { count = n; cluster_ids = new int32_t[n]; }
 	void Destroy() { delete[] cluster_ids; cluster_ids = nullptr; count = 0; }
 };
@@ -553,23 +553,49 @@ static void KMeansWindowInit(AggregateInputData &aggr_input_data, const WindowPa
 
 // See DBSCANWindow for the rid vs partition_rid explanation. Same indexing rule:
 // monotonic counter in l_state, reset on g_state pointer change.
-static void KMeansWindow(AggregateInputData &, const WindowPartitionInput &, const_data_ptr_t g_state,
-                         data_ptr_t l_state, const SubFrames &, Vector &result, idx_t rid) {
+static void KMeansWindow(AggregateInputData &aggr_input_data, const WindowPartitionInput &,
+                         const_data_ptr_t g_state, data_ptr_t, const SubFrames &frames, Vector &result, idx_t rid) {
 	auto &state = *reinterpret_cast<const KMeansGlobalState *>(g_state);
-	auto &lstate = *reinterpret_cast<KMeansGlobalState *>(l_state);
 	auto result_data = FlatVector::GetData<int32_t>(result);
 	auto &result_validity = FlatVector::Validity(result);
 
-	if (lstate.l_last_gstate != g_state) {
-		lstate.l_last_gstate = g_state;
-		lstate.l_next_row = 0;
-	}
-	const auto partition_rid = lstate.l_next_row++;
+	const auto partition_rid = GetPartitionRow(aggr_input_data, frames, "ST_ClusterKMeans");
 
 	if (state.cluster_ids && partition_rid < state.count && state.cluster_ids[partition_rid] >= 0) {
 		result_data[rid] = state.cluster_ids[partition_rid];
 	} else {
 		result_validity.SetInvalid(rid);
+	}
+}
+
+//======================================================================================================================
+// Row frame rule
+//======================================================================================================================
+
+static void SetClusterRowFrames(OptimizerExtensionInput &input, unique_ptr<LogicalOperator> &plan) {
+	for (auto &child : plan->children) {
+		SetClusterRowFrames(input, child);
+	}
+	if (plan->type != LogicalOperatorType::LOGICAL_WINDOW) {
+		return;
+	}
+	for (auto &expr : plan->expressions) {
+		if (expr->GetExpressionClass() != ExpressionClass::BOUND_WINDOW) {
+			continue;
+		}
+		auto &window = expr->Cast<BoundWindowExpression>();
+		if (!window.aggregate || !window.bind_info) {
+			continue;
+		}
+		if (window.aggregate->window != DBSCANWindow && window.aggregate->window != KMeansWindow) {
+			continue;
+		}
+		window.start = WindowBoundary::UNBOUNDED_PRECEDING;
+		window.end = WindowBoundary::CURRENT_ROW_ROWS;
+		window.start_expr = nullptr;
+		window.end_expr = nullptr;
+		window.exclude_clause = WindowExcludeMode::NO_OTHER;
+		window.bind_info->Cast<ClusterBindData>().has_row_frame = true;
 	}
 }
 
@@ -580,6 +606,11 @@ static void KMeansWindow(AggregateInputData &, const WindowPartitionInput &, con
 //======================================================================================================================
 
 void RegisterSpatialWindowFunctions(ExtensionLoader &loader) {
+
+	// Before the built-in optimizers, so that none of them sees the whole-partition frame
+	OptimizerExtension row_frame_rule;
+	row_frame_rule.pre_optimize_function = SetClusterRowFrames;
+	OptimizerExtension::Register(loader.GetDatabaseInstance().config, row_frame_rule);
 
 	// ST_ClusterDBSCAN(geom, eps, minpoints) OVER (...)
 	// The state holds the pre-computed cluster IDs for the entire partition.
@@ -614,12 +645,7 @@ void RegisterSpatialWindowFunctions(ExtensionLoader &loader) {
 
 			Compatible with PostGIS ST_ClusterDBSCAN.
 
-			Note: OVER (PARTITION BY ...) currently requires an ORDER BY clause
-			(e.g. OVER (PARTITION BY grp ORDER BY id)). Without an ORDER BY,
-			DuckDB's window_self_join optimizer rewrites the query into a grouped
-			aggregate, which this function cannot satisfy. The ORDER BY expression
-			does not affect clustering results — the whole partition is always
-			used — it only disables the rewrite.
+			The whole partition is always clustered: the frame clause and ORDER BY of the window do not affect the result.
 		)");
 		func.SetExample(R"(
 			SELECT ST_ClusterDBSCAN(geom, 5.0, 3) OVER () as cluster_id
@@ -656,8 +682,7 @@ void RegisterSpatialWindowFunctions(ExtensionLoader &loader) {
 			Returns integer cluster IDs (0 to k-1). Must be used as a window function.
 			Compatible with PostGIS ST_ClusterKMeans.
 
-			Note: OVER (PARTITION BY ...) requires an ORDER BY clause — see
-			ST_ClusterDBSCAN for the rationale.
+			The whole partition is always clustered: the frame clause and ORDER BY of the window do not affect the result.
 		)");
 		func.SetExample(R"(
 			SELECT ST_ClusterKMeans(geom, 3) OVER () as cluster_id
