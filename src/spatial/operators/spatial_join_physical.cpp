@@ -5,6 +5,7 @@
 #include "spatial/geometry/bbox.hpp"
 #include "spatial/spatial_types.hpp"
 #include "spatial/util/math.hpp"
+#include "spatial/util/point_in_area.hpp"
 
 #include "duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp"
 #include "duckdb/common/types/row/tuple_data_collection.hpp"
@@ -508,6 +509,7 @@ public:
 
 	ExpressionExecutor join_probe_executor; // used to compute the probe key
 	ExpressionExecutor join_match_executor; // used to compute the predicate
+	PreparedAreaCache prepared_areas;       // indexes of the build side polygons tested against probe points
 	ExpressionExecutor bbox_probe_executor; // used to compute the bounding box for the probe key
 
 	UnifiedVectorFormat probe_side_key_vformat; // used to access the probe side key, after its been computed
@@ -533,7 +535,8 @@ public:
 	unsafe_unique_array<data_ptr_t> build_side_pointers = nullptr;
 
 	explicit SpatialJoinLocalOperatorState(ClientContext &context)
-	    : join_probe_executor(context), join_match_executor(context), bbox_probe_executor(context),
+	    : join_probe_executor(context), join_match_executor(context), prepared_areas(BufferAllocator::Get(context)),
+	      bbox_probe_executor(context),
 	      probe_side_source_sel(STANDARD_VECTOR_SIZE), build_side_source_sel(STANDARD_VECTOR_SIZE),
 	      build_side_target_sel(STANDARD_VECTOR_SIZE), match_sel(STANDARD_VECTOR_SIZE),
 	      lhs_match_sel(STANDARD_VECTOR_SIZE) {
@@ -813,8 +816,13 @@ OperatorResultType PhysicalSpatialJoin::ExecuteInternal(ExecutionContext &contex
 			lstate.match_pred_arg_chunk.data[1].Reference(lstate.build_side_key_chunk.data[0]);
 			lstate.match_pred_arg_chunk.SetCardinality(output_index);
 
-			const auto filtered =
-			    lstate.join_match_executor.SelectExpression(lstate.match_pred_arg_chunk, lstate.match_sel);
+			// The build side geometries stay where they are for as long as the join runs, which lets the predicate
+			// keep an index of the polygons it tests points against
+			idx_t filtered;
+			{
+				PreparedAreaCacheScope prepared_scope(lstate.prepared_areas);
+				filtered = lstate.join_match_executor.SelectExpression(lstate.match_pred_arg_chunk, lstate.match_sel);
+			}
 
 			if (IsLeftOuterJoin(join_type)) {
 				for (idx_t i = 0; i < filtered; i++) {

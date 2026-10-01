@@ -1,0 +1,112 @@
+# name: test/sql/join/spatial_join_point_in_area.test
+# description: Point against polygon predicates in joins, checked against relations computed without them
+# group: [join]
+
+require spatial
+
+statement ok
+SELECT setseed(0.31);
+
+# Polygons with holes, multipolygons, a triangle, an empty polygon and a NULL
+statement ok
+CREATE TABLE areas AS
+SELECT i AS id, ST_GeomFromText(wkt) AS geom FROM (VALUES
+	(1, 'POLYGON ((0 0, 10 0, 10 10, 0 10, 0 0), (2 2, 4 2, 4 4, 2 4, 2 2), (6 6, 8 6, 8 8, 6 8, 6 6))'),
+	(2, 'MULTIPOLYGON (((20 0, 30 0, 30 10, 20 10, 20 0), (22 2, 28 2, 28 8, 22 8, 22 2)), ((23 3, 27 3, 27 7, 23 7, 23 3)))'),
+	(3, 'POLYGON ((5 5, 25 5, 15 20, 5 5))'),
+	(4, 'POLYGON EMPTY'),
+	(5, NULL),
+	(6, 'MULTIPOLYGON (((0 20, 3 20, 3 23, 0 23, 0 20)), ((3 23, 6 23, 6 26, 3 26, 3 23)))')
+) t(i, wkt)
+UNION ALL
+SELECT 100 + i, ST_Buffer(ST_Point(random() * 30, random() * 26), 0.5 + random() * 3, 12) FROM range(200) t(i);
+
+# Points on a half-unit grid, so that many of them fall exactly on vertices, edges and hole boundaries,
+# plus random points, an empty point and a NULL
+statement ok
+CREATE TABLE pts AS
+SELECT row_number() OVER () AS id, geom FROM (
+	SELECT ST_Point(x * 0.5, y * 0.5) AS geom FROM range(-2, 64) a(x), range(-2, 56) b(y)
+	UNION ALL SELECT ST_Point(random() * 32 - 1, random() * 28 - 1) FROM range(20000)
+	UNION ALL SELECT ST_GeomFromText('POINT EMPTY')
+	UNION ALL SELECT NULL
+);
+
+# The reference relation comes from the DE-9IM matrix, evaluated outside of any spatial join
+statement ok
+CREATE TABLE reference AS
+SELECT p.id AS pid, a.id AS aid, ST_Relate(a.geom, p.geom) AS matrix
+FROM pts p, areas a
+WHERE a.geom IS NOT NULL AND p.geom IS NOT NULL AND NOT ST_IsEmpty(a.geom) AND NOT ST_IsEmpty(p.geom);
+
+query I
+SELECT count(*) > 300 FROM reference WHERE matrix[4] = '0';
+----
+true
+
+statement ok
+SET threads = 4;
+
+# ST_Intersects, both argument orders
+query I
+SELECT count(*) FROM (
+	(SELECT p.id, a.id FROM pts p JOIN areas a ON ST_Intersects(a.geom, p.geom))
+	EXCEPT (SELECT pid, aid FROM reference WHERE matrix[1] = '0' OR matrix[4] = '0'));
+----
+0
+
+query I
+SELECT (SELECT count(*) FROM pts p JOIN areas a ON ST_Intersects(p.geom, a.geom))
+     = (SELECT count(*) FROM reference WHERE matrix[1] = '0' OR matrix[4] = '0');
+----
+true
+
+query I
+SELECT (SELECT count(*) FROM pts p JOIN areas a ON ST_Intersects(a.geom, p.geom))
+     = (SELECT count(*) FROM reference WHERE matrix[1] = '0' OR matrix[4] = '0');
+----
+true
+
+# With the polygons on the probe side
+query I
+SELECT (SELECT count(*) FROM areas a JOIN (SELECT * FROM pts LIMIT 3000) p ON ST_Intersects(a.geom, p.geom))
+     = (SELECT count(*) FROM reference WHERE pid IN (SELECT id FROM pts LIMIT 3000) AND (matrix[1] = '0' OR matrix[4] = '0'));
+----
+true
+
+# ST_Contains and ST_Within: interior only
+query II
+SELECT (SELECT count(*) FROM pts p JOIN areas a ON ST_Contains(a.geom, p.geom)) = (SELECT count(*) FROM reference WHERE matrix[1] = '0'),
+       (SELECT count(*) FROM pts p JOIN areas a ON ST_Within(p.geom, a.geom)) = (SELECT count(*) FROM reference WHERE matrix[1] = '0');
+----
+true	true
+
+query I
+SELECT count(*) FROM (
+	(SELECT p.id, a.id FROM pts p JOIN areas a ON ST_Contains(a.geom, p.geom))
+	EXCEPT (SELECT pid, aid FROM reference WHERE matrix[1] = '0'));
+----
+0
+
+# ST_Covers and ST_CoveredBy: interior or boundary
+query II
+SELECT (SELECT count(*) FROM pts p JOIN areas a ON ST_Covers(a.geom, p.geom)) = (SELECT count(*) FROM reference WHERE matrix[1] = '0' OR matrix[4] = '0'),
+       (SELECT count(*) FROM pts p JOIN areas a ON ST_CoveredBy(p.geom, a.geom)) = (SELECT count(*) FROM reference WHERE matrix[1] = '0' OR matrix[4] = '0');
+----
+true	true
+
+# Outside of a join the predicates give the same answers
+query III
+SELECT count(*) FILTER (WHERE ST_Intersects(a.geom, p.geom) <> (matrix[1] = '0' OR matrix[4] = '0')),
+       count(*) FILTER (WHERE ST_Contains(a.geom, p.geom) <> (matrix[1] = '0')),
+       count(*) FILTER (WHERE ST_Covers(a.geom, p.geom) <> (matrix[1] = '0' OR matrix[4] = '0'))
+FROM reference r JOIN pts p ON p.id = r.pid JOIN areas a ON a.id = r.aid;
+----
+0	0	0
+
+# LEFT JOIN keeps the points that are in no polygon
+query I
+SELECT (SELECT count(*) FROM pts p LEFT JOIN areas a ON ST_Intersects(a.geom, p.geom) WHERE a.id IS NULL)
+     = (SELECT count(*) FROM pts) - (SELECT count(DISTINCT pid) FROM reference WHERE matrix[1] = '0' OR matrix[4] = '0');
+----
+true

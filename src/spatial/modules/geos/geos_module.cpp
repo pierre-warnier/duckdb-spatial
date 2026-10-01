@@ -1,3 +1,4 @@
+#include "spatial/util/point_in_area.hpp"
 #include "spatial/modules/geos/geos_module.hpp"
 #include "spatial/modules/geos/geos_geometry.hpp"
 #include "spatial/modules/geos/geos_serde.hpp"
@@ -101,6 +102,12 @@ namespace {
 template <class IMPL, class RETURN_TYPE = bool>
 class SymmetricPreparedBinaryFunction {
 public:
+	//! Predicates that can be answered without GEOS for some arguments override this
+	template <class RESULT>
+	static bool TryExecuteFast(ArenaAllocator &, const string_t &, const string_t &, RESULT &) {
+		return false;
+	}
+
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 
@@ -126,21 +133,36 @@ public:
 			auto &const_vec = lhs_is_const ? lhs_vec : rhs_vec;
 			auto &probe_vec = lhs_is_const ? rhs_vec : lhs_vec;
 
+			// The constant side is only prepared once a row actually needs GEOS: a join hands over one probe geometry
+			// with its few candidates at a time, and preparing it would cost more than the tests themselves.
 			const auto &const_blob = ConstantVector::GetData<string_t>(const_vec)[0];
-			const auto const_geom = lstate.Deserialize(const_blob);
-			const auto const_prep = const_geom.get_prepared();
+			unique_ptr<GeosGeometry> const_geom;
+			unique_ptr<PreparedGeosGeometry> const_prep;
 
 			UnaryExecutor::Execute<string_t, RETURN_TYPE>(
 			    probe_vec, result, args.size(), [&](const string_t &probe_blob) {
-			    	lstate.GetArena().Reset();
+				    lstate.GetArena().Reset();
+				    RETURN_TYPE fast_result;
+				    if (IMPL::TryExecuteFast(lstate.GetArena(), lhs_is_const ? const_blob : probe_blob,
+				                             lhs_is_const ? probe_blob : const_blob, fast_result)) {
+					    return fast_result;
+				    }
+				    if (!const_prep) {
+					    const_geom = make_uniq<GeosGeometry>(lstate.Deserialize(const_blob));
+					    const_prep = make_uniq<PreparedGeosGeometry>(const_geom->get_prepared());
+				    }
 				    const auto probe_geom = lstate.Deserialize(probe_blob);
-				    return IMPL::ExecutePredicatePrepared(const_prep, probe_geom);
+				    return IMPL::ExecutePredicatePrepared(*const_prep, probe_geom);
 			    });
 		} else {
 			// Both are non-const, just execute normally
 			BinaryExecutor::Execute<string_t, string_t, RETURN_TYPE>(
 			    lhs_vec, rhs_vec, result, args.size(), [&](const string_t &lhs_blob, const string_t &rhs_blob) {
-			    	lstate.GetArena().Reset();
+				    lstate.GetArena().Reset();
+				    RETURN_TYPE fast_result;
+				    if (IMPL::TryExecuteFast(lstate.GetArena(), lhs_blob, rhs_blob, fast_result)) {
+					    return fast_result;
+				    }
 				    const auto lhs = lstate.Deserialize(lhs_blob);
 				    const auto rhs = lstate.Deserialize(rhs_blob);
 				    return IMPL::ExecutePredicateNormal(lhs, rhs);
@@ -152,6 +174,12 @@ public:
 template <class IMPL, class RETURN_TYPE = bool>
 class AsymmetricPreparedBinaryFunction {
 public:
+	//! Predicates that can be answered without GEOS for some arguments override this
+	template <class RESULT>
+	static bool TryExecuteFast(ArenaAllocator &, const string_t &, const string_t &, RESULT &) {
+		return false;
+	}
+
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 
@@ -176,19 +204,31 @@ public:
 			// Prepare the left const and run on the non-const right
 			// Because this predicate is not symmetric, we can't just swap the two, so we only prepare the left
 			const auto lhs_blob = ConstantVector::GetData<string_t>(lhs_vec)[0];
-			const auto lhs_geom = lstate.Deserialize(lhs_blob);
-			const auto lhs_prep = lhs_geom.get_prepared();
+			unique_ptr<GeosGeometry> lhs_geom;
+			unique_ptr<PreparedGeosGeometry> lhs_prep;
 
 			UnaryExecutor::Execute<string_t, RETURN_TYPE>(rhs_vec, result, args.size(), [&](const string_t &rhs_blob) {
 				lstate.GetArena().Reset();
+				RETURN_TYPE fast_result;
+				if (IMPL::TryExecuteFast(lstate.GetArena(), lhs_blob, rhs_blob, fast_result)) {
+					return fast_result;
+				}
+				if (!lhs_prep) {
+					lhs_geom = make_uniq<GeosGeometry>(lstate.Deserialize(lhs_blob));
+					lhs_prep = make_uniq<PreparedGeosGeometry>(lhs_geom->get_prepared());
+				}
 				const auto rhs_geom = lstate.Deserialize(rhs_blob);
-				return IMPL::ExecutePredicatePrepared(lhs_prep, rhs_geom);
+				return IMPL::ExecutePredicatePrepared(*lhs_prep, rhs_geom);
 			});
 		} else {
 			// Both are non-const, just execute normally
 			BinaryExecutor::Execute<string_t, string_t, RETURN_TYPE>(
 			    lhs_vec, rhs_vec, result, args.size(), [&](const string_t &lhs_blob, const string_t &rhs_blob) {
 				    lstate.GetArena().Reset();
+				    RETURN_TYPE fast_result;
+				    if (IMPL::TryExecuteFast(lstate.GetArena(), lhs_blob, rhs_blob, fast_result)) {
+					    return fast_result;
+				    }
 				    const auto lhs = lstate.Deserialize(lhs_blob);
 				    const auto rhs = lstate.Deserialize(rhs_blob);
 				    return IMPL::ExecutePredicateNormal(lhs, rhs);
@@ -676,6 +716,12 @@ struct ST_BuildArea {
 };
 
 struct ST_Contains : AsymmetricPreparedBinaryFunction<ST_Contains> {
+	static bool TryExecuteFast(ArenaAllocator &arena, const string_t &lhs, const string_t &rhs, bool &result) {
+		const auto location = LocatePointInArea(arena, rhs, lhs, 0);
+		result = location == PointLocation::INTERIOR;
+		return location != PointLocation::UNKNOWN;
+	}
+
 	static bool ExecutePredicateNormal(const GeosGeometry &lhs, const GeosGeometry &rhs) {
 		return lhs.contains(rhs);
 	}
@@ -1201,6 +1247,12 @@ struct ST_CoverageUnion {
 };
 
 struct ST_CoveredBy : AsymmetricPreparedBinaryFunction<ST_CoveredBy> {
+	static bool TryExecuteFast(ArenaAllocator &arena, const string_t &lhs, const string_t &rhs, bool &result) {
+		const auto location = LocatePointInArea(arena, lhs, rhs, 1);
+		result = location != PointLocation::EXTERIOR;
+		return location != PointLocation::UNKNOWN;
+	}
+
 	static bool ExecutePredicateNormal(const GeosGeometry &lhs, const GeosGeometry &rhs) {
 		return lhs.covered_by(rhs);
 	}
@@ -1228,6 +1280,12 @@ struct ST_CoveredBy : AsymmetricPreparedBinaryFunction<ST_CoveredBy> {
 };
 
 struct ST_Covers : AsymmetricPreparedBinaryFunction<ST_Covers> {
+	static bool TryExecuteFast(ArenaAllocator &arena, const string_t &lhs, const string_t &rhs, bool &result) {
+		const auto location = LocatePointInArea(arena, rhs, lhs, 0);
+		result = location != PointLocation::EXTERIOR;
+		return location != PointLocation::UNKNOWN;
+	}
+
 	static bool ExecutePredicateNormal(const GeosGeometry &lhs, const GeosGeometry &rhs) {
 		return lhs.covers(rhs);
 	}
@@ -1559,6 +1617,15 @@ struct ST_Intersection {
 };
 
 struct ST_Intersects : SymmetricPreparedBinaryFunction<ST_Intersects> {
+	static bool TryExecuteFast(ArenaAllocator &arena, const string_t &lhs, const string_t &rhs, bool &result) {
+		auto location = LocatePointInArea(arena, lhs, rhs, 1);
+		if (location == PointLocation::UNKNOWN) {
+			location = LocatePointInArea(arena, rhs, lhs, 0);
+		}
+		result = location != PointLocation::EXTERIOR;
+		return location != PointLocation::UNKNOWN;
+	}
+
 	static bool ExecutePredicateNormal(const GeosGeometry &lhs, const GeosGeometry &rhs) {
 		return lhs.intersects(rhs);
 	}
@@ -2715,6 +2782,12 @@ struct ST_VoronoiDiagram {
 };
 
 struct ST_Within : AsymmetricPreparedBinaryFunction<ST_Within> {
+	static bool TryExecuteFast(ArenaAllocator &arena, const string_t &lhs, const string_t &rhs, bool &result) {
+		const auto location = LocatePointInArea(arena, lhs, rhs, 1);
+		result = location == PointLocation::INTERIOR;
+		return location != PointLocation::UNKNOWN;
+	}
+
 	static bool ExecutePredicateNormal(const GeosGeometry &lhs, const GeosGeometry &rhs) {
 		return lhs.within(rhs);
 	}

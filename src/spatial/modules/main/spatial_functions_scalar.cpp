@@ -4,6 +4,7 @@
 #include "spatial/geometry/vertex.hpp"
 #include "spatial/geometry/sgl.hpp"
 #include "spatial/spatial_types.hpp"
+#include "spatial/util/point_in_area.hpp"
 #include "spatial/util/binary_reader.hpp"
 #include "spatial/util/function_builder.hpp"
 #include "spatial/util/math.hpp"
@@ -6482,6 +6483,15 @@ struct ST_Intersects {
 		    args.data[0], args.data[1], result, count, [&](const string_t &blob_a, const string_t &blob_b) {
 			    auto &lstate = LocalState::ResetAndGet(state);
 
+			    // Point against polygon, in either order
+			    auto location = LocatePointInArea(lstate.GetArena(), blob_a, blob_b, 1);
+			    if (location == PointLocation::UNKNOWN) {
+				    location = LocatePointInArea(lstate.GetArena(), blob_b, blob_a, 0);
+			    }
+			    if (location != PointLocation::UNKNOWN) {
+				    return location != PointLocation::EXTERIOR;
+			    }
+
 			    // Quick bbox pre-check: if bounding boxes don't intersect, return false
 			    Box2D<float> bbox_a, bbox_b;
 			    bool has_a = Serde::TryGetBounds(blob_a, bbox_a) > 0;
@@ -6500,26 +6510,6 @@ struct ST_Intersects {
 
 			    auto type_a = geom_a.get_type();
 			    auto type_b = geom_b.get_type();
-
-			    // Fast path: POINT vs POLYGON using SGL prepared_geometry
-			    if (type_a == sgl::geometry_type::POINT && type_b == sgl::geometry_type::POLYGON) {
-				    auto vtx = geom_a.get_vertex_xy(0);
-				    sgl::prepared_geometry prep;
-				    sgl::prepared_geometry::make(lstate.GetAllocator(), geom_b, prep);
-				    prep.build(lstate.GetAllocator());
-				    auto pip = prep.contains(vtx);
-				    return pip == sgl::point_in_polygon_result::INTERIOR ||
-				           pip == sgl::point_in_polygon_result::BOUNDARY;
-			    }
-			    if (type_b == sgl::geometry_type::POINT && type_a == sgl::geometry_type::POLYGON) {
-				    auto vtx = geom_b.get_vertex_xy(0);
-				    sgl::prepared_geometry prep;
-				    sgl::prepared_geometry::make(lstate.GetAllocator(), geom_a, prep);
-				    prep.build(lstate.GetAllocator());
-				    auto pip = prep.contains(vtx);
-				    return pip == sgl::point_in_polygon_result::INTERIOR ||
-				           pip == sgl::point_in_polygon_result::BOUNDARY;
-			    }
 
 			    // Fast path: POINT vs POINT
 			    if (type_a == sgl::geometry_type::POINT && type_b == sgl::geometry_type::POINT) {
