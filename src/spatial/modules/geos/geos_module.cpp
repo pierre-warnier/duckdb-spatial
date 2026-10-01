@@ -4602,15 +4602,18 @@ struct ST_BoundingDiagonal_GEOS {
 struct ST_GeometryN_GEOS {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
-		BinaryExecutor::Execute<string_t, int32_t, string_t>(args.data[0], args.data[1], result, args.size(),
-		    [&](const string_t &blob, int32_t n) {
+		BinaryExecutor::ExecuteWithNulls<string_t, int32_t, string_t>(
+		    args.data[0], args.data[1], result, args.size(),
+		    [&](const string_t &blob, int32_t n, ValidityMask &mask, idx_t row_idx) {
 			    auto geom = lstate.Deserialize(blob);
 			    auto raw = geom.get_raw();
+			    // A single geometry counts as a collection of one
 			    auto num = GEOSGetNumGeometries_r(lstate.GetContext(), raw);
-			    if (n < 0 || n >= num) {
-				    throw InvalidInputException("ST_GeometryN: index %d out of range [0, %d)", n, num);
+			    if (n < 1 || n > num) {
+				    mask.SetInvalid(row_idx);
+				    return string_t();
 			    }
-			    auto sub = GEOSGetGeometryN_r(lstate.GetContext(), raw, n);
+			    auto sub = GEOSGetGeometryN_r(lstate.GetContext(), raw, n - 1);
 			    auto clone = GEOSGeom_clone_r(lstate.GetContext(), sub);
 			    return lstate.Serialize(result, GeosGeometry(lstate.GetContext(), clone));
 		    });
@@ -4618,11 +4621,22 @@ struct ST_GeometryN_GEOS {
 	static void Register(ExtensionLoader &loader) {
 		FunctionBuilder::RegisterScalar(loader, "ST_GeometryN", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
-				v.AddParameter("geom", LogicalType::GEOMETRY()); v.AddParameter("n", LogicalType::INTEGER);
-				v.SetReturnType(LogicalType::GEOMETRY()); v.SetBind(GeoTypes::PropagateCRS);
-				v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
+				v.AddParameter("geom", LogicalType::GEOMETRY());
+				v.AddParameter("n", LogicalType::INTEGER);
+				v.SetReturnType(LogicalType::GEOMETRY());
+				v.SetBind(GeoTypes::PropagateCRS);
+				v.SetInit(LocalState::Init);
+				v.SetFunction(Execute);
+				v.CanThrowErrors();
 			});
-			func.SetDescription("Returns the Nth geometry from a geometry collection (0-indexed)"); func.SetTag("ext", "spatial"); func.SetTag("category", "property");
+			func.SetDescription(R"(
+				Returns the n-th geometry of a collection or multi-geometry, counting from 1 as in PostGIS and like `ST_PointN` and `ST_InteriorRingN`.
+
+				A geometry that is not a collection is its own first element. Returns NULL when `n` is out of range.
+			)");
+			func.SetExample("SELECT ST_GeometryN('MULTIPOINT (0 0, 1 1, 2 2)'::GEOMETRY, 2);");
+			func.SetTag("ext", "spatial");
+			func.SetTag("category", "property");
 		});
 	}
 };
