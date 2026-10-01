@@ -1,3 +1,6 @@
+#include "duckdb/parallel/task_executor.hpp"
+#include "duckdb/parallel/task_scheduler.hpp"
+#include <atomic>
 #include "spatial/util/point_in_area.hpp"
 #include "spatial/modules/geos/geos_module.hpp"
 #include "spatial/modules/geos/geos_geometry.hpp"
@@ -89,6 +92,144 @@ GeosGeometry LocalState::Deserialize(const string_t &blob) {
 	}
 
 	return GeosGeometry(ctx, geom);
+}
+
+} // namespace
+
+//------------------------------------------------------------------------------
+// Parallel overlay
+//------------------------------------------------------------------------------
+// An overlay of two large polygons takes milliseconds, and DuckDB only parallelizes over the rows of the scanned
+// tables: a few thousand large geometries are processed by a single thread while the others sit idle. When the rows
+// of a chunk are heavy enough, their overlays are computed as tasks of the scheduler instead. Each task has its own
+// GEOS context, and the results are copied into the result vector afterwards by the calling thread.
+
+namespace {
+
+typedef GeosGeometry (*overlay_function_t)(const GeosGeometry &lhs, const GeosGeometry &rhs);
+
+struct OverlayJob {
+	UnifiedVectorFormat lhs_format;
+	UnifiedVectorFormat rhs_format;
+	idx_t count = 0;
+	overlay_function_t function = nullptr;
+	std::atomic<idx_t> next_row {0};
+	vector<string> results;
+	vector<bool> is_valid;
+
+	bool IsValid(idx_t row, idx_t &lhs_idx, idx_t &rhs_idx) const {
+		lhs_idx = lhs_format.sel->get_index(row);
+		rhs_idx = rhs_format.sel->get_index(row);
+		return lhs_format.validity.RowIsValid(lhs_idx) && rhs_format.validity.RowIsValid(rhs_idx);
+	}
+};
+
+class OverlayTask final : public BaseExecutorTask {
+public:
+	OverlayTask(TaskExecutor &executor, OverlayJob &job_p) : BaseExecutorTask(executor), job(job_p) {
+	}
+
+	void ExecuteTask() override {
+		const auto ctx = GEOS_init_r();
+		GEOSContext_setErrorMessageHandler_r(
+		    ctx, [](const char *message, void *) { throw InvalidInputException(message); }, nullptr);
+		try {
+			ArenaAllocator arena(Allocator::DefaultAllocator());
+			const auto lhs_data = UnifiedVectorFormat::GetData<string_t>(job.lhs_format);
+			const auto rhs_data = UnifiedVectorFormat::GetData<string_t>(job.rhs_format);
+
+			while (true) {
+				const auto row = job.next_row.fetch_add(1);
+				if (row >= job.count) {
+					break;
+				}
+				idx_t lhs_idx;
+				idx_t rhs_idx;
+				if (!job.is_valid[row] || !job.IsValid(row, lhs_idx, rhs_idx)) {
+					continue;
+				}
+				arena.Reset();
+				const auto &lhs_blob = lhs_data[lhs_idx];
+				const auto &rhs_blob = rhs_data[rhs_idx];
+				const GeosGeometry lhs(ctx, GeosSerde::Deserialize(ctx, arena, lhs_blob.GetData(), lhs_blob.GetSize()));
+				const GeosGeometry rhs(ctx, GeosSerde::Deserialize(ctx, arena, rhs_blob.GetData(), rhs_blob.GetSize()));
+				const auto overlay = job.function(lhs, rhs);
+
+				auto &target = job.results[row];
+				target.resize(GeosSerde::GetRequiredSize(ctx, overlay.get_raw()));
+				GeosSerde::Serialize(ctx, overlay.get_raw(), &target[0], target.size());
+			}
+		} catch (...) {
+			GEOS_finish_r(ctx);
+			throw;
+		}
+		GEOS_finish_r(ctx);
+	}
+
+	string TaskType() const override {
+		return "SpatialOverlayTask";
+	}
+
+private:
+	OverlayJob &job;
+};
+
+//! Returns false if the chunk is too light for tasks to pay off, in which case nothing was done
+bool TryExecuteOverlayInParallel(DataChunk &args, ExpressionState &state, Vector &result, overlay_function_t function) {
+	static constexpr idx_t MIN_TOTAL_SIZE = 256 * 1024;
+
+	const auto count = args.size();
+	if (count < 2) {
+		return false;
+	}
+	auto &context = state.GetContext();
+	const auto thread_count = NumericCast<idx_t>(TaskScheduler::GetScheduler(context).NumberOfThreads());
+	if (thread_count < 2) {
+		return false;
+	}
+
+	OverlayJob job;
+	args.data[0].ToUnifiedFormat(count, job.lhs_format);
+	args.data[1].ToUnifiedFormat(count, job.rhs_format);
+	job.count = count;
+	job.function = function;
+	job.is_valid.resize(count);
+
+	const auto lhs_data = UnifiedVectorFormat::GetData<string_t>(job.lhs_format);
+	const auto rhs_data = UnifiedVectorFormat::GetData<string_t>(job.rhs_format);
+	idx_t total_size = 0;
+	idx_t valid_count = 0;
+	for (idx_t row = 0; row < count; row++) {
+		idx_t lhs_idx;
+		idx_t rhs_idx;
+		job.is_valid[row] = job.IsValid(row, lhs_idx, rhs_idx);
+		if (job.is_valid[row]) {
+			total_size += lhs_data[lhs_idx].GetSize() + rhs_data[rhs_idx].GetSize();
+			valid_count++;
+		}
+	}
+	if (valid_count < 2 || total_size < MIN_TOTAL_SIZE) {
+		return false;
+	}
+	job.results.resize(count);
+
+	TaskExecutor executor(context);
+	const auto task_count = MinValue<idx_t>(valid_count, thread_count);
+	for (idx_t i = 0; i < task_count; i++) {
+		executor.ScheduleTask(make_uniq<OverlayTask>(executor, job));
+	}
+	executor.WorkOnTasks();
+
+	result.SetVectorType(VectorType::FLAT_VECTOR);
+	const auto result_data = FlatVector::GetData<string_t>(result);
+	for (idx_t row = 0; row < count; row++) {
+		if (!job.is_valid[row]) {
+			FlatVector::SetNull(result, row, true);
+			continue;
+		}
+		result_data[row] = StringVector::AddStringOrBlob(result, job.results[row]);
+	}
+	return true;
 }
 
 } // namespace
@@ -1341,6 +1482,11 @@ struct ST_Crosses : SymmetricPreparedBinaryFunction<ST_Crosses> {
 
 struct ST_Difference {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		if (TryExecuteOverlayInParallel(args, state, result, [](const GeosGeometry &lhs, const GeosGeometry &rhs) {
+			    return lhs.get_difference(rhs);
+		    })) {
+			return;
+		}
 		auto &lstate = LocalState::ResetAndGet(state);
 
 		BinaryExecutor::Execute<string_t, string_t, string_t>(args.data[0], args.data[1], result, args.size(),
@@ -1585,6 +1731,11 @@ struct ST_Envelope {
 
 struct ST_Intersection {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		if (TryExecuteOverlayInParallel(args, state, result, [](const GeosGeometry &lhs, const GeosGeometry &rhs) {
+			    return lhs.get_intersection(rhs);
+		    })) {
+			return;
+		}
 		auto &lstate = LocalState::ResetAndGet(state);
 
 		BinaryExecutor::Execute<string_t, string_t, string_t>(args.data[0], args.data[1], result, args.size(),
@@ -2721,6 +2872,11 @@ struct ST_Touches : SymmetricPreparedBinaryFunction<ST_Touches> {
 
 struct ST_Union {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
+		if (TryExecuteOverlayInParallel(args, state, result, [](const GeosGeometry &lhs, const GeosGeometry &rhs) {
+			    return lhs.get_union(rhs);
+		    })) {
+			return;
+		}
 		auto &lstate = LocalState::ResetAndGet(state);
 
 		BinaryExecutor::Execute<string_t, string_t, string_t>(args.data[0], args.data[1], result, args.size(),

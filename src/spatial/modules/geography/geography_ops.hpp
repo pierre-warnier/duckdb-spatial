@@ -2,6 +2,7 @@
 
 #include "spatial/geometry/sgl.hpp"
 
+#include "duckdb/common/types/string_type.hpp"
 #include "duckdb/common/vector.hpp"
 
 #include "geodesic.h"
@@ -25,6 +26,9 @@ public:
 	double Area(const sgl::geometry &geom);
 	double Length(const sgl::geometry &geom);
 	double Perimeter(const sgl::geometry &geom);
+	//! Tells the next Distance or IsWithinDistance call which serialized geometries its arguments come from, so that
+	//! the prepared form of a large geometry that comes back row after row can be reused
+	void SetSources(const string_t &lhs, const string_t &rhs);
 	//! NaN if one of the geometries has no vertices
 	double Distance(const sgl::geometry &lhs, const sgl::geometry &rhs);
 	bool IsWithinDistance(const sgl::geometry &lhs, const sgl::geometry &rhs, double limit);
@@ -111,12 +115,18 @@ private:
 	bool RingContains(Shape &shape, const Ring &ring, const Point &point) const;
 	bool Contains(Shape &shape, const Point &point) const;
 	bool Prepare(const sgl::geometry &lhs, const sgl::geometry &rhs);
+	void PrepareShape(Shape &shape, string &key, const sgl::geometry &geom, const string_t &source);
 	bool AnyContained();
 
 	geod_geodesic geod;
 	geod_polygon poly;
 	Shape lhs_shape;
 	Shape rhs_shape;
+	string lhs_key;
+	string rhs_key;
+	string_t lhs_source;
+	string_t rhs_source;
+	bool has_sources = false;
 };
 
 } // namespace duckdb

@@ -1,0 +1,71 @@
+# name: test/sql/geos/st_overlay_parallel.test
+# description: ST_Intersection, ST_Difference and ST_Union on chunks of large geometries, which are computed as parallel tasks
+# group: [geos]
+
+require spatial
+
+# Large polygons (about 1000 vertices each), with NULL and empty rows in between
+statement ok
+CREATE TABLE shapes AS
+SELECT i AS id,
+       CASE WHEN i % 11 = 0 THEN NULL
+            WHEN i % 13 = 0 THEN ST_GeomFromText('POLYGON EMPTY')
+            ELSE ST_Buffer(ST_Point(i % 20, i // 20), 0.9, 250) END AS a,
+       CASE WHEN i % 17 = 0 THEN NULL
+            ELSE ST_Buffer(ST_Point(i % 20 + 0.5, i // 20 + 0.25), 0.9, 250) END AS b
+FROM range(600) t(i);
+
+statement ok
+SET threads = 1;
+
+statement ok
+CREATE TABLE sequential AS
+SELECT id, ST_AsText(ST_Intersection(a, b)) AS i, ST_AsText(ST_Difference(a, b)) AS d, ST_AsText(ST_Union(a, b)) AS u
+FROM shapes;
+
+statement ok
+SET threads = 8;
+
+statement ok
+CREATE TABLE parallel AS
+SELECT id, ST_AsText(ST_Intersection(a, b)) AS i, ST_AsText(ST_Difference(a, b)) AS d, ST_AsText(ST_Union(a, b)) AS u
+FROM shapes;
+
+query IIII
+SELECT count(*), count(s.i), count(s.d), count(s.u) FROM sequential s;
+----
+600	513	513	513
+
+query I
+SELECT count(*) FROM sequential s JOIN parallel p USING (id)
+WHERE s.i IS DISTINCT FROM p.i OR s.d IS DISTINCT FROM p.d OR s.u IS DISTINCT FROM p.u;
+----
+0
+
+# The areas add up: |a| = |a - b| + |a & b|
+query I
+SELECT count(*) FROM shapes
+WHERE a IS NOT NULL AND b IS NOT NULL
+  AND abs(ST_Area(a) - ST_Area(ST_Difference(a, b)) - ST_Area(ST_Intersection(a, b))) > 1e-9;
+----
+0
+
+# One constant argument
+query I
+SELECT count(*) FROM shapes
+WHERE ST_AsText(ST_Intersection(a, ST_MakeEnvelope(0, 0, 10, 10))) IS DISTINCT FROM
+      (SELECT ST_AsText(ST_Intersection(s.a, ST_MakeEnvelope(0, 0, 10, 10))) FROM shapes s WHERE s.id = shapes.id);
+----
+0
+
+# Errors raised inside a task reach the query
+statement error
+SELECT ST_Intersection(a, ST_GeomFromText('POLYGON ((0 0, 10 10, 10 0, 0 10, 0 0))')) FROM shapes;
+----
+TopologyException
+
+# The result type keeps the coordinate system of the arguments
+query I
+SELECT DISTINCT typeof(ST_Intersection(a::GEOMETRY('EPSG:3812'), b::GEOMETRY('EPSG:3812'))) FROM shapes;
+----
+GEOMETRY('EPSG:3812')

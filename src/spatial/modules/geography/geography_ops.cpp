@@ -567,13 +567,35 @@ double GeographyOps::LowerBound(const Segment &lhs, const Segment &rhs) {
 	return std::max(0.0, ChordDistance(lhs, rhs) - lhs.sagitta - rhs.sagitta);
 }
 
+void GeographyOps::SetSources(const string_t &lhs, const string_t &rhs) {
+	lhs_source = lhs;
+	rhs_source = rhs;
+	has_sources = true;
+}
+
+// Preparing a large geometry costs far more than testing a point against it, and one side of a distance is often
+// the same geometry for every row: keep its prepared form as long as the serialized geometry does not change.
+void GeographyOps::PrepareShape(Shape &shape, string &key, const sgl::geometry &geom, const string_t &source) {
+	static constexpr idx_t MIN_KEY_SIZE = 1024;
+
+	const auto size = has_sources ? source.GetSize() : 0;
+	if (size >= MIN_KEY_SIZE && key.size() == size && memcmp(key.data(), source.GetData(), size) == 0) {
+		return;
+	}
+	shape.Clear();
+	AddGeometry(shape, geom);
+	shape.ComputeBounds();
+	if (size >= MIN_KEY_SIZE) {
+		key.assign(source.GetData(), size);
+	} else {
+		key.clear();
+	}
+}
+
 bool GeographyOps::Prepare(const sgl::geometry &lhs, const sgl::geometry &rhs) {
-	lhs_shape.Clear();
-	rhs_shape.Clear();
-	AddGeometry(lhs_shape, lhs);
-	AddGeometry(rhs_shape, rhs);
-	lhs_shape.ComputeBounds();
-	rhs_shape.ComputeBounds();
+	PrepareShape(lhs_shape, lhs_key, lhs, lhs_source);
+	PrepareShape(rhs_shape, rhs_key, rhs, rhs_source);
+	has_sources = false;
 	return !lhs_shape.segments.empty() && !rhs_shape.segments.empty();
 }
 

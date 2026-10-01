@@ -367,6 +367,7 @@ struct ST_Distance {
 			    sgl::geometry rhs;
 			    lstate.Deserialize(lhs_blob, lhs);
 			    lstate.Deserialize(rhs_blob, rhs);
+			    lstate.ops.SetSources(lhs_blob, rhs_blob);
 			    const auto distance = lstate.ops.Distance(lhs, rhs);
 			    if (std::isnan(distance)) {
 				    mask.SetInvalid(row_idx);
@@ -405,6 +406,7 @@ struct ST_DWithin {
 			    sgl::geometry rhs;
 			    lstate.Deserialize(lhs_blob, lhs);
 			    lstate.Deserialize(rhs_blob, rhs);
+			    lstate.ops.SetSources(lhs_blob, rhs_blob);
 			    return lstate.ops.IsWithinDistance(lhs, rhs, limit);
 		    });
 	}
@@ -440,6 +442,7 @@ struct ST_Intersects {
 			    sgl::geometry rhs;
 			    lstate.Deserialize(lhs_blob, lhs);
 			    lstate.Deserialize(rhs_blob, rhs);
+			    lstate.ops.SetSources(lhs_blob, rhs_blob);
 			    return lstate.ops.IsWithinDistance(lhs, rhs, 0);
 		    });
 	}
