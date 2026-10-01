@@ -4,11 +4,11 @@ This page compares the extension with PostGIS on the operations where both do th
 
 ## Setup
 
-- **Machine**: one workstation, Intel i9-14900F (32 threads), 188 GB of RAM. Both engines run on it and read the same data. It is a shared machine and was busy during the runs: each figure is the best of several passes, and the ratios are more stable than the absolute times.
+- **Machine**: one workstation, Intel i9-14900F (32 threads), 188 GB of RAM. Both engines run on it and read the same data. It is a shared machine and was busy during the run: each figure is the best of three passes within a single run of the benchmark, and the ratios are more stable than the absolute times.
 - **DuckDB** v1.5.6 with this extension, release build. Tables are stored in a DuckDB file.
 - **PostgreSQL 17, PostGIS 3.5.2, pgRouting 4.0.1** (`pgrouting/pgrouting:17-3.5-4.0.1` image), with 8 GB of shared buffers, 1 GB of work memory, GiST indexes on every geometry column, `ANALYZE` run, and up to 8 parallel workers per query.
 - **Data**: Belgian addresses (6.9 million points), street sections (286 000 points), statistical sectors (2614 polygons, 1.9 million vertices) and municipalities (565 polygons, 1.4 million vertices), in longitude/latitude. The routing graph is a 700 x 700 grid (980 000 edges) with random costs; the raster is a 4096 x 4096 analytic surface cut into 256 tiles of 256 x 256.
-- "1 core" is `SET threads = 1` in DuckDB and `max_parallel_workers_per_gather = 0` in PostgreSQL. "All cores" is the best of 8 and 32 threads for DuckDB and 8 parallel workers for PostgreSQL. pgRouting, raster aggregates and topology functions do not run in parallel in PostgreSQL.
+- "1 core" is `SET threads = 1` in DuckDB and `max_parallel_workers_per_gather = 0` in PostgreSQL. "All cores" is the best time over 1, 8 and 32 threads for DuckDB, and over 0 and 8 parallel workers for PostgreSQL. pgRouting, raster aggregates and topology functions do not run in parallel in PostgreSQL.
 
 ## Results
 
@@ -16,30 +16,30 @@ Times in seconds. The last two columns are how many times faster the extension i
 
 | Operation | DuckDB 1 core | PostGIS 1 core | DuckDB all cores | PostGIS all cores | 1 core | All cores |
 |---|---|---|---|---|---|---|
-| Reproject 6.9M points | 1.59 | 3.81 | 0.25 | 0.68 | 2.4x | 2.7x |
-| Point-in-polygon join, 6.9M x 2614 | 6.33 | 9.80 | 0.56 | 2.40 | 1.5x | 4.3x |
-| KNN join, k = 1, 680k x 286k | 2.93 | 18.60 | 0.27 | 18.45 | 6.3x | 68x |
-| KNN join, k = 5 | 3.89 | 22.52 | 0.33 | 22.52 | 5.8x | 68x |
-| Geodesic distance, 6.9M point pairs | 4.81 | 7.24 | 0.52 | 1.14 | 1.5x | 2.2x |
-| Geodesic distance, 67k points to a 9680-vertex line | 6.59 | 69.47 | 1.38 | 69.47 | 10.5x | 50x |
-| DBSCAN, 680k points | 0.94 | 3.06 | 0.91 | 2.55 | 3.3x | 2.8x |
-| Buffer and union, 28.6k points | 2.17 | 4.14 | 2.17 | 3.94 | 1.9x | 1.8x |
-| Polygon overlay, 2614 x 565 (8355 intersections) | 5.82 | 11.05 | 0.97 | 3.63 | 1.9x | 3.7x |
-| Dijkstra, one to one | 0.15 | 0.77 | 0.12 | 0.77 | 5.1x | 6.4x |
-| Dijkstra costs, 20 x 20 | 0.99 | 4.00 | 0.92 | 4.00 | 4.0x | 4.3x |
-| Driving distance | 0.16 | 26.85 | 0.14 | 26.85 | 168x | 192x |
-| Connected components | 0.14 | 0.81 | 0.11 | 0.81 | 5.8x | 7.4x |
-| 5 shortest paths | 4.23 | 9.25 | 4.03 | 9.25 | 2.2x | 2.3x |
-| Raster statistics, 256 tiles | 0.09 | 0.97 | 0.09 | 0.97 | 11x | 11x |
-| Raster map algebra, 256 tiles | 0.29 | 9.82 | 0.27 | 9.82 | 34x | 36x |
-| Raster slope, 256 tiles | 0.37 | 49.69 | 0.37 | 48.18 | 134x | 130x |
-| Raster value at 200k points | 3.67 | 5.86 | 2.45 | 5.77 | 1.6x | 2.4x |
-| Raster union of 256 tiles | 0.33 | 2.64 | 0.33 | 2.64 | 8.0x | 8.0x |
-| Raster polygonize after reclass | 0.04 | 0.12 | 0.04 | 0.12 | 3.0x | 3.0x |
-| Topology from 132 polygons (100k vertices) | 0.29 | 36.81 | 0.29 | 36.81 | 125x | 125x |
-| Topology validation | 0.12 | 0.29 | 0.12 | 0.29 | 2.4x | 2.4x |
+| Reproject 6.9M points | 2.04 | 3.62 | 0.24 | 1.43 | 1.8x | 5.9x |
+| Point-in-polygon join, 6.9M x 2614 | 15.19 | 20.85 | 0.99 | 5.90 | 1.4x | 5.9x |
+| KNN join, k = 1, 680k x 286k | 5.70 | 47.99 | 0.48 | 18.85 | 8.4x | 39x |
+| KNN join, k = 5 | 4.82 | 21.20 | 0.33 | 20.43 | 4.4x | 63x |
+| Geodesic distance, 6.9M point pairs | 3.66 | 7.15 | 0.39 | 1.11 | 2.0x | 2.9x |
+| Geodesic distance, 67k points to a 9680-vertex line | 6.25 | 63.04 | 0.94 | 62.71 | 10x | 66x |
+| DBSCAN, 680k points | 0.93 | 2.66 | 0.88 | 2.40 | 2.8x | 2.7x |
+| Buffer and union, 28.6k points | 2.08 | 3.96 | 2.06 | 3.87 | 1.9x | 1.9x |
+| Polygon overlay, 2614 x 565 (8355 intersections) | 5.65 | 10.56 | 0.89 | 4.40 | 1.9x | 4.9x |
+| Dijkstra, one to one | 0.14 | 0.76 | 0.12 | 0.76 | 5.3x | 6.2x |
+| Dijkstra costs, 20 x 20 | 0.95 | 2.15 | 0.91 | 2.15 | 2.3x | 2.4x |
+| Driving distance | 0.13 | 24.85 | 0.10 | 24.85 | 196x | 248x |
+| Connected components | 0.13 | 0.78 | 0.10 | 0.78 | 6.2x | 7.7x |
+| 5 shortest paths | 3.97 | 9.21 | 3.97 | 9.21 | 2.3x | 2.3x |
+| Raster statistics, 256 tiles | 0.09 | 0.93 | 0.09 | 0.92 | 11x | 11x |
+| Raster map algebra, 256 tiles | 0.27 | 13.31 | 0.27 | 11.81 | 50x | 44x |
+| Raster slope, 256 tiles | 0.40 | 47.09 | 0.40 | 47.09 | 118x | 118x |
+| Raster value at 200k points | 3.73 | 5.93 | 2.45 | 5.93 | 1.6x | 2.4x |
+| Raster union of 256 tiles | 0.31 | 2.69 | 0.31 | 2.69 | 8.8x | 8.8x |
+| Raster polygonize after reclass | 0.04 | 0.13 | 0.04 | 0.12 | 3.4x | 3.1x |
+| Topology from 132 polygons (100k vertices) | 0.16 | 17.28 | 0.16 | 17.28 | 105x | 105x |
+| Topology validation | 0.12 | 0.23 | 0.12 | 0.23 | 1.8x | 1.8x |
 
-Where PostgreSQL gains nothing from parallel workers, its single-core time is repeated in the "all cores" column.
+The smallest margins are the point-in-polygon join on one core (1.4x) and the raster lookup at points on one core (1.6x).
 
 ## Reading the numbers
 
