@@ -78,7 +78,14 @@ inline void ScalarFunctionVariantBuilder::SetReturnType(LogicalType type) {
 }
 
 inline void ScalarFunctionVariantBuilder::SetFunction(scalar_function_t fn) {
-	function.function = fn;
+	// A function has to return a constant vector when all of its arguments are constant. Functions that fill their
+	// result row by row leave it flat, so normalize it here for all of them.
+	function.function = [fn](DataChunk &args, ExpressionState &state, Vector &result) {
+		fn(args, state, result);
+		if (args.ColumnCount() > 0 && args.AllConstant() && result.GetVectorType() == VectorType::FLAT_VECTOR) {
+			result.SetVectorType(VectorType::CONSTANT_VECTOR);
+		}
+	};
 }
 
 inline void ScalarFunctionVariantBuilder::SetInit(init_local_state_t init) {

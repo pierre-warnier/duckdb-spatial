@@ -11056,9 +11056,13 @@ struct ST_AsLatLonText {
 //======================================================================================================================
 struct ST_AsEncodedPolyline {
 
-	static void EncodeValue(int32_t value, std::string &out) {
-		// Google's Encoded Polyline Algorithm
-		value = value < 0 ? ~(value << 1) : (value << 1);
+	static void EncodeValue(int32_t signed_value, std::string &out) {
+		// Google's Encoded Polyline Algorithm. Shifting is done on the unsigned value: shifting a negative one is
+		// undefined behaviour.
+		auto value = static_cast<uint32_t>(signed_value) << 1;
+		if (signed_value < 0) {
+			value = ~value;
+		}
 		while (value >= 0x20) {
 			out += static_cast<char>((0x20 | (value & 0x1f)) + 63);
 			value >>= 5;
