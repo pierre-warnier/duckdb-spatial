@@ -257,3 +257,39 @@ query II
 SELECT p.id, b.id FROM thin_probe p JOIN thin_build b ON ST_KNN(p.geom, b.geom, 1);
 ----
 1	2
+
+# ===========================================================================
+# Probe rows without a usable geometry must not hide the rows of later chunks
+# ===========================================================================
+
+statement ok
+CREATE TABLE sparse_probe AS
+SELECT i AS id,
+       CASE WHEN i % 50 = 0 THEN ST_GeomFromText('POINT EMPTY') WHEN i % 77 = 0 THEN NULL ELSE ST_Point(i % 100, i // 100) END AS geom
+FROM range(20000) t(i);
+
+statement ok
+CREATE TABLE sparse_build AS SELECT i AS id, ST_Point(i % 37, i // 37) AS geom FROM range(2000) t(i);
+
+query II
+SELECT count(*), count(DISTINCT p.id) FROM sparse_probe p JOIN sparse_build b ON ST_KNN(p.geom, b.geom, 3);
+----
+58038	19346
+
+query I
+SELECT count(*) FROM sparse_probe WHERE geom IS NOT NULL AND NOT ST_IsEmpty(geom);
+----
+19346
+
+# Same through a filtered subquery, which hands sliced chunks to the join
+query II
+SELECT count(*), count(DISTINCT p.id)
+FROM (SELECT * FROM sparse_probe WHERE id % 3 <> 1) p JOIN sparse_build b ON ST_KNN(p.geom, b.geom, 1);
+----
+12896	12896
+
+query I
+SELECT count(*) FROM sparse_probe WHERE id % 3 <> 1 AND geom IS NOT NULL AND NOT ST_IsEmpty(geom);
+----
+12896
+

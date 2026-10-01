@@ -502,6 +502,9 @@ OperatorResultType PhysicalSpatialKNNJoin::ExecuteInternal(ExecutionContext &con
 		// INIT — compute probe keys and bboxes for the input chunk
 		//--------------------------------------------------------------------------------------------------------------
 		case KNNJoinState::INIT: {
+			lstate.probe_side_key_chunk.Reset();
+			lstate.probe_side_box_chunk.Reset();
+
 			lstate.join_probe_executor.Execute(input, lstate.probe_side_key_chunk);
 
 			lstate.bbox_probe_executor.Execute(lstate.probe_side_key_chunk, lstate.probe_side_box_chunk);
