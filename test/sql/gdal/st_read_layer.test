@@ -1,0 +1,51 @@
+# name: test/sql/gdal/st_read_layer.test
+# description: Choosing the layer read by ST_Read, and errors for layers that do not exist
+# group: [gdal]
+
+require spatial
+
+statement ok
+COPY (SELECT id, ST_Point(id, id) AS geom FROM range(3) t(id))
+TO '__TEST_DIR__/st_read_layer.gpkg' WITH (FORMAT GDAL, DRIVER 'GPKG', LAYER_NAME 'test_layer');
+
+query I
+SELECT count(*) FROM ST_Read('__TEST_DIR__/st_read_layer.gpkg');
+----
+3
+
+query I
+SELECT count(*) FROM ST_Read('__TEST_DIR__/st_read_layer.gpkg', layer => 'test_layer');
+----
+3
+
+# By index, counted from 0
+query I
+SELECT count(*) FROM ST_Read('__TEST_DIR__/st_read_layer.gpkg', layer => 0);
+----
+3
+
+statement error
+SELECT count(*) FROM ST_Read('__TEST_DIR__/st_read_layer.gpkg', layer => 1);
+----
+layer index 1 is out of range, the dataset has 1 layer(s)
+
+statement error
+SELECT count(*) FROM ST_Read('__TEST_DIR__/st_read_layer.gpkg', layer => 'layer_test');
+----
+could not find a layer named 'layer_test', the dataset has: test_layer
+
+statement error
+SELECT count(*) FROM ST_Read('__TEST_DIR__/st_read_layer.gpkg', layer => 'TEST_LAYER');
+----
+could not find a layer named 'TEST_LAYER'
+
+statement error
+SELECT count(*) FROM ST_Read('__TEST_DIR__/st_read_layer.gpkg', layer => NULL);
+----
+the layer must not be NULL
+
+# The connection is still usable after the errors
+query I
+SELECT count(*) FROM ST_Read('__TEST_DIR__/st_read_layer.gpkg');
+----
+3

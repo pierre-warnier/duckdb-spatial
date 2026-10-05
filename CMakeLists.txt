@@ -19,6 +19,39 @@ endif()
 
 project(${TARGET_NAME})
 
+# The extension is compiled against the internal C++ API of the DuckDB in the
+# duckdb/ submodule. OVERRIDE_GIT_DESCRIBE only changes the version the binary
+# claims to be built for: a binary built from a newer DuckDB and labelled with
+# an older version loads into the older DuckDB and crashes there. Refuse that.
+option(SPATIAL_ALLOW_OLDER_DUCKDB_LABEL
+       "Allow OVERRIDE_GIT_DESCRIBE to name a DuckDB older than the submodule" OFF)
+if(OVERRIDE_GIT_DESCRIBE AND NOT SPATIAL_ALLOW_OLDER_DUCKDB_LABEL)
+  execute_process(
+    COMMAND git describe --tags --abbrev=0
+    WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}/duckdb
+    OUTPUT_VARIABLE SPATIAL_DUCKDB_SUBMODULE_TAG
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    RESULT_VARIABLE SPATIAL_DUCKDB_DESCRIBE_RESULT
+    ERROR_QUIET)
+  string(REGEX MATCH "^v([0-9]+\\.[0-9]+\\.[0-9]+)" SPATIAL_LABEL_MATCH
+               "${OVERRIDE_GIT_DESCRIBE}")
+  set(SPATIAL_LABEL_VERSION "${CMAKE_MATCH_1}")
+  string(REGEX MATCH "^v([0-9]+\\.[0-9]+\\.[0-9]+)" SPATIAL_SUBMODULE_MATCH
+               "${SPATIAL_DUCKDB_SUBMODULE_TAG}")
+  set(SPATIAL_SUBMODULE_VERSION "${CMAKE_MATCH_1}")
+  if(SPATIAL_DUCKDB_DESCRIBE_RESULT EQUAL 0
+     AND SPATIAL_LABEL_VERSION
+     AND SPATIAL_SUBMODULE_VERSION
+     AND SPATIAL_LABEL_VERSION VERSION_LESS SPATIAL_SUBMODULE_VERSION)
+    message(
+      FATAL_ERROR
+        "OVERRIDE_GIT_DESCRIBE=${OVERRIDE_GIT_DESCRIBE} names DuckDB ${SPATIAL_LABEL_VERSION}, "
+        "but the duckdb submodule is ${SPATIAL_SUBMODULE_VERSION}. The extension would load into "
+        "DuckDB ${SPATIAL_LABEL_VERSION} and crash. Build from a commit whose submodule matches the "
+        "target DuckDB, or pass -DSPATIAL_ALLOW_OLDER_DUCKDB_LABEL=ON to override.")
+  endif()
+endif()
+
 add_definitions(-DDUCKDB_MAJOR_VERSION=${DUCKDB_MAJOR_VERSION})
 add_definitions(-DDUCKDB_MINOR_VERSION=${DUCKDB_MINOR_VERSION})
 add_definitions(-DDUCKDB_PATCH_VERSION=${DUCKDB_PATCH_VERSION})

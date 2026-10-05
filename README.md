@@ -193,6 +193,17 @@ You can then invoke the built DuckDB (with the extension statically linked):
 
 **Dependencies**: CMake 3.20+, a C++17 compiler, OpenSSL (`sudo apt install libssl-dev` on Ubuntu), and [Ninja](https://ninja-build.org) (recommended). All other dependencies are bundled.
 
+## DuckDB version and releases
+
+The extension is built against the DuckDB in the `duckdb` submodule, currently **v1.5.6**, and only works in that version of DuckDB: it uses DuckDB's internal C++ API, so a binary built from a newer DuckDB can be labelled for an older one (with `OVERRIDE_GIT_DESCRIBE`) and still crash when it is loaded there. The build refuses such a label unless `-DSPATIAL_ALLOW_OLDER_DUCKDB_LABEL=ON` is passed. Every change of the submodule is noted here.
+
+| Fork commits | DuckDB |
+|---|---|
+| from `d16a73c2` (2026-09-30) | v1.5.6 |
+| up to `b16c974d` | v1.5.4 |
+
+Validated commits are tagged `v<duckdb version>-fork.<n>` (for example `v1.5.6-fork.1`): pin one of those rather than a branch head.
+
 ## Using the build from another DuckDB client
 
 The build also produces a loadable extension, laid out as a local extension repository in `build/release/repository`. It can only be loaded by a DuckDB of the exact version it was built against (currently v1.5.6), on the same platform.

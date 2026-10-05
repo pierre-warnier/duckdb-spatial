@@ -33,6 +33,7 @@
 #include "cpl_vsi_virtual.h"
 #include "duckdb/common/types/geometry_crs.hpp"
 #include "duckdb/main/settings.hpp"
+#include "duckdb/common/operator/cast_operators.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "spatial/spatial_settings.hpp"
@@ -705,8 +706,9 @@ auto Bind(ClientContext &ctx, TableFunctionBindInput &input, vector<LogicalType>
 		ThrowGDALError(StringUtil::Format("Could not open GDAL dataset at: %s", result->real_file_path));
 	}
 
-	ArrowSchema schema;
-	ArrowArrayStream stream;
+	// Zero-initialized: if an error is raised before they are filled, the cleanup below must not call garbage
+	ArrowSchema schema = {};
+	ArrowArrayStream stream = {};
 
 	try {
 
@@ -719,34 +721,35 @@ auto Bind(ClientContext &ctx, TableFunctionBindInput &input, vector<LogicalType>
 		const auto layer_param = input.named_parameters.find("layer");
 
 		if (layer_param != input.named_parameters.end()) {
-			if (layer_param->second.type() == LogicalType::INTEGER) {
-				// Find layer by index
-				const auto layer_idx = IntegerValue::Get(layer_param->second);
-				if (layer_idx < 0) {
-					throw BinderException("Layer index must be positive");
+			if (layer_param->second.IsNull()) {
+				throw BinderException("ST_Read: the layer must not be NULL");
+			}
+			// A layer is chosen by name, or by its index (counted from 0) when no layer has that name
+			const auto layer_name = layer_param->second.ToString();
+			auto found = false;
+			vector<string> layer_names;
+			for (int i = 0; i < layer_count; i++) {
+				const auto layer = GDALDatasetGetLayer(dataset, i);
+				if (!layer) {
+					continue;
 				}
-				if (layer_idx > layer_count) {
-					throw BinderException(
-					    StringUtil::Format("Layer index out of range (%s > %s)", layer_idx, layer_count));
+				layer_names.push_back(OGR_L_GetName(layer));
+				if (!found && layer_names.back() == layer_name) {
+					result->layer_idx = i;
+					found = true;
 				}
-				result->layer_idx = layer_idx;
-			} else if (layer_param->second.type() == LogicalType::VARCHAR) {
-				// Find layer by name
-				const auto &layer_name = StringValue::Get(layer_param->second);
-				auto found = false;
-				for (int i = 0; i < layer_count; i++) {
-					const auto layer = GDALDatasetGetLayer(dataset, i);
-					if (!layer) {
-						continue;
+			}
+			if (!found) {
+				int64_t layer_idx;
+				if (TryCast::Operation<string_t, int64_t>(string_t(layer_name), layer_idx, true)) {
+					if (layer_idx < 0 || layer_idx >= layer_count) {
+						throw BinderException("ST_Read: layer index %lld is out of range, the dataset has %d layer(s)",
+						                      static_cast<long long>(layer_idx), layer_count);
 					}
-					if (OGR_L_GetName(layer) == layer_name) {
-						result->layer_idx = i;
-						found = true;
-						break;
-					}
-				}
-				if (!found) {
-					throw BinderException("Could not find layer with name: %s", layer_name);
+					result->layer_idx = NumericCast<idx_t>(layer_idx);
+				} else {
+					throw BinderException("ST_Read: could not find a layer named '%s', the dataset has: %s", layer_name,
+					                      StringUtil::Join(layer_names, ", "));
 				}
 			}
 		}
