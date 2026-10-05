@@ -208,19 +208,7 @@ Validated commits are tagged `v<duckdb version>-fork.<n>` (for example `v1.5.6-f
 
 The build also produces a loadable extension, laid out as a local extension repository in `build/release/repository`. It can only be loaded by a DuckDB of the exact version it was built against (currently v1.5.6), on the same platform.
 
-```bash
-make install-local
-```
-
-installs it into the extension directory of the current user (`~/.duckdb/extensions`), replacing the official `spatial` extension for that DuckDB version. It is equivalent to running, from any client:
-
-```sql
-FORCE INSTALL spatial FROM '/path/to/duckdb-spatial/build/release/repository';
-```
-
-After that, a plain `INSTALL spatial; LOAD spatial;` keeps working in every client, and `duckdb_extensions()` reports `install_mode = REPOSITORY` with the commit of this repository as `extension_version`. `FORCE INSTALL spatial FROM core;` goes back to the official extension.
-
-A local build is not signed, so the connection that loads it has to be opened with unsigned extensions allowed. This cannot be changed once the database is open:
+The binary is not signed, and it cannot be: DuckDB only trusts the keys compiled into it. A connection loads it only if it is opened with unsigned extensions allowed, which cannot be changed once the database is open:
 
 | Client | Setting |
 |---|---|
@@ -229,7 +217,29 @@ A local build is not signed, so the connection that loads it has to be opened wi
 | C API | `duckdb_set_config(config, "allow_unsigned_extensions", "true")` before `duckdb_open_ext` |
 | Rust | `Connection::open_with_flags(path, Config::default().allow_unsigned_extensions()?)` |
 
-Do not copy `spatial.duckdb_extension` over an installed one by hand: the `.info` file next to it still describes the previous binary, and loading by name then fails with `Metadata mismatch detected when loading extension`. Loading by explicit path (`LOAD '/path/to/spatial.duckdb_extension'`) does work.
+**Keep it out of the shared extension directory.** `~/.duckdb/extensions` is shared by every DuckDB client of the user. A client that checks signatures (the default) cannot load the build from there, and any tool that answers a failed `LOAD` with `FORCE INSTALL spatial` replaces it with the official extension, after which the fork's code is silently gone. Give the workflows that want the fork an extension directory of their own instead:
+
+```bash
+make install-local    # installs into ~/.duckdb/extensions-spatial-fork (LOCAL_EXTENSION_DIRECTORY=... to change it)
+```
+
+and open their connections with that directory and unsigned extensions allowed:
+
+```sql
+-- CLI: duckdb -unsigned
+SET extension_directory = '/home/<user>/.duckdb/extensions-spatial-fork';
+LOAD spatial;
+SELECT extension_version, install_mode FROM duckdb_extensions() WHERE extension_name = 'spatial';   -- the commit of this repository, REPOSITORY
+```
+
+```python
+duckdb.connect(config={'allow_unsigned_extensions': 'true',
+                       'extension_directory': os.path.expanduser('~/.duckdb/extensions-spatial-fork')})
+```
+
+Other extensions (`parquet`, `httpfs`, ...) are installed into that directory as needed, like in the default one. Loading the file by its full path (`LOAD '/path/to/spatial.duckdb_extension'`, still with unsigned extensions allowed) works too and involves no extension directory at all.
+
+Do not copy `spatial.duckdb_extension` over an installed one by hand: the `.info` file next to it still describes the previous binary, and loading by name then fails with `Metadata mismatch detected when loading extension`.
 
 # Example Usage
 

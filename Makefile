@@ -25,6 +25,8 @@ format:
 	find src/spatial -iname *.hpp -o -iname *.cpp | xargs clang-format --sort-includes=0 -style=file -i
 	cmake-format -i CMakeLists.txt
 
-#### Install the locally built (unsigned) extension into the DuckDB extension directory of the current user
+#### Install the locally built (unsigned) extension into an extension directory of its own, never the shared default one
+LOCAL_EXTENSION_DIRECTORY ?= $(HOME)/.duckdb/extensions-spatial-fork
 install-local:
-	./build/release/duckdb -unsigned -c "FORCE INSTALL spatial FROM '$(PROJ_DIR)build/release/repository';"
+	./build/release/duckdb -unsigned -c "SET extension_directory = '$(LOCAL_EXTENSION_DIRECTORY)'; FORCE INSTALL spatial FROM '$(PROJ_DIR)build/release/repository';"
+	@echo "Installed into $(LOCAL_EXTENSION_DIRECTORY): open connections with extension_directory set to it and unsigned extensions allowed"
