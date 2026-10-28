@@ -1951,7 +1951,7 @@ static string_t GeometryToBlob(OGRGeometryH geom, Vector &result, vector<data_t>
 	}
 	const string_t wkb(const_char_ptr_cast(buffer.data()), NumericCast<uint32_t>(buffer.size()));
 	string_t blob;
-	Geometry::FromBinary(wkb, blob, result, true);
+	Geometry::FromBinary(wkb, blob, StringVector::GetStringHeap(result), true);
 	return blob;
 }
 
@@ -2047,22 +2047,21 @@ static void ParseExecute(DataChunk &args, ExpressionState &state, Vector &result
 }
 
 // Neither format can represent an empty geometry or M values: empty geometries become NULL and M values are dropped
-static bool PrepareExport(OGRGeometryH geom, ValidityMask &mask, idx_t row_idx) {
+static bool PrepareExport(OGRGeometryH geom) {
 	if (OGR_G_IsEmpty(geom)) {
-		mask.SetInvalid(row_idx);
 		return false;
 	}
 	OGR_G_SetMeasured(geom, FALSE);
 	return true;
 }
 
-static string_t ExportGML(const string_t &wkb, int32_t version, Vector &result, ValidityMask &mask, idx_t row_idx) {
+static optional<string_t> ExportGML(const string_t &wkb, int32_t version, Vector &result) {
 	if (version != 2 && version != 3) {
 		throw InvalidInputException("ST_AsGML: version must be 2 or 3, got %d", version);
 	}
 	const auto geom = GeometryFromWKB(wkb);
-	if (!PrepareExport(geom.get(), mask, row_idx)) {
-		return string_t();
+	if (!PrepareExport(geom.get())) {
+		return nullopt;
 	}
 	const char *const options[] = {version == 2 ? "FORMAT=GML2" : "FORMAT=GML3", nullptr};
 	CPLErrorReset();
@@ -2076,32 +2075,32 @@ static string_t ExportGML(const string_t &wkb, int32_t version, Vector &result, 
 static void AsGMLExecute(DataChunk &args, ExpressionState &state, Vector &result) {
 	const auto count = args.size();
 	Vector wkb_vec(LogicalType::BLOB, count);
-	Geometry::ToBinary(args.data[0], wkb_vec, count);
-	UnaryExecutor::ExecuteWithNulls<string_t, string_t>(
+	Geometry::ToBinary(args.data[0], wkb_vec);
+	UnaryExecutor::Execute<string_t, string_t>(
 	    wkb_vec, result, count,
-	    [&](const string_t &wkb, ValidityMask &mask, idx_t row_idx) { return ExportGML(wkb, 2, result, mask, row_idx); });
+	    [&](const string_t &wkb) -> optional<string_t> { return ExportGML(wkb, 2, result); });
 }
 
 static void AsGMLVersionExecute(DataChunk &args, ExpressionState &state, Vector &result) {
 	const auto count = args.size();
 	Vector wkb_vec(LogicalType::BLOB, count);
-	Geometry::ToBinary(args.data[1], wkb_vec, count);
-	BinaryExecutor::ExecuteWithNulls<int32_t, string_t, string_t>(
+	Geometry::ToBinary(args.data[1], wkb_vec);
+	BinaryExecutor::Execute<int32_t, string_t, string_t>(
 	    args.data[0], wkb_vec, result, count,
-	    [&](int32_t version, const string_t &wkb, ValidityMask &mask, idx_t row_idx) {
-		    return ExportGML(wkb, version, result, mask, row_idx);
+	    [&](int32_t version, const string_t &wkb) -> optional<string_t> {
+		    return ExportGML(wkb, version, result);
 	    });
 }
 
 static void AsKMLExecute(DataChunk &args, ExpressionState &state, Vector &result) {
 	const auto count = args.size();
 	Vector wkb_vec(LogicalType::BLOB, count);
-	Geometry::ToBinary(args.data[0], wkb_vec, count);
-	UnaryExecutor::ExecuteWithNulls<string_t, string_t>(
-	    wkb_vec, result, count, [&](const string_t &wkb, ValidityMask &mask, idx_t row_idx) {
+	Geometry::ToBinary(args.data[0], wkb_vec);
+	UnaryExecutor::Execute<string_t, string_t>(
+	    wkb_vec, result, count, [&](const string_t &wkb) -> optional<string_t> {
 		    const auto geom = GeometryFromWKB(wkb);
-		    if (!PrepareExport(geom.get(), mask, row_idx)) {
-			    return string_t();
+		    if (!PrepareExport(geom.get())) {
+			    return nullopt;
 		    }
 
 		    // GDAL silently wraps longitudes into [-180, 180], which would corrupt projected coordinates
