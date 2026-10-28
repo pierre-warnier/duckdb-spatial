@@ -10,7 +10,8 @@
 # 3. Checks that the extension reports the requested version, and runs the test suite unless NO_TESTS=1.
 #
 # Environment:
-#   VCPKG_TOOLCHAIN_PATH  vcpkg toolchain file (default: ~/vcpkg/scripts/buildsystems/vcpkg.cmake)
+#   VCPKG_TOOLCHAIN_PATH  vcpkg toolchain file (default: a checkout at ~/vcpkg-<commit>, cloned if missing, of the
+#                         vcpkg commit named in .github/workflows/MainDistributionPipeline.yml)
 #   MARCH                 -march baseline (default: x86-64-v3)
 #   NO_TESTS              skip the test suite when set to 1
 #   MERGE_UPSTREAM        a ref to merge first, e.g. upstream/v2.0-cyanoptera (default: none)
@@ -24,7 +25,6 @@ TAG="$1"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-export VCPKG_TOOLCHAIN_PATH="${VCPKG_TOOLCHAIN_PATH:-$HOME/vcpkg/scripts/buildsystems/vcpkg.cmake}"
 MARCH="${MARCH:-x86-64-v3}"
 
 if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
@@ -35,6 +35,19 @@ fi
 if [ -n "${MERGE_UPSTREAM:-}" ]; then
 	git fetch upstream
 	git merge --no-edit "$MERGE_UPSTREAM"
+fi
+
+# The overlay ports include the portfiles of the vcpkg checkout, so vcpkg must be at the commit the CI uses
+if [ -z "${VCPKG_TOOLCHAIN_PATH:-}" ]; then
+	VCPKG_COMMIT="$(sed -n 's/^ *vcpkg_commit: *\([0-9a-f]\{40\}\).*/\1/p' .github/workflows/MainDistributionPipeline.yml)"
+	VCPKG_DIR="$HOME/vcpkg-${VCPKG_COMMIT:0:10}"
+	if [ ! -x "$VCPKG_DIR/vcpkg" ]; then
+		git clone -q https://github.com/microsoft/vcpkg.git "$VCPKG_DIR"
+		git -C "$VCPKG_DIR" checkout -q "$VCPKG_COMMIT"
+		"$VCPKG_DIR/bootstrap-vcpkg.sh" -disableMetrics
+	fi
+	[ "$(git -C "$VCPKG_DIR" rev-parse HEAD)" = "$VCPKG_COMMIT" ]
+	export VCPKG_TOOLCHAIN_PATH="$VCPKG_DIR/scripts/buildsystems/vcpkg.cmake"
 fi
 
 git submodule update --init --depth 1 extension-ci-tools
