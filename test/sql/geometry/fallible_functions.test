@@ -1,0 +1,41 @@
+# name: test/sql/geometry/fallible_functions.test
+# description: Functions that reject their input raise an error about it, and can be wrapped in TRY
+# group: [geometry]
+
+require spatial
+
+statement error
+SELECT ST_Azimuth(ST_GeomFromText('LINESTRING (0 0, 1 1)'), ST_Point(1, 1));
+----
+Invalid Input Error: ST_Azimuth only accepts POINT geometries
+
+statement error
+SELECT ST_X(ST_GeomFromText('LINESTRING (0 0, 1 1)'));
+----
+Invalid Input Error: ST_X only supports POINT geometries
+
+statement error
+SELECT ST_Hilbert(ST_GeomFromText('POINT EMPTY'), {min_x: 0, min_y: 0, max_x: 1, max_y: 1}::BOX_2D);
+----
+Invalid Input Error: ST_Hilbert(geom, bounds) does not support empty geometries
+
+statement error
+SELECT ST_GeomFromWKB('\x01\x02'::BLOB);
+----
+Invalid Input Error
+
+statement ok
+SET geometry_always_xy = true;
+
+statement error
+SELECT ST_Distance_Sphere(ST_GeomFromText('LINESTRING (0 0, 1 1)'), ST_Point(1, 1));
+----
+Invalid Input Error: ST_Distance_Sphere only accepts POINT geometries
+
+query IIII
+SELECT TRY(ST_Azimuth(ST_GeomFromText('LINESTRING (0 0, 1 1)'), ST_Point(1, 1))),
+       TRY(ST_X(ST_GeomFromText('LINESTRING (0 0, 1 1)'))),
+       TRY(ST_AsLatLonText(ST_GeomFromText('LINESTRING (0 0, 1 1)'))),
+       TRY(ST_GeomFromEWKT('SRID=4326;NOT WKT'));
+----
+NULL	NULL	NULL	NULL
