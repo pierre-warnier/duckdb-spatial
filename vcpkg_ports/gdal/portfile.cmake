@@ -99,8 +99,9 @@ vcpkg_cmake_configure(
         # Build these explicitly
         # (Compared to gdal 3.8.5, the MEM driver is now always built-in, and
         # the NTF, TIGER, GEOCONCEPT and SVG drivers have been removed upstream)
-        # HFA is optional since gdal 3.9, the raster functions read and write it
+        # Optional raster drivers that the raster functions use
         -DGDAL_ENABLE_DRIVER_HFA=ON
+        -DGDAL_ENABLE_DRIVER_DERIVED=ON
         -DOGR_ENABLE_DRIVER_GEOJSON=ON
         -DOGR_ENABLE_DRIVER_GML=ON
         -DOGR_ENABLE_DRIVER_TAB=ON
