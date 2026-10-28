@@ -4394,6 +4394,7 @@ struct ST_ClusterIntersecting {
 				for (auto *g : state.geoms) GEOSGeom_destroy_r(state.context, g);
 				state.geoms.clear();
 				if (state.context) { GEOS_finish_r(state.context); state.context = nullptr; }
+				state.~State();
 			}
 		}
 	}
@@ -4532,6 +4533,7 @@ struct ST_ClusterWithin {
 				for (auto *g : state.geoms) GEOSGeom_destroy_r(state.context, g);
 				state.geoms.clear();
 				if (state.context) { GEOS_finish_r(state.context); state.context = nullptr; }
+				state.~State();
 			}
 		}
 	}
