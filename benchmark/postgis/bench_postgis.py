@@ -11,6 +11,8 @@ PSQL = ['psql', '-h', PGHOST, '-p', PGPORT, '-U', 'postgres', '-At', '-F', '|', 
 RUNS = int(os.environ.get('RUNS', '2'))
 ONLY = os.environ.get('ONLY', '')
 SMALL = os.environ.get('SMALL', '') == '1'
+# Time DuckDB only, e.g. to compare two builds of the extension
+DUCKDB_ONLY = os.environ.get('DUCKDB_ONLY', '') == '1'
 
 con = duckdb.connect(DB, config={'allow_unsigned_extensions': 'true'})
 con.execute(f"LOAD '{EXT}'")
@@ -68,6 +70,10 @@ def report(name, duck_sql, pg_sql, check=close(1e-9), pg_parallel=True, duck_thr
         row['duckdb_result'] = [str(v) for v in r_duck[0]]
     except Exception as e:
         row['duckdb_error'] = str(e)[:300]; r_duck = None
+    if DUCKDB_ONLY:
+        results.append(row)
+        print(json.dumps(row), flush=True)
+        return
     try:
         row['postgis_1'], r_pg = timed(lambda: pg(pg_sql, 0))
         if pg_parallel:
@@ -173,7 +179,8 @@ if not ONLY or 'raster' in ONLY:
     con.execute("CREATE OR REPLACE TABLE dem AS SELECT row_number() OVER () AS rid, rast FROM dem")
     con.execute("LOAD postgres")
     con.execute(f"ATTACH 'host={PGHOST} port={PGPORT} user=postgres password={PGENV['PGPASSWORD']} dbname=postgres' AS b (TYPE postgres)")
-    con.execute("CALL postgres_execute('b', 'drop table if exists public.dem; drop table if exists public.dem_tif')")
+    con.execute("CALL postgres_execute('b', 'drop table if exists public.dem')")
+    con.execute("CALL postgres_execute('b', 'drop table if exists public.dem_tif')")
     con.execute("CREATE TABLE b.public.dem_tif AS SELECT rid, ST_AsTIFF(rast)::BLOB AS tif FROM dem")
     con.execute("DETACH b")
     pg("create table dem as select rid, ST_FromGDALRaster(tif, 31370) rast from dem_tif; create index on dem using gist (ST_ConvexHull(rast)); analyze dem")
