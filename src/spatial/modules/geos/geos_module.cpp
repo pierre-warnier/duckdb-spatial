@@ -4954,26 +4954,6 @@ struct ST_Angle_GEOS {
 
 // --- Editors ---
 
-struct ST_SnapToGrid_GEOS {
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
-		auto &lstate = LocalState::ResetAndGet(state);
-		BinaryExecutor::Execute<string_t, double, string_t>(args.data[0], args.data[1], result, args.size(),
-		    [&](const string_t &blob, double size) {
-			    return lstate.Serialize(result, lstate.Deserialize(blob).get_gridded(size));
-		    });
-	}
-	static void Register(ExtensionLoader &loader) {
-		FunctionBuilder::RegisterScalar(loader, "ST_SnapToGrid", [](ScalarFunctionBuilder &func) {
-			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
-				v.AddParameter("geom", LogicalType::GEOMETRY()); v.AddParameter("size", LogicalType::DOUBLE);
-				v.SetReturnType(LogicalType::GEOMETRY()); v.SetResolveTypes(GeoTypes::PropagateCRS);
-				v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
-			});
-			func.SetDescription("Snaps all coordinates to a grid of the given size"); func.SetTag("ext", "spatial"); func.SetTag("category", "construction");
-		});
-	}
-};
-
 // --- Validation ---
 
 struct ST_IsValidReason {
@@ -5017,27 +4997,6 @@ struct ST_CoordDim_GEOS {
 				v.CanThrowErrors();
 			});
 			func.SetDescription("Returns the coordinate dimension of a geometry"); func.SetTag("ext", "spatial"); func.SetTag("category", "property");
-		});
-	}
-};
-
-struct ST_NDims_GEOS {
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
-		auto &lstate = LocalState::ResetAndGet(state);
-		UnaryExecutor::Execute<string_t, int32_t>(args.data[0], result, args.size(),
-		    [&](const string_t &blob) -> int32_t {
-			    const auto geom = lstate.Deserialize(blob);
-			    return GEOSGeom_getDimensions_r(lstate.GetContext(), geom.get_raw());
-		    });
-	}
-	static void Register(ExtensionLoader &loader) {
-		FunctionBuilder::RegisterScalar(loader, "ST_NDims", [](ScalarFunctionBuilder &func) {
-			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
-				v.AddParameter("geom", LogicalType::GEOMETRY()); v.SetReturnType(LogicalType::INTEGER);
-				v.SetInit(LocalState::Init); v.SetFunction(Execute);
-				v.CanThrowErrors();
-			});
-			func.SetDescription("Returns the topological dimension of a geometry"); func.SetTag("ext", "spatial"); func.SetTag("category", "property");
 		});
 	}
 };
@@ -5327,7 +5286,6 @@ void RegisterGEOSModule(ExtensionLoader &loader) {
 	ST_ForcePolygonCW::Register(loader);
 	ST_IsValidReason::Register(loader);
 	ST_CoordDim_GEOS::Register(loader);
-	ST_NDims_GEOS::Register(loader);
 	ST_NRings_GEOS::Register(loader);
 	ST_IsPolygonCCW_GEOS::Register(loader);
 	ST_IsPolygonCW_GEOS::Register(loader);
@@ -5336,7 +5294,6 @@ void RegisterGEOSModule(ExtensionLoader &loader) {
 	ST_IsCollection_GEOS::Register(loader);
 	ST_MaxDistance_GEOS::Register(loader);
 	ST_Angle_GEOS::Register(loader);
-	ST_SnapToGrid_GEOS::Register(loader);
 
 	// Aggregate Functions
 	ST_MemUnion_Agg::Register(loader);

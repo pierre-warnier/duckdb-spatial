@@ -302,11 +302,11 @@ SELECT ST_CoordDim(ST_GeomFromText('POINT (0 0)'));
 2
 
 # ===========================================================================
-# ST_NDims
+# ST_Dimension (the topological dimension)
 # ===========================================================================
 
 query I
-SELECT ST_NDims(ST_GeomFromText('POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))'));
+SELECT ST_Dimension(ST_GeomFromText('POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))'));
 ----
 2
 
@@ -358,16 +358,16 @@ SELECT ST_AsText(ST_BoundingDiagonal(ST_GeomFromText('MULTIPOINT (0 0, 5 3)')));
 LINESTRING (0 0, 5 3)
 
 # ===========================================================================
-# ST_SnapToGrid
+# ST_ReducePrecision (PostGIS ST_SnapToGrid)
 # ===========================================================================
 
 query I
-SELECT ST_AsText(ST_SnapToGrid(ST_GeomFromText('POINT (1.23456 7.89012)'), 0.1));
+SELECT ST_AsText(ST_ReducePrecision(ST_GeomFromText('POINT (1.23456 7.89012)'), 0.1));
 ----
 POINT (1.2 7.9)
 
 query I
-SELECT ST_AsText(ST_SnapToGrid(ST_GeomFromText('POINT (1.23456 7.89012)'), 1.0));
+SELECT ST_AsText(ST_ReducePrecision(ST_GeomFromText('POINT (1.23456 7.89012)'), 1.0));
 ----
 POINT (1 8)
 

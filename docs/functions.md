@@ -19,8 +19,6 @@
 | [`ST_Area`](#st_area) | Compute the area of a geometry. |
 | [`ST_Area_Spheroid`](#st_area_spheroid) | Returns the area of a geometry in meters, using an ellipsoidal model of the earth |
 | [`ST_AsEncodedPolyline`](#st_asencodedpolyline) | Encodes a linestring as a Google Encoded Polyline string |
-| [`ST_AsEWKB`](#st_asewkb) | Returns the geometry as EWKB (Extended Well-Known Binary). Alias for ST_AsWKB. |
-| [`ST_AsEWKT`](#st_asewkt) | Returns the geometry as an Extended WKT (EWKT) string |
 | [`ST_AsGDALRaster`](#st_asgdalraster) | Returns the raster as the bytes of a file in a GDAL raster format. |
 | [`ST_AsGeoJSON`](#st_asgeojson) |  |
 | [`ST_AsGML`](#st_asgml) | Returns the geometry as a GML (Geography Markup Language) element. |
@@ -110,8 +108,6 @@
 | [`ST_GeometricMedian`](#st_geometricmedian) | Returns the geometric median of a geometry's vertices (Weiszfeld algorithm) |
 | [`ST_GeometryN`](#st_geometryn) | Returns the n-th geometry of a collection or multi-geometry, counting from 1 as in PostGIS and like `ST_PointN` and `ST_InteriorRingN`. |
 | [`ST_GeometryType`](#st_geometrytype) | Returns a 'GEOMETRY_TYPE' enum identifying the input geometry type. Possible enum return types are: `POINT`, `LINESTRING`, `POLYGON`, `MULTIPOINT`, `MULTILINESTRING`, `MULTIPOLYGON`, and `GEOMETRYCOLLECTION`. |
-| [`ST_GeomFromEWKB`](#st_geomfromewkb) | Creates a geometry from EWKB (Extended Well-Known Binary) data |
-| [`ST_GeomFromEWKT`](#st_geomfromewkt) | Parses an Extended WKT (EWKT) string, optionally with SRID prefix |
 | [`ST_GeomFromGeoHash`](#st_geomfromgeohash) | Returns the center point of a GeoHash cell |
 | [`ST_GeomFromGeoJSON`](#st_geomfromgeojson) |  |
 | [`ST_GeomFromGML`](#st_geomfromgml) | Creates a geometry from a GML (Geography Markup Language) geometry element. |
@@ -183,7 +179,6 @@
 | [`ST_MMax`](#st_mmax) | Returns the maximum M coordinate of a geometry |
 | [`ST_MMin`](#st_mmin) | Returns the minimum M coordinate of a geometry |
 | [`ST_Multi`](#st_multi) | Turns a single geometry into a multi geometry. |
-| [`ST_NDims`](#st_ndims) | Returns the topological dimension of a geometry |
 | [`ST_NearestValue`](#st_nearestvalue) | Returns the value of the pixel at a point or at a 1-based column and row if it is not NODATA, otherwise the value of the nearest pixel that is not NODATA. |
 | [`ST_NGeometries`](#st_ngeometries) | Returns the number of component geometries in a collection geometry. |
 | [`ST_NInteriorRings`](#st_ninteriorrings) | Returns the number of interior rings of a polygon |
@@ -217,7 +212,7 @@
 | [`ST_PointN`](#st_pointn) | Returns the n'th vertex from the input geometry as a point geometry |
 | [`ST_PointOnSurface`](#st_pointonsurface) | Returns a point guaranteed to lie on the surface of the geometry |
 | [`ST_Points`](#st_points) | Collects all the vertices in the geometry into a MULTIPOINT |
-| [`ST_Polygon`](#st_polygon) | Creates a polygon from a closed linestring |
+| [`ST_Polygon`](#st_polygon) | Returns the area covered by the pixels of a band (1-based, default 1) that are not NODATA, as a polygon or a multipolygon. Returns NULL if all pixels are NODATA. |
 | [`ST_Polygon2DFromWKB`](#st_polygon2dfromwkb) | Deserialize a POLYGON_2D from a WKB encoded blob |
 | [`ST_Polygonize`](#st_polygonize) | Returns a polygonized representation of the input geometries |
 | [`ST_Project`](#st_project) | Projects a point along the geodesic by a distance (meters) and azimuth (radians) |
@@ -250,7 +245,7 @@
 | [`ST_SetPoint`](#st_setpoint) | Replaces a point in a linestring (0-indexed, negative from end) |
 | [`ST_SetScale`](#st_setscale) | Returns the raster with a new pixel size, in world units. The pixels are not resampled (see ST_Rescale). The single-value variant sets both `scalex` and `scaley` to the same value. |
 | [`ST_SetSkew`](#st_setskew) | Returns the raster with new skew terms. The pixels are not resampled (see ST_Reskew). The single-value variant sets both `skewx` and `skewy` to the same value. |
-| [`ST_SetSRID`](#st_setsrid) | Sets the SRID of a geometry (no-op in DuckDB — use GEOMETRY('EPSG:XXXX') type for CRS) |
+| [`ST_SetSRID`](#st_setsrid) | Returns the raster with its coordinate system set to an EPSG code, without reprojecting the pixels (see ST_Transform). 0 removes the coordinate system. |
 | [`ST_SetUpperLeft`](#st_setupperleft) | Returns the raster moved so that its upper-left corner is at the given world coordinates. |
 | [`ST_SetValue`](#st_setvalue) | Returns the raster with one pixel (1-based column `x` and row `y`), or every pixel covered by a geometry, set to `newvalue` in a band (1-based, default 1). |
 | [`ST_SharedPaths`](#st_sharedpaths) | Returns shared paths between two linear geometries |
@@ -264,9 +259,9 @@
 | [`ST_SkewY`](#st_skewy) | Returns the Y skew of the georeference: the world Y offset per pixel column. |
 | [`ST_Slope`](#st_slope) | Returns the slope of an elevation band, using Horn's formula. |
 | [`ST_Snap`](#st_snap) | Snaps the vertices and segments of a geometry to another geometry's vertices within the given tolerance |
-| [`ST_SnapToGrid`](#st_snaptogrid) | Snaps all coordinates to a grid of the given size |
+| [`ST_SnapToGrid`](#st_snaptogrid) | Resamples a raster so that its pixel corners fall on the grid that passes through the world coordinate (`gridx`, `gridy`), optionally with a new pixel size. The result covers the extent of the input. |
 | [`ST_Split`](#st_split) | Splits a geometry by another geometry, returning a geometry collection of the pieces |
-| [`ST_SRID`](#st_srid) | Returns the SRID of a geometry (always 0 — DuckDB uses CRS type metadata instead of per-geometry SRIDs) |
+| [`ST_SRID`](#st_srid) | Returns the EPSG code of the raster's coordinate system, or 0 if it has none or is not an EPSG coordinate system (see ST_CRS). |
 | [`ST_StartPoint`](#st_startpoint) | Returns the start point of a LINESTRING. |
 | [`ST_Subdivide`](#st_subdivide) | Recursively splits a geometry into sub-geometries until the number of vertices of each are below the threshold given by max_vertices. Accepts any type of input except for a GeometryCollection.Degenerate inputs can lead to results having more than max_vertices vertices due to a recursion depth limit. |
 | [`ST_Summary`](#st_summary) | Returns a text summary of a geometry |
@@ -777,48 +772,6 @@ Encodes a linestring as a Google Encoded Polyline string
 
 ```sql
 SELECT ST_AsEncodedPolyline(ST_GeomFromText('LINESTRING(-120.2 38.5, -120.95 40.7, -126.453 43.252)'))
-```
-
-----
-
-### ST_AsEWKB
-
-
-#### Signature
-
-```sql
-BLOB ST_AsEWKB (geom GEOMETRY)
-```
-
-#### Description
-
-Returns the geometry as EWKB (Extended Well-Known Binary). Alias for ST_AsWKB.
-
-#### Example
-
-```sql
-SELECT ST_AsEWKB(ST_Point(1, 2))::BLOB
-```
-
-----
-
-### ST_AsEWKT
-
-
-#### Signature
-
-```sql
-VARCHAR ST_AsEWKT (geom GEOMETRY)
-```
-
-#### Description
-
-Returns the geometry as an Extended WKT (EWKT) string
-
-#### Example
-
-```sql
-SELECT ST_AsEWKT(ST_Point(1, 2))
 ```
 
 ----
@@ -2827,48 +2780,6 @@ POINT
 
 ----
 
-### ST_GeomFromEWKB
-
-
-#### Signature
-
-```sql
-GEOMETRY ST_GeomFromEWKB (ewkb BLOB)
-```
-
-#### Description
-
-Creates a geometry from EWKB (Extended Well-Known Binary) data
-
-#### Example
-
-```sql
-SELECT ST_AsText(ST_GeomFromEWKB(ST_AsEWKB(ST_Point(1, 2))))
-```
-
-----
-
-### ST_GeomFromEWKT
-
-
-#### Signature
-
-```sql
-GEOMETRY ST_GeomFromEWKT (ewkt VARCHAR)
-```
-
-#### Description
-
-Parses an Extended WKT (EWKT) string, optionally with SRID prefix
-
-#### Example
-
-```sql
-SELECT ST_AsText(ST_GeomFromEWKT('SRID=4326;POINT(1 2)'))
-```
-
-----
-
 ### ST_GeomFromGeoHash
 
 
@@ -4388,21 +4299,6 @@ MULTIPOLYGON (((0 0, 0 1, 1 1, 1 0, 0 0)))
 
 ----
 
-### ST_NDims
-
-
-#### Signature
-
-```sql
-INTEGER ST_NDims (geom GEOMETRY)
-```
-
-#### Description
-
-Returns the topological dimension of a geometry
-
-----
-
 ### ST_NearestValue
 
 
@@ -5062,19 +4958,20 @@ MULTIPOINT Z EMPTY
 #### Signatures
 
 ```sql
-GEOMETRY ST_Polygon (line GEOMETRY)
 GEOMETRY ST_Polygon (col0 RASTER)
 GEOMETRY ST_Polygon (col0 RASTER, col1 INTEGER)
 ```
 
 #### Description
 
-Creates a polygon from a closed linestring
+Returns the area covered by the pixels of a band (1-based, default 1) that are not NODATA, as a polygon or a multipolygon. Returns NULL if all pixels are NODATA.
 
 #### Example
 
 ```sql
-SELECT ST_AsText(ST_Polygon(ST_GeomFromText('LINESTRING(0 0, 1 0, 1 1, 0 1, 0 0)')))
+SELECT ST_Polygon(ST_SetValue(ST_AddBand(ST_MakeEmptyRaster(3, 1, 0, 1, 1), '8BUI', 1, 0), 3, 1, NULL));
+----
+POLYGON ((0 1, 0 0, 2 0, 2 1, 0 1))
 ```
 
 ----
@@ -5854,21 +5751,22 @@ SELECT ST_SkewX(ST_SetSkew(ST_MakeEmptyRaster(2, 2, 0, 0, 1), 0.5, 0.25));
 ### ST_SetSRID
 
 
-#### Signatures
+#### Signature
 
 ```sql
-GEOMETRY ST_SetSRID (geom GEOMETRY, srid INTEGER)
 RASTER ST_SetSRID (col0 RASTER, col1 INTEGER)
 ```
 
 #### Description
 
-Sets the SRID of a geometry (no-op in DuckDB — use GEOMETRY('EPSG:XXXX') type for CRS)
+Returns the raster with its coordinate system set to an EPSG code, without reprojecting the pixels (see ST_Transform). 0 removes the coordinate system.
 
 #### Example
 
 ```sql
-SELECT ST_SetSRID(ST_Point(1, 2), 4326)
+SELECT ST_SRID(ST_SetSRID(ST_MakeEmptyRaster(2, 2, 0, 0, 1), 31370));
+----
+31370
 ```
 
 ----
@@ -6140,7 +6038,6 @@ Snaps the vertices and segments of a geometry to another geometry's vertices wit
 #### Signatures
 
 ```sql
-GEOMETRY ST_SnapToGrid (geom GEOMETRY, size DOUBLE)
 RASTER ST_SnapToGrid (col0 RASTER, col1 DOUBLE, col2 DOUBLE)
 RASTER ST_SnapToGrid (col0 RASTER, col1 DOUBLE, col2 DOUBLE, col3 VARCHAR)
 RASTER ST_SnapToGrid (col0 RASTER, col1 DOUBLE, col2 DOUBLE, col3 VARCHAR, col4 DOUBLE)
@@ -6156,7 +6053,17 @@ RASTER ST_SnapToGrid (col0 RASTER, col1 DOUBLE, col2 DOUBLE, col3 DOUBLE, col4 V
 
 #### Description
 
-Snaps all coordinates to a grid of the given size
+Resamples a raster so that its pixel corners fall on the grid that passes through the world coordinate (`gridx`, `gridy`), optionally with a new pixel size. The result covers the extent of the input.
+
+See ST_Resample for `algorithm` and `maxerr`.
+
+#### Example
+
+```sql
+SELECT ST_UpperLeftX(ST_SnapToGrid(ST_AddBand(ST_MakeEmptyRaster(10, 10, 0.5, 0, 1), '8BUI', 1), 0, 0));
+----
+0.0
+```
 
 ----
 
@@ -6184,21 +6091,22 @@ SELECT ST_AsText(ST_Split(ST_GeomFromText('LINESTRING(0 0, 10 0)'), ST_Point(5, 
 ### ST_SRID
 
 
-#### Signatures
+#### Signature
 
 ```sql
-INTEGER ST_SRID (geom GEOMETRY)
 INTEGER ST_SRID (col0 RASTER)
 ```
 
 #### Description
 
-Returns the SRID of a geometry (always 0 — DuckDB uses CRS type metadata instead of per-geometry SRIDs)
+Returns the EPSG code of the raster's coordinate system, or 0 if it has none or is not an EPSG coordinate system (see ST_CRS).
 
 #### Example
 
 ```sql
-SELECT ST_SRID(ST_Point(1, 2))
+SELECT ST_SRID(ST_MakeEmptyRaster(2, 2, 0, 0, 1, -1, 0, 0, 3857));
+----
+3857
 ```
 
 ----

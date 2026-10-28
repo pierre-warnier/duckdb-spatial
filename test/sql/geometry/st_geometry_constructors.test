@@ -70,29 +70,26 @@ SELECT ST_MemSize(ST_GeomFromText('LINESTRING(0 0, 1 1, 2 2, 3 3)')) > ST_MemSiz
 ----
 true
 
-# ST_Polygon - create polygon from closed linestring
+# ST_MakePolygon - create polygon from closed linestring (PostGIS ST_Polygon)
 query I
-SELECT ST_AsText(ST_Polygon(ST_GeomFromText('LINESTRING(0 0, 1 0, 1 1, 0 1, 0 0)')));
+SELECT ST_AsText(ST_MakePolygon(ST_GeomFromText('LINESTRING(0 0, 1 0, 1 1, 0 1, 0 0)')));
 ----
 POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))
 
-# ST_Polygon - verify type
 query I
-SELECT ST_GeometryType(ST_Polygon(ST_GeomFromText('LINESTRING(0 0, 1 0, 1 1, 0 1, 0 0)')));
+SELECT ST_GeometryType(ST_MakePolygon(ST_GeomFromText('LINESTRING(0 0, 1 0, 1 1, 0 1, 0 0)')));
 ----
 POLYGON
 
-# ST_Polygon - error on non-closed linestring (too few points for closed ring)
 statement error
-SELECT ST_Polygon(ST_GeomFromText('LINESTRING(0 0, 1 1, 2 2)'));
+SELECT ST_MakePolygon(ST_GeomFromText('LINESTRING(0 0, 1 1, 2 2)'));
 ----
-ST_Polygon: linestring must have at least 4 points
+ST_MakePolygon shell requires at least 4 vertices
 
-# ST_Polygon - error on non-linestring
 statement error
-SELECT ST_Polygon(ST_Point(0, 0));
+SELECT ST_MakePolygon(ST_Point(0, 0));
 ----
-ST_Polygon: argument must be a closed LINESTRING
+ST_MakePolygon only accepts LINESTRING geometries
 
 # ST_LineFromMultiPoint
 query I

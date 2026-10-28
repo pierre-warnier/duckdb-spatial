@@ -10230,61 +10230,6 @@ struct ST_MemSize {
 };
 
 //======================================================================================================================
-// ST_Polygon
-//======================================================================================================================
-struct ST_Polygon_Func {
-
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
-		auto count = args.size();
-		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, count, [&](const string_t &blob) {
-			auto &lstate = LocalState::ResetAndGet(state);
-			sgl::geometry line_geom;
-			lstate.Deserialize(blob, line_geom);
-
-			if (line_geom.get_type() != sgl::geometry_type::LINESTRING) {
-				throw InvalidInputException("ST_Polygon: argument must be a closed LINESTRING");
-			}
-
-			const auto vertex_count = line_geom.get_vertex_count();
-			if (vertex_count < 4) {
-				throw InvalidInputException("ST_Polygon: linestring must have at least 4 points (closed ring)");
-			}
-			auto first = line_geom.get_vertex_xy(0);
-			auto last = line_geom.get_vertex_xy(vertex_count - 1);
-			if (first.x != last.x || first.y != last.y) {
-				throw InvalidInputException("ST_Polygon: linestring must be closed");
-			}
-
-			// Create a polygon with the linestring as its exterior ring
-			auto &alloc = lstate.GetAllocator();
-			sgl::geometry poly(sgl::geometry_type::POLYGON, line_geom.has_z(), line_geom.has_m());
-
-			auto *ring = static_cast<sgl::geometry *>(alloc.alloc(sizeof(sgl::geometry)));
-			new (ring) sgl::geometry(sgl::geometry_type::LINESTRING, line_geom.has_z(), line_geom.has_m());
-			ring->set_vertex_array(line_geom.get_vertex_array(), line_geom.get_vertex_count());
-
-			poly.append_part(ring);
-
-			return lstate.Serialize(result, poly);
-		});
-	}
-
-	static void Register(ExtensionLoader &loader) {
-		FunctionBuilder::RegisterScalar(loader, "ST_Polygon", [](ScalarFunctionBuilder &func) {
-			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
-				variant.AddParameter("line", LogicalType::GEOMETRY());
-				variant.SetReturnType(LogicalType::GEOMETRY());
-				variant.SetFunction(Execute);
-				variant.SetInit(LocalState::Init);
-				variant.CanThrowErrors();
-			});
-			func.SetDescription("Creates a polygon from a closed linestring");
-			func.SetExample("SELECT ST_AsText(ST_Polygon(ST_GeomFromText('LINESTRING(0 0, 1 0, 1 1, 0 1, 0 0)')))");
-		});
-	}
-};
-
-//======================================================================================================================
 // ST_LineFromMultiPoint
 //======================================================================================================================
 struct ST_LineFromMultiPoint {
@@ -11529,144 +11474,6 @@ struct ST_Box2dFromGeoHash {
 };
 
 //======================================================================================================================
-// ST_AsEWKT
-//======================================================================================================================
-struct ST_AsEWKT {
-
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
-		auto count = args.size();
-		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, count, [&](const string_t &blob) {
-			// Use DuckDB's built-in GEOMETRY→WKT conversion
-			return Geometry::ToString(StringVector::GetStringHeap(result), blob);
-		});
-	}
-
-	static void Register(ExtensionLoader &loader) {
-		FunctionBuilder::RegisterScalar(loader, "ST_AsEWKT", [](ScalarFunctionBuilder &func) {
-			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
-				variant.AddParameter("geom", LogicalType::GEOMETRY());
-				variant.SetReturnType(LogicalType::VARCHAR);
-				variant.SetFunction(Execute);
-				variant.SetInit(LocalState::Init);
-			});
-			func.SetDescription("Returns the geometry as an Extended WKT (EWKT) string");
-			func.SetExample("SELECT ST_AsEWKT(ST_Point(1, 2))");
-		});
-	}
-};
-
-//======================================================================================================================
-// ST_GeomFromEWKT
-//======================================================================================================================
-struct ST_GeomFromEWKT {
-
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
-		auto count = args.size();
-		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, count, [&](const string_t &input) {
-			auto &lstate = LocalState::ResetAndGet(state);
-			auto text = input.GetString();
-
-			// Parse optional SRID prefix: "SRID=XXXX;"
-			std::string wkt_part = text;
-			if (text.size() > 5 && (text[0] == 'S' || text[0] == 's') &&
-			    (text[1] == 'R' || text[1] == 'r') &&
-			    (text[2] == 'I' || text[2] == 'i') &&
-			    (text[3] == 'D' || text[3] == 'd') &&
-			    text[4] == '=') {
-				auto semicolon = text.find(';');
-				if (semicolon != std::string::npos) {
-					// Skip SRID prefix (we don't store per-geometry SRIDs)
-					wkt_part = text.substr(semicolon + 1);
-				}
-			}
-
-			// Parse WKT using SGL wkt_reader
-			sgl::geometry geom;
-			auto &alloc = lstate.GetAllocator();
-			sgl::wkt_reader reader(alloc);
-			if (!reader.try_parse(geom, wkt_part.c_str(), wkt_part.size())) {
-				throw InvalidInputException("ST_GeomFromEWKT: invalid WKT: %s", reader.get_error_message());
-			}
-
-			return lstate.Serialize(result, geom);
-		});
-	}
-
-	static void Register(ExtensionLoader &loader) {
-		FunctionBuilder::RegisterScalar(loader, "ST_GeomFromEWKT", [](ScalarFunctionBuilder &func) {
-			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
-				variant.AddParameter("ewkt", LogicalType::VARCHAR);
-				variant.SetReturnType(LogicalType::GEOMETRY());
-				variant.SetFunction(Execute);
-				variant.SetInit(LocalState::Init);
-				variant.CanThrowErrors();
-			});
-			func.SetDescription("Parses an Extended WKT (EWKT) string, optionally with SRID prefix");
-			func.SetExample("SELECT ST_AsText(ST_GeomFromEWKT('SRID=4326;POINT(1 2)'))");
-		});
-	}
-};
-
-//======================================================================================================================
-// ST_AsEWKB (alias for ST_AsWKB — DuckDB doesn't differentiate WKB and EWKB)
-//======================================================================================================================
-struct ST_AsEWKB {
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
-		return Geometry::ToBinary(args.data[0], result);
-	}
-
-	static void Register(ExtensionLoader &loader) {
-		FunctionBuilder::RegisterScalar(loader, "ST_AsEWKB", [](ScalarFunctionBuilder &func) {
-			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
-				variant.AddParameter("geom", LogicalType::GEOMETRY());
-				variant.SetReturnType(LogicalType::BLOB);
-				variant.SetFunction(Execute);
-			});
-			func.SetDescription("Returns the geometry as EWKB (Extended Well-Known Binary). Alias for ST_AsWKB.");
-			func.SetExample("SELECT ST_AsEWKB(ST_Point(1, 2))::BLOB");
-			func.SetTag("ext", "spatial");
-			func.SetTag("category", "conversion");
-		});
-	}
-};
-
-//======================================================================================================================
-// ST_GeomFromEWKB (alias for GEOMETRY cast from WKB_BLOB)
-//======================================================================================================================
-struct ST_GeomFromEWKB {
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
-		auto count = args.size();
-		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, count, [&](const string_t &blob) {
-			auto &lstate = LocalState::ResetAndGet(state);
-			// Parse WKB/EWKB using SGL's wkb_reader
-			sgl::geometry geom;
-			auto &alloc = lstate.GetAllocator();
-			sgl::wkb_reader reader(alloc);
-			if (!reader.try_parse(geom, blob.GetData(), blob.GetSize())) {
-				throw InvalidInputException("ST_GeomFromEWKB: invalid WKB/EWKB data");
-			}
-			return lstate.Serialize(result, geom);
-		});
-	}
-
-	static void Register(ExtensionLoader &loader) {
-		FunctionBuilder::RegisterScalar(loader, "ST_GeomFromEWKB", [](ScalarFunctionBuilder &func) {
-			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
-				variant.AddParameter("ewkb", LogicalType::BLOB);
-				variant.SetReturnType(LogicalType::GEOMETRY());
-				variant.SetFunction(Execute);
-				variant.SetInit(LocalState::Init);
-				variant.CanThrowErrors();
-			});
-			func.SetDescription("Creates a geometry from EWKB (Extended Well-Known Binary) data");
-			func.SetExample("SELECT ST_AsText(ST_GeomFromEWKB(ST_AsEWKB(ST_Point(1, 2))))");
-			func.SetTag("ext", "spatial");
-			func.SetTag("category", "conversion");
-		});
-	}
-};
-
-//======================================================================================================================
 // ST_Project — geodesic point projection using haversine forward problem
 //======================================================================================================================
 struct ST_Project_Func {
@@ -11751,63 +11558,6 @@ struct ST_Project_Func {
 			});
 			func.SetDescription("Projects a point along the geodesic by a distance (meters) and azimuth (radians)");
 			func.SetExample("SELECT ST_AsText(ST_Project(ST_Point(0, 0), 100000, 0))");
-		});
-	}
-};
-
-//======================================================================================================================
-// ST_SRID — returns 0 (no per-geometry SRID in DuckDB), for PostGIS compat
-//======================================================================================================================
-struct ST_SRID_Func {
-
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
-		auto count = args.size();
-		// DuckDB doesn't store integer SRIDs per-geometry. Return 0 for all geometries
-		// (PostGIS default for geometries without explicit SRID).
-		UnaryExecutor::Execute<string_t, int32_t>(args.data[0], result, count, [&](const string_t &) {
-			return 0;
-		});
-	}
-
-	static void Register(ExtensionLoader &loader) {
-		FunctionBuilder::RegisterScalar(loader, "ST_SRID", [](ScalarFunctionBuilder &func) {
-			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
-				variant.AddParameter("geom", LogicalType::GEOMETRY());
-				variant.SetReturnType(LogicalType::INTEGER);
-				variant.SetFunction(Execute);
-			});
-			func.SetDescription("Returns the SRID of a geometry (always 0 — DuckDB uses CRS type metadata instead of per-geometry SRIDs)");
-			func.SetExample("SELECT ST_SRID(ST_Point(1, 2))");
-		});
-	}
-};
-
-//======================================================================================================================
-// ST_SetSRID — returns geometry unchanged (SRID is type-level metadata in DuckDB)
-//======================================================================================================================
-struct ST_SetSRID_Func {
-
-	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
-		auto count = args.size();
-		// DuckDB stores CRS at the type level, not per-geometry.
-		// ST_SetSRID is a no-op that returns the geometry unchanged,
-		// providing PostGIS API compatibility.
-		BinaryExecutor::Execute<string_t, int32_t, string_t>(
-		    args.data[0], args.data[1], result, count, [&](const string_t &blob, int32_t) {
-			    return StringVector::AddStringOrBlob(result, blob);
-		    });
-	}
-
-	static void Register(ExtensionLoader &loader) {
-		FunctionBuilder::RegisterScalar(loader, "ST_SetSRID", [](ScalarFunctionBuilder &func) {
-			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
-				variant.AddParameter("geom", LogicalType::GEOMETRY());
-				variant.AddParameter("srid", LogicalType::INTEGER);
-				variant.SetReturnType(LogicalType::GEOMETRY());
-				variant.SetFunction(Execute);
-			});
-			func.SetDescription("Sets the SRID of a geometry (no-op in DuckDB — use GEOMETRY('EPSG:XXXX') type for CRS)");
-			func.SetExample("SELECT ST_SetSRID(ST_Point(1, 2), 4326)");
 		});
 	}
 };
@@ -12311,7 +12061,6 @@ void RegisterSpatialScalarFunctions(ExtensionLoader &loader) {
 	ST_Scroll::Register(loader);
 	ST_QuantizeCoordinates::Register(loader);
 	ST_MemSize::Register(loader);
-	ST_Polygon_Func::Register(loader);
 	ST_LineFromMultiPoint::Register(loader);
 	ST_3DLength::Register(loader);
 	ST_3DPerimeter::Register(loader);
@@ -12329,13 +12078,7 @@ void RegisterSpatialScalarFunctions(ExtensionLoader &loader) {
 	ST_3DLineInterpolatePoint::Register(loader);
 	ST_GeomFromGeoHash_Func::Register(loader);
 	ST_Box2dFromGeoHash::Register(loader);
-	ST_AsEWKT::Register(loader);
-	ST_GeomFromEWKT::Register(loader);
-	ST_AsEWKB::Register(loader);
-	ST_GeomFromEWKB::Register(loader);
 	ST_Project_Func::Register(loader);
-	ST_SRID_Func::Register(loader);
-	ST_SetSRID_Func::Register(loader);
 	ST_AsTWKB_Func::Register(loader);
 	ST_GeomFromTWKB_Func::Register(loader);
 	ST_GeoHash_Func::Register(loader);

@@ -1,8 +1,8 @@
 # DuckDB Spatial Extension (Enhanced Fork)
 
-This fork of [duckdb/duckdb-spatial](https://github.com/duckdb/duckdb-spatial) extends the DuckDB spatial extension with **220 additional functions**, a **native KNN spatial join operator**, a **GEOG type**, a **RASTER type**, **PostGIS-style topologies**, **pgRouting-style network routing**, **DBSCAN/K-means clustering**, and significant **performance optimizations** to the spatial join pipeline. The goal is PostGIS parity and SedonaDB-competitive performance within DuckDB's analytical engine.
+This fork of [duckdb/duckdb-spatial](https://github.com/duckdb/duckdb-spatial) extends the DuckDB spatial extension with **213 additional functions**, a **native KNN spatial join operator**, a **GEOG type**, a **RASTER type**, **PostGIS-style topologies**, **pgRouting-style network routing**, and significant **performance optimizations** to the spatial join pipeline. The goal is PostGIS parity and SedonaDB-competitive performance within DuckDB's analytical engine.
 
-**386 documented functions** (vs. 166 upstream) | **234 test files / 13259 assertions** | Synced with upstream v2.0-cyanoptera
+**381 documented functions** (vs. 166 upstream) | **235 test files / 13267 assertions** | Synced with upstream v2.0-cyanoptera
 
 **Table of contents**
 - [What's new in this fork](#whats-new-in-this-fork)
@@ -104,7 +104,7 @@ SELECT * FROM pgr_TSP((SELECT * FROM pgr_dijkstraCostMatrix((SELECT * FROM edges
 
 ## Spatial Clustering
 
-PostGIS-compatible window functions for density-based and partition-based clustering.
+`ST_ClusterDBSCAN` and `ST_ClusterKMeans` are upstream's window functions.
 
 ```sql
 -- DBSCAN: find clusters with eps=100m, minpoints=5
@@ -116,7 +116,7 @@ SELECT *, ST_ClusterKMeans(geom, 10) OVER (ORDER BY id) AS cluster_id
 FROM sensor_locations;
 ```
 
-Also includes `ST_ClusterIntersecting` and `ST_ClusterWithin` aggregate functions.
+The fork adds the `ST_ClusterIntersecting` and `ST_ClusterWithin` aggregate functions.
 
 ## Performance
 
@@ -129,27 +129,263 @@ Measured against PostGIS 3.5 / pgRouting 4.0 on the same machine and the same da
 - **Hot-path cleanups**: `pow(x,2)` replaced with `x*x` across all distance kernels, `std::sort` replaces hand-rolled quicksort in FlatRTree
 - **Robust predicates**: Shewchuk adaptive-precision `orient2d` for exact point-in-polygon and intersection tests near collinear edges
 
-## 220 New Functions (PostGIS parity)
+## Functions added to upstream
 
-| Category | Functions |
+The fork only adds what upstream spatial and DuckDB do not provide. A function is kept when no upstream or DuckDB function computes the same thing, or when a measurement shows an upstream bug, a clear performance gain or results of unacceptable quality. The list below gives the reason for each one.
+
+Functions of earlier versions of the fork that upstream or DuckDB provide since v2.0, with the call that replaces them. Their results were compared on 398 000 building footprints and points and on edge cases (empty, Z, M, collections): identical in every case.
+
+| Removed | Use instead |
 |---|---|
-| **Serialization** (16) | `ST_AsGML`, `ST_GeomFromGML`, `ST_AsKML`, `ST_GeomFromKML`, `ST_AsEWKB`, `ST_AsEWKT`, `ST_AsTWKB`, `ST_GeomFromEWKB`, `ST_GeomFromEWKT`, `ST_GeomFromTWKB`, `ST_AsEncodedPolyline`, `ST_LineFromEncodedPolyline`, `ST_GeoHash`, `ST_GeomFromGeoHash`, `ST_Box2dFromGeoHash`, `ST_AsLatLonText` |
-| **GEOS Construction** (13) | `ST_ClipByBox2D`, `ST_DelaunayTriangles`, `ST_GeometricMedian`, `ST_LargestEmptyCircle`, `ST_MinimumBoundingCircle`, `ST_MinimumClearance`, `ST_MinimumClearanceLine`, `ST_OffsetCurve`, `ST_SharedPaths`, `ST_SimplifyPolygonHull`, `ST_Split`, `ST_TriangulatePolygon`, `ST_UnaryUnion` |
-| **Geometry Editing** (15) | `ST_AddPoint`, `ST_SetPoint`, `ST_RemovePoint`, `ST_ChaikinSmoothing`, `ST_ForceCollection`, `ST_QuantizeCoordinates`, `ST_Scroll`, `ST_Segmentize`, `ST_SetSRID`, `ST_ShiftLongitude`, `ST_SimplifyVW`, `ST_SwapOrdinates`, `ST_ForcePolygonCCW`, `ST_ForcePolygonCW`, `ST_SnapToGrid` |
-| **Accessors** (11) | `ST_BoundingDiagonal`, `ST_GeometryN`, `ST_IsCollection`, `ST_IsPolygonCCW`, `ST_IsPolygonCW`, `ST_IsValidDetail`, `ST_IsValidReason`, `ST_MemSize`, `ST_NRings`, `ST_SRID`, `ST_Summary` |
-| **3D / Measure** (7) | `ST_3DDistance`, `ST_3DLength`, `ST_3DLineInterpolatePoint`, `ST_3DPerimeter`, `ST_AddMeasure`, `ST_CoordDim`, `ST_NDims` |
-| **Distance / Proximity** (5) | `ST_Angle`, `ST_FrechetDistance`, `ST_HausdorffDistance`, `ST_LongestLine`, `ST_MaxDistance` |
-| **Clustering** (4) | `ST_ClusterDBSCAN`, `ST_ClusterIntersecting`, `ST_ClusterKMeans`, `ST_ClusterWithin` |
-| **Predicates** (4) | `ST_DFullyWithin`, `ST_OrderingEquals`, `ST_Relate`, `ST_RelateMatch` |
-| **Decomposition** (3) | `ST_DumpPoints`, `ST_DumpRings`, `ST_DumpSegments` |
-| **Constructors** (2) | `ST_LineFromMultiPoint`, `ST_Polygon` |
-| **Grids** (2) | `ST_HexagonGrid`, `ST_SquareGrid` |
-| **Routing** (23) | see [Network routing](#network-routing) |
-| **Raster** (78 names, 94 functions with overloads of existing names) | see [Raster](#raster) |
-| **Topology** (30) | see [Topology](#topology) |
-| **Geography** (5) | `ST_GeogPoint`, `ST_GeogFromText`, `ST_GeogFromWKT`, `ST_GeographyFromText`, `ST_GeogFromWKB` |
-| **Geodesic** (1) | `ST_Project` |
-| **Join** (1) | `ST_KNN` |
+| `ST_AsEWKB(geom)` | `ST_AsWKB(geom)` |
+| `ST_AsEWKT(geom)` | `ST_AsText(geom)` (it never wrote an `SRID=` prefix) |
+| `ST_GeomFromEWKB(blob)` | `ST_GeomFromWKB(blob)`, which reads EWKB with an SRID |
+| `ST_GeomFromEWKT(text)` | `ST_GeomFromText(text)`, which reads an `SRID=...;` prefix |
+| `ST_Polygon(linestring)` | `ST_MakePolygon(linestring)` |
+| `ST_NDims(geom)` | `ST_Dimension(geom)`, which it returned. The number of coordinates, as in PostGIS `ST_NDims`, is `ST_CoordDim(geom)` |
+| `ST_SnapToGrid(geom, size)` | `ST_ReducePrecision(geom, size)` |
+| `ST_SRID(geom)` | `ST_CRS(geom)`: it returned 0 for every geometry |
+| `ST_SetSRID(geom, srid)` | `ST_SetCRS(geom, 'EPSG:' || srid)`: it returned the geometry unchanged |
+| `ST_ClusterDBSCAN`, `ST_ClusterKMeans` | upstream's functions of the same name. DBSCAN gives the same clusters (border points within reach of two clusters may go to either), K-means starts from k-means++ and can converge to other clusters |
+
+The `RASTER` overloads of `ST_Polygon`, `ST_SnapToGrid`, `ST_SRID` and `ST_SetSRID` are kept.
+
+Kept functions and overloads:
+
+- `CreateTopology`: PostGIS topology function
+- `DropTopology`: PostGIS topology function
+- `GetEdgeByPoint`: PostGIS topology function
+- `GetFaceByPoint`: PostGIS topology function
+- `GetNodeByPoint`: PostGIS topology function
+- `GetNodeEdges`: PostGIS topology function
+- `GetRingEdges`: PostGIS topology function
+- `GetTopologyID`: PostGIS topology function
+- `GetTopologyName`: PostGIS topology function
+- `GetTopologySRID`: PostGIS topology function
+- `pgr_analyzeGraph`: pgRouting function
+- `pgr_aStar`: pgRouting function
+- `pgr_bdAstar`: pgRouting function
+- `pgr_bdDijkstra`: pgRouting function
+- `pgr_boykovKolmogorov`: pgRouting function
+- `pgr_connectedComponents`: pgRouting function
+- `pgr_createTopology`: pgRouting function
+- `pgr_dijkstra`: pgRouting function
+- `pgr_dijkstraCost`: pgRouting function
+- `pgr_dijkstraCostMatrix`: pgRouting function
+- `pgr_drivingDistance`: pgRouting function
+- `pgr_edmondsKarp`: pgRouting function
+- `pgr_extractVertices`: pgRouting function
+- `pgr_KSP`: pgRouting function
+- `pgr_maxFlow`: pgRouting function
+- `pgr_maxFlowMinCost`: pgRouting function
+- `pgr_minCostMaxFlow`: pgRouting function
+- `pgr_nodeNetwork`: pgRouting function
+- `pgr_pushRelabel`: pgRouting function
+- `pgr_strongComponents`: pgRouting function
+- `pgr_trsp`: pgRouting function
+- `pgr_TSP`: pgRouting function
+- `pgr_withPoints`: pgRouting function
+- `ST_3DDistance`: no upstream or DuckDB function computes it
+- `ST_3DLength`: no upstream or DuckDB function computes it
+- `ST_3DLineInterpolatePoint`: no upstream or DuckDB function computes it
+- `ST_3DPerimeter`: no upstream or DuckDB function computes it
+- `ST_AddBand`: RASTER type
+- `ST_AddEdgeModFace`: PostGIS topology function
+- `ST_AddEdgeNewFaces`: PostGIS topology function
+- `ST_AddIsoEdge`: PostGIS topology function
+- `ST_AddIsoNode`: PostGIS topology function
+- `ST_AddMeasure`: no upstream or DuckDB function computes it
+- `ST_AddPoint`: no upstream or DuckDB function computes it
+- `ST_Angle`: no upstream or DuckDB function computes it
+- `ST_AsEncodedPolyline`: no upstream or DuckDB function computes it
+- `ST_AsGDALRaster`: RASTER type
+- `ST_AsGML`: no upstream or DuckDB function computes it
+- `ST_AsKML`: no upstream or DuckDB function computes it
+- `ST_AsLatLonText`: no upstream or DuckDB function computes it
+- `ST_Aspect`: RASTER type
+- `ST_AsRaster`: RASTER type
+- `ST_AsTIFF`: RASTER type
+- `ST_AsTWKB`: no upstream or DuckDB function computes it
+- `ST_Band`: RASTER type
+- `ST_BandIsNoData`: RASTER type
+- `ST_BandMetaData`: RASTER type
+- `ST_BandNoDataValue`: RASTER type
+- `ST_BandPixelType`: RASTER type
+- `ST_BoundingDiagonal`: no upstream or DuckDB function computes it
+- `ST_Box2dFromGeoHash`: no upstream or DuckDB function computes it
+- `ST_ChaikinSmoothing`: no upstream or DuckDB function computes it
+- `ST_ChangeEdgeGeom`: PostGIS topology function
+- `ST_Clip`: RASTER type
+- `ST_ClipByBox2D`: same result as `ST_Intersection` with the box, 1.9x faster (one thread, 398k buildings)
+- `ST_ClusterIntersecting`: aggregate returning the clusters as collections; upstream only has window functions
+- `ST_ClusterWithin`: aggregate returning the clusters as collections; upstream only has window functions
+- `ST_ColorMap`: RASTER type
+- `ST_Contour`: RASTER type
+- `ST_CoordDim`: upstream only has `ST_ZMFlag`, a flag rather than the number of coordinates
+- `ST_Count`: RASTER type
+- `ST_CreateTopoGeo`: PostGIS topology function
+- `ST_DelaunayTriangles`: no upstream or DuckDB function computes it
+- `ST_DFullyWithin`: no upstream or DuckDB function computes it
+- `ST_DumpAsPolygons`: RASTER type
+- `ST_DumpPoints`: upstream `ST_Points` returns one MULTIPOINT, not one row per vertex with its path
+- `ST_DumpRings`: no upstream or DuckDB function computes it
+- `ST_DumpSegments`: no upstream or DuckDB function computes it
+- `ST_DumpValues`: RASTER type
+- `ST_ForceCollection`: no upstream or DuckDB function computes it
+- `ST_ForcePolygonCCW`: no upstream or DuckDB function computes it
+- `ST_ForcePolygonCW`: no upstream or DuckDB function computes it
+- `ST_FrechetDistance`: no upstream or DuckDB function computes it
+- `ST_FromGDALRaster`: RASTER type
+- `ST_GDALDrivers`: RASTER type
+- `ST_GeogFromText`: GEOG type
+- `ST_GeogFromWKB`: GEOG type
+- `ST_GeogFromWKT`: GEOG type
+- `ST_GeogPoint`: GEOG type
+- `ST_GeographyFromText`: GEOG type
+- `ST_GeoHash`: no upstream or DuckDB function computes it
+- `ST_GeometricMedian`: no upstream or DuckDB function computes it
+- `ST_GeometryN`: upstream has no indexed access to the parts of a collection (only `ST_Dump`)
+- `ST_GeomFromGeoHash`: no upstream or DuckDB function computes it
+- `ST_GeomFromGML`: no upstream or DuckDB function computes it
+- `ST_GeomFromKML`: no upstream or DuckDB function computes it
+- `ST_GeomFromTWKB`: no upstream or DuckDB function computes it
+- `ST_GeoReference`: RASTER type
+- `ST_GetFaceEdges`: PostGIS topology function
+- `ST_GetFaceGeometry`: PostGIS topology function
+- `ST_Grayscale`: RASTER type
+- `ST_HasNoBand`: RASTER type
+- `ST_HausdorffDistance`: no upstream or DuckDB function computes it
+- `ST_Height`: RASTER type
+- `ST_HexagonGrid`: upstream `ST_AsGrid` returns cell centres, not cell polygons
+- `ST_Hillshade`: RASTER type
+- `ST_Histogram`: RASTER type
+- `ST_InterpolateRaster`: RASTER type
+- `ST_IsCollection`: no upstream or DuckDB function computes it
+- `ST_IsPolygonCCW`: no upstream or DuckDB function computes it
+- `ST_IsPolygonCW`: no upstream or DuckDB function computes it
+- `ST_IsValidDetail`: no upstream or DuckDB function computes it
+- `ST_IsValidReason`: no upstream or DuckDB function computes it
+- `ST_KNN`: k-nearest-neighbour join operator
+- `ST_LargestEmptyCircle`: no upstream or DuckDB function computes it
+- `ST_LineFromEncodedPolyline`: no upstream or DuckDB function computes it
+- `ST_LineFromMultiPoint`: upstream `ST_MakeLine` takes a list of points, not a MULTIPOINT
+- `ST_LongestLine`: no upstream or DuckDB function computes it
+- `ST_MakeEmptyRaster`: RASTER type
+- `ST_MapAlgebra`: RASTER type
+- `ST_MaxDistance`: no upstream or DuckDB function computes it
+- `ST_MemSize`: no upstream or DuckDB function computes it
+- `ST_MetaData`: RASTER type
+- `ST_MinConvexHull`: RASTER type
+- `ST_MinimumBoundingCircle`: no upstream or DuckDB function computes it
+- `ST_MinimumClearance`: no upstream or DuckDB function computes it
+- `ST_MinimumClearanceLine`: no upstream or DuckDB function computes it
+- `ST_ModEdgeHeal`: PostGIS topology function
+- `ST_ModEdgeSplit`: PostGIS topology function
+- `ST_MoveIsoNode`: PostGIS topology function
+- `ST_NearestValue`: RASTER type
+- `ST_NewEdgeHeal`: PostGIS topology function
+- `ST_NewEdgesSplit`: PostGIS topology function
+- `ST_NotSameAlignmentReason`: RASTER type
+- `ST_NRings`: upstream only counts interior rings (`ST_NumInteriorRings`)
+- `ST_NumBands`: RASTER type
+- `ST_OffsetCurve`: no upstream or DuckDB function computes it
+- `ST_OrderingEquals`: no upstream or DuckDB function computes it
+- `ST_PixelAsCentroid`: RASTER type
+- `ST_PixelAsCentroids`: RASTER type
+- `ST_PixelAsPoint`: RASTER type
+- `ST_PixelAsPoints`: RASTER type
+- `ST_PixelAsPolygon`: RASTER type
+- `ST_PixelAsPolygons`: RASTER type
+- `ST_PixelHeight`: RASTER type
+- `ST_PixelWidth`: RASTER type
+- `ST_Polygon`: RASTER type
+- `ST_Project`: no upstream or DuckDB function computes it (GEOMETRY and GEOG overloads)
+- `ST_Quantile`: RASTER type
+- `ST_QuantizeCoordinates`: rounds to decimal places; differs from `ST_ReducePrecision` on every geometry tested
+- `ST_RasterToWorldCoord`: RASTER type
+- `ST_RasterToWorldCoordX`: RASTER type
+- `ST_RasterToWorldCoordY`: RASTER type
+- `ST_ReadRaster`: RASTER type
+- `ST_Reclass`: RASTER type
+- `ST_Relate`: no upstream or DuckDB function computes it
+- `ST_RelateMatch`: no upstream or DuckDB function computes it
+- `ST_RemEdgeModFace`: PostGIS topology function
+- `ST_RemEdgeNewFace`: PostGIS topology function
+- `ST_RemoveIsoEdge`: PostGIS topology function
+- `ST_RemoveIsoNode`: PostGIS topology function
+- `ST_RemovePoint`: no upstream or DuckDB function computes it
+- `ST_Resample`: RASTER type
+- `ST_Rescale`: RASTER type
+- `ST_Resize`: RASTER type
+- `ST_Reskew`: RASTER type
+- `ST_Retile`: RASTER type
+- `ST_Rotation`: RASTER type
+- `ST_Roughness`: RASTER type
+- `ST_SameAlignment`: RASTER type
+- `ST_ScaleX`: RASTER type
+- `ST_ScaleY`: RASTER type
+- `ST_Scroll`: no upstream or DuckDB function computes it
+- `ST_Segmentize`: no upstream or DuckDB function computes it (GEOMETRY and GEOG overloads)
+- `ST_SetBandNoDataValue`: RASTER type
+- `ST_SetGeoReference`: RASTER type
+- `ST_SetPoint`: no upstream or DuckDB function computes it
+- `ST_SetScale`: RASTER type
+- `ST_SetSkew`: RASTER type
+- `ST_SetSRID`: RASTER type
+- `ST_SetUpperLeft`: RASTER type
+- `ST_SetValue`: RASTER type
+- `ST_SharedPaths`: no upstream or DuckDB function computes it
+- `ST_ShiftLongitude`: no upstream or DuckDB function computes it
+- `ST_SimplifyPolygonHull`: no upstream or DuckDB function computes it
+- `ST_SimplifyVW`: no upstream or DuckDB function computes it
+- `ST_SkewX`: RASTER type
+- `ST_SkewY`: RASTER type
+- `ST_Slope`: RASTER type
+- `ST_SnapToGrid`: RASTER type
+- `ST_Split`: no upstream or DuckDB function computes it
+- `ST_SquareGrid`: upstream `ST_AsGrid` returns cell centres, not cell polygons
+- `ST_SRID`: RASTER type
+- `ST_Summary`: no upstream or DuckDB function computes it
+- `ST_SummaryStats`: RASTER type
+- `ST_SummaryStatsAgg`: RASTER type
+- `ST_SwapOrdinates`: `ST_FlipCoordinates` only swaps x and y; this also swaps z and m
+- `ST_Tile`: RASTER type
+- `ST_TPI`: RASTER type
+- `ST_TRI`: RASTER type
+- `ST_TriangulatePolygon`: no upstream or DuckDB function computes it
+- `ST_UnaryUnion`: upstream only has the binary `ST_Union` and the aggregates
+- `ST_UpperLeftX`: RASTER type
+- `ST_UpperLeftY`: RASTER type
+- `ST_Value`: RASTER type
+- `ST_ValueCount`: RASTER type
+- `ST_Width`: RASTER type
+- `ST_WorldToRasterCoord`: RASTER type
+- `ST_WorldToRasterCoordX`: RASTER type
+- `ST_WorldToRasterCoordY`: RASTER type
+- `TopoElementArray_Agg`: PostGIS topology function
+- `TopologySummary`: PostGIS topology function
+- `ValidateTopology`: PostGIS topology function
+- `ST_Area` (GEOG overloads): GEOG type
+- `st_astext` (GEOG overloads): GEOG type
+- `st_aswkb` (GEOG overloads): GEOG type
+- `ST_Azimuth` (GEOG overloads): GEOG type
+- `ST_Buffer` (GEOG overloads): GEOG type
+- `ST_Contains` (RASTER overloads): RASTER type
+- `ST_ConvexHull` (RASTER overloads): RASTER type
+- `st_crs` (RASTER overloads): RASTER type
+- `ST_Distance` (GEOG overloads): GEOG type
+- `ST_DWithin` (GEOG overloads): GEOG type
+- `ST_Envelope` (RASTER overloads): RASTER type
+- `ST_Intersection` (RASTER overloads): RASTER type
+- `ST_Intersects` (GEOG, RASTER overloads): GEOG type and RASTER type
+- `ST_Length` (GEOG overloads): GEOG type
+- `ST_Overlaps` (RASTER overloads): RASTER type
+- `ST_Perimeter` (GEOG overloads): GEOG type
+- `st_setcrs` (RASTER overloads): RASTER type
+- `ST_Touches` (RASTER overloads): RASTER type
+- `ST_Transform` (RASTER overloads): RASTER type
+- `ST_Union_Agg` (RASTER overloads): RASTER type
+- `ST_Within` (RASTER overloads): RASTER type
 
 ## Backward Compatibility
 
