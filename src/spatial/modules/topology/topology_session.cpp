@@ -44,7 +44,7 @@ static const char *const EDGE_COLUMNS =
 
 TopoSession::TopoSession(ClientContext &context_p, bool write)
     : context(context_p), con(*context_p.db), arena(BufferAllocator::Get(context_p)) {
-	catalog = DatabaseManager::GetDefaultDatabase(context);
+	catalog = DatabaseManager::GetDefaultDatabase(context).GetIdentifierName();
 	ctx = GEOS_init_r();
 	GEOSContext_setErrorMessageHandler_r(
 	    ctx, [](const char *message, void *) { throw InvalidInputException(message); }, nullptr);
@@ -79,7 +79,7 @@ void TopoSession::CheckCallerTransaction() const {
 	if (context.transaction.IsAutoCommit()) {
 		return;
 	}
-	auto &transaction = Transaction::Get(context, Catalog::GetCatalog(context, catalog));
+	auto &transaction = Transaction::Get(context, Catalog::GetCatalog(context, Identifier(catalog)));
 	if (transaction.IsDuckTransaction() && transaction.Cast<DuckTransaction>().ChangesMade()) {
 		throw TransactionException(
 		    "Topology editing functions run in their own transaction and cannot see the uncommitted changes of the "
@@ -116,7 +116,10 @@ unique_ptr<QueryResult> TopoSession::Query(const string &sql, vector<Value> para
 		}
 		entry = statements.emplace(sql, std::move(prepared)).first;
 	}
-	auto result = entry->second->Execute(params, false);
+	auto result = entry->second->Execute(params);
+	if (!result->HasError()) {
+		result->Complete();
+	}
 	if (result->HasError()) {
 		Rethrow(result->GetErrorObject());
 	}

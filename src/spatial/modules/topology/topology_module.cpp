@@ -1,5 +1,7 @@
 #include "spatial/modules/topology/topology_module.hpp"
 
+#include "duckdb/common/vector/array_vector.hpp"
+#include "duckdb/common/vector/list_vector.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/geometry_crs.hpp"
 #include "duckdb/function/table_function.hpp"
@@ -75,7 +77,9 @@ unique_ptr<FunctionData> Bind(ClientContext &context, TableFunctionBindInput &in
 		result->call.crs.push_back(std::move(crs));
 	}
 	return_types = info.types;
-	names = info.names;
+	for (auto &column_name : info.names) {
+		names.emplace_back(column_name);
+	}
 	return std::move(result);
 }
 
@@ -145,14 +149,14 @@ void ExecCreateTopology(ClientContext &context, const TopoCall &call, TopoRows &
 	auto schemas =
 	    session.Query("SELECT count(*) FROM duckdb_schemas() WHERE database_name = ? AND lower(schema_name) = lower(?)",
 	                  {Value(session.Catalog()), Value(name)});
-	if (schemas->GetValue(0, 0).GetValue<int64_t>() > 0) {
+	if (schemas->Collection().GetValue(0, 0).GetValue<int64_t>() > 0) {
 		throw InvalidInputException("Schema \"%s\" already exists", name);
 	}
 
 	const auto catalog = KeywordHelper::WriteQuoted(session.Catalog(), '"');
 	const auto sequence = KeywordHelper::WriteQuoted(catalog + ".topology.topology_id_seq", '\'');
 	auto id_result = session.Query("SELECT nextval(" + sequence + ")");
-	const auto id = id_result->GetValue(0, 0).GetValue<int32_t>();
+	const auto id = id_result->Collection().GetValue(0, 0).GetValue<int32_t>();
 	session.Query("INSERT INTO " + session.Registry() +
 	                  "(id, name, srid, \"precision\", hasz) VALUES (?, ?, ?, ?, false)",
 	              {Value::INTEGER(id), Value(name), Value::INTEGER(srid), Value::DOUBLE(precision)});
@@ -237,8 +241,8 @@ void ExecTopologySummary(ClientContext &context, const TopoCall &call, TopoRows 
 	    "Topology %s (id %d, SRID %d, precision %s)\n%lld nodes, %lld edges, %lld faces, 0 topogeoms "
 	    "in 0 layers",
 	    info.name, info.id, info.srid, topology::FormatNumber(info.precision),
-	    counts->GetValue(0, 0).GetValue<int64_t>(), counts->GetValue(1, 0).GetValue<int64_t>(),
-	    counts->GetValue(2, 0).GetValue<int64_t>());
+	    counts->Collection().GetValue(0, 0).GetValue<int64_t>(), counts->Collection().GetValue(1, 0).GetValue<int64_t>(),
+	    counts->Collection().GetValue(2, 0).GetValue<int64_t>());
 	rows.push_back({Value(summary)});
 }
 
@@ -471,13 +475,13 @@ struct TopoElementAggFunction {
 		}
 	}
 
-	static void Finalize(Vector &state_vector, AggregateInputData &, Vector &result, idx_t count, idx_t offset) {
+	static void Finalize(Vector &state_vector, AggregateFinalizeInputData &, Vector &result, idx_t count, idx_t offset) {
 		UnifiedVectorFormat state_format;
 		state_vector.ToUnifiedFormat(count, state_format);
 		const auto states = UnifiedVectorFormat::GetData<TopoElementAggState *>(state_format);
 
-		const auto entries = FlatVector::GetData<list_entry_t>(result);
-		auto &validity = FlatVector::Validity(result);
+		const auto entries = FlatVector::GetDataMutable<list_entry_t>(result);
+		auto &validity = FlatVector::ValidityMutable(result);
 		auto total = ListVector::GetListSize(result);
 		for (idx_t i = 0; i < count; i++) {
 			auto &state = *states[state_format.sel->get_index(i)];
@@ -489,12 +493,12 @@ struct TopoElementAggFunction {
 			const auto length = state.elements->size();
 			ListVector::Reserve(result, total + length);
 			auto &arrays = ListVector::GetEntry(result);
-			const auto values = FlatVector::GetData<int32_t>(ArrayVector::GetEntry(arrays));
+			const auto values = FlatVector::GetDataMutable<int32_t>(ArrayVector::GetEntry(arrays));
 			for (idx_t k = 0; k < length; k++) {
 				values[(total + k) * 2] = (*state.elements)[k].first;
 				values[(total + k) * 2 + 1] = (*state.elements)[k].second;
 			}
-			entries[row] = list_entry_t {total, length};
+			entries[row] = list_entry_t(total, length);
 			total += length;
 		}
 		ListVector::SetListSize(result, total);

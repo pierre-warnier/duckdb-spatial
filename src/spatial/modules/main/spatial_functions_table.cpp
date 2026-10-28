@@ -755,12 +755,12 @@ struct ST_DumpPoints {
 			auto list_entry = list_entry_t(list_offset, path_size);
 			auto &list_child = ListVector::GetEntry(path_vec);
 			ListVector::Reserve(path_vec, list_offset + path_size);
-			auto child_data = FlatVector::GetData<int32_t>(list_child);
+			auto child_data = FlatVector::GetDataMutable<int32_t>(list_child);
 			for (idx_t j = 0; j < path_size; j++) {
 				child_data[list_offset + j] = path[j];
 			}
 			ListVector::SetListSize(path_vec, list_offset + path_size);
-			FlatVector::GetData<list_entry_t>(path_vec)[i] = list_entry;
+			FlatVector::GetDataMutable<list_entry_t>(path_vec)[i] = list_entry;
 		}
 
 		state.current_idx += chunk_size;

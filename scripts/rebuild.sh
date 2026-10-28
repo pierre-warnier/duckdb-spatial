@@ -67,6 +67,8 @@ else
 	VCPKG_FLAGS=""
 fi
 
+# A shallow submodule does not let DuckDB derive its version from git, so name it
+export OVERRIDE_GIT_DESCRIBE="$TAG"
 export EXT_FLAGS="${EXT_FLAGS:-} $VCPKG_FLAGS -DCMAKE_C_FLAGS=-march=$MARCH -DCMAKE_CXX_FLAGS=-march=$MARCH"
 GEN=ninja make release
 

@@ -242,10 +242,10 @@ static vector<vector<TopoPoint>> NodeLinework(TopoSession &session, const vector
 void CreateTopoGeo(TopoSession &session, const Value &collection) {
 	auto counts = session.Query("SELECT (SELECT count(*) FROM " + session.Table("node") + "), (SELECT count(*) FROM " +
 	                            session.Table("edge_data") + "), (SELECT count(*) FROM " + session.Table("face") + ")");
-	if (counts->GetValue(0, 0).GetValue<int64_t>() > 0 || counts->GetValue(1, 0).GetValue<int64_t>() > 0) {
+	if (counts->Collection().GetValue(0, 0).GetValue<int64_t>() > 0 || counts->Collection().GetValue(1, 0).GetValue<int64_t>() > 0) {
 		throw InvalidInputException("SQL/MM Spatial exception - non-empty view");
 	}
-	if (counts->GetValue(2, 0).GetValue<int64_t>() != 1) {
+	if (counts->Collection().GetValue(2, 0).GetValue<int64_t>() != 1) {
 		throw InvalidInputException("SQL/MM Spatial exception - non-empty face view");
 	}
 

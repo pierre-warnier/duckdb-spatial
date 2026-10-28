@@ -632,9 +632,9 @@ void DumpValuesExecute(Call &c) {
 	ListVector::Reserve(rows, value_offset + width * height);
 	auto &values = ListVector::GetEntry(rows);
 
-	const auto row_entries = FlatVector::GetData<list_entry_t>(rows);
-	const auto value_data = FlatVector::GetData<double>(values);
-	auto &validity = FlatVector::Validity(values);
+	const auto row_entries = FlatVector::GetDataMutable<list_entry_t>(rows);
+	const auto value_data = FlatVector::GetDataMutable<double>(values);
+	auto &validity = FlatVector::ValidityMutable(values);
 	for (idx_t y = 0; y < height; y++) {
 		row_entries[row_offset + y] = list_entry_t(value_offset + y * width, width);
 		for (idx_t x = 0; x < width; x++) {
@@ -647,7 +647,7 @@ void DumpValuesExecute(Call &c) {
 	}
 	ListVector::SetListSize(rows, value_offset + width * height);
 	ListVector::SetListSize(result, row_offset + height);
-	FlatVector::GetData<list_entry_t>(result)[row] = list_entry_t(row_offset, height);
+	FlatVector::GetDataMutable<list_entry_t>(result)[row] = list_entry_t(row_offset, height);
 }
 
 //======================================================================================================================
