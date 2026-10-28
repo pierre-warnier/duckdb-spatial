@@ -135,7 +135,7 @@ SELECT count(*) FROM (
 statement error
 SELECT ST_ClusterDBSCAN(geom, -1.0, 3) OVER () FROM pts;
 ----
-eps must be >= 0
+eps must be a non-negative number
 
 # ===========================================================================
 # ST_ClusterKMeans
@@ -176,12 +176,12 @@ SELECT count(*) FROM (
 statement error
 SELECT ST_ClusterKMeans(geom, 0) OVER () FROM km_pts;
 ----
-k must be >= 1
+k must be larger than 0
 
 statement error
-SELECT ST_ClusterDBSCAN(geom, 1.0, 0) OVER () FROM pts;
+SELECT ST_ClusterDBSCAN(geom, 1.0, -1) OVER () FROM pts;
 ----
-minpoints must be >= 1
+minpoints must be a non-negative number
 
 # ===========================================================================
 # Larger dataset: 2 well-separated clusters of 50 points each

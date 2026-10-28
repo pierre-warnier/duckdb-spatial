@@ -3126,6 +3126,7 @@ struct ST_Subdivide {
 
 				variant.SetInit(LocalState::Init);
 				variant.SetFunction(Execute);
+				variant.CanThrowErrors();
 			});
 
 			func.SetDescription(
@@ -4136,6 +4137,7 @@ struct ST_IsValidDetail {
 
 				variant.SetFunction(Execute);
 				variant.SetInit(LocalState::Init);
+				variant.CanThrowErrors();
 			});
 			func.SetDescription("Returns a struct with validity info: {valid, reason, location}");
 			func.SetExample("SELECT ST_IsValidDetail(ST_GeomFromText('POLYGON((0 0, 1 1, 1 0, 0 1, 0 0))'))");
@@ -4192,6 +4194,7 @@ struct ST_RelateMatch {
 				variant.AddParameter("pattern", LogicalType::VARCHAR);
 				variant.SetReturnType(LogicalType::BOOLEAN);
 				variant.SetFunction(Execute);
+				variant.CanThrowErrors();
 			});
 			func.SetDescription("Tests if a DE-9IM matrix string matches a DE-9IM pattern");
 			func.SetExample("SELECT ST_RelateMatch('FF2FF1FF2', 'FF*FF****')");
@@ -4262,6 +4265,7 @@ struct ST_Split {
 				variant.SetReturnType(LogicalType::GEOMETRY());
 				variant.SetFunction(Execute);
 				variant.SetInit(LocalState::Init);
+				variant.CanThrowErrors();
 			});
 			func.SetDescription("Splits a geometry by another geometry, returning a geometry collection of the pieces");
 			func.SetExample("SELECT ST_AsText(ST_Split(ST_GeomFromText('LINESTRING(0 0, 10 0)'), ST_Point(5, 0)))");
@@ -5008,6 +5012,7 @@ struct ST_CoordDim_GEOS {
 			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
 				v.AddParameter("geom", LogicalType::GEOMETRY()); v.SetReturnType(LogicalType::INTEGER);
 				v.SetInit(LocalState::Init); v.SetFunction(Execute);
+				v.CanThrowErrors();
 			});
 			func.SetDescription("Returns the coordinate dimension of a geometry"); func.SetTag("ext", "spatial"); func.SetTag("category", "property");
 		});
@@ -5028,6 +5033,7 @@ struct ST_NDims_GEOS {
 			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
 				v.AddParameter("geom", LogicalType::GEOMETRY()); v.SetReturnType(LogicalType::INTEGER);
 				v.SetInit(LocalState::Init); v.SetFunction(Execute);
+				v.CanThrowErrors();
 			});
 			func.SetDescription("Returns the topological dimension of a geometry"); func.SetTag("ext", "spatial"); func.SetTag("category", "property");
 		});
@@ -5054,6 +5060,7 @@ struct ST_NRings_GEOS {
 			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
 				v.AddParameter("geom", LogicalType::GEOMETRY()); v.SetReturnType(LogicalType::INTEGER);
 				v.SetInit(LocalState::Init); v.SetFunction(Execute);
+				v.CanThrowErrors();
 			});
 			func.SetDescription("Returns the number of rings in a polygon (exterior + interior)"); func.SetTag("ext", "spatial"); func.SetTag("category", "property");
 		});
@@ -5081,6 +5088,7 @@ struct ST_IsPolygonCCW_GEOS {
 			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
 				v.AddParameter("geom", LogicalType::GEOMETRY()); v.SetReturnType(LogicalType::BOOLEAN);
 				v.SetInit(LocalState::Init); v.SetFunction(Execute);
+				v.CanThrowErrors();
 			});
 			func.SetDescription("Returns true if the exterior ring of a polygon is counter-clockwise"); func.SetTag("ext", "spatial"); func.SetTag("category", "property");
 		});
@@ -5108,6 +5116,7 @@ struct ST_IsPolygonCW_GEOS {
 			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
 				v.AddParameter("geom", LogicalType::GEOMETRY()); v.SetReturnType(LogicalType::BOOLEAN);
 				v.SetInit(LocalState::Init); v.SetFunction(Execute);
+				v.CanThrowErrors();
 			});
 			func.SetDescription("Returns true if the exterior ring of a polygon is clockwise"); func.SetTag("ext", "spatial"); func.SetTag("category", "property");
 		});
@@ -5201,6 +5210,7 @@ struct ST_IsCollection_GEOS {
 			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
 				v.AddParameter("geom", LogicalType::GEOMETRY()); v.SetReturnType(LogicalType::BOOLEAN);
 				v.SetInit(LocalState::Init); v.SetFunction(Execute);
+				v.CanThrowErrors();
 			});
 			func.SetDescription("Returns true if geometry is a Multi* or GeometryCollection type"); func.SetTag("ext", "spatial"); func.SetTag("category", "property");
 		});

@@ -3,6 +3,10 @@
 
 require spatial
 
+# The points are given as (latitude, longitude), the default before v2.0
+statement ok
+SET geometry_always_xy = false;
+
 # ===========================================================================
 # Setup: 10x10 grid of points
 # ===========================================================================
@@ -24,7 +28,7 @@ FROM generate_series(0, 9) r1(x), generate_series(0, 9) r2(y);
 query II
 EXPLAIN SELECT * FROM probe JOIN build ON ST_KNN(probe.geom, build.geom, 3);
 ----
-physical_plan	<REGEX>:.*SPATIAL_KNN_JOIN.*
+physical_plan	<REGEX>:.*Spatial Knn Join.*
 
 # ===========================================================================
 # Count correctness for various k

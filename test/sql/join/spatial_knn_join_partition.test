@@ -29,7 +29,7 @@ SELECT count(DISTINCT cat) FROM build;
 query II
 EXPLAIN SELECT * FROM probe p JOIN build b ON ST_KNN(p.geom, b.geom, 1, b.cat);
 ----
-physical_plan	<REGEX>:.*SPATIAL_KNN_JOIN.*Partition: cat.*
+physical_plan	<REGEX>:.*Spatial Knn Join.*Partition: cat.*
 
 # One row per probe row and partition (7 categories + the NULL partition)
 query I

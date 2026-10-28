@@ -69,7 +69,7 @@ NULL
 
 # Many rows, in parallel: nothing is lost
 query II
-SELECT len(elements), list_sum(list_transform(elements, e -> e[1])) FROM (
+SELECT len(elements), list_sum(list_transform(elements, lambda e: e[1])) FROM (
 	SELECT TopoElementArray_Agg([x::INTEGER, 2]) AS elements FROM range(1, 100001) t(x));
 ----
 100000	5000050000

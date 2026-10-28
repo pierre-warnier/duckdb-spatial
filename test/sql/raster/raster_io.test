@@ -136,13 +136,13 @@ ORDER BY format;
 ----
 COG	true	true	-9999	31370
 GTiff	true	true	-9999	31370
-HFA	true	true	-9999	0
+HFA	true	true	-9999	31370
 
-# Erdas Imagine files do not keep the EPSG code, only the definition of the coordinate system
+# Since GDAL 3.12, Erdas Imagine files keep the coordinate system as it was given
 query I
-SELECT ST_CRS(ST_FromGDALRaster(ST_AsGDALRaster(rast, 'HFA'))) LIKE '%Belgian Lambert 72%' FROM dem;
+SELECT ST_CRS(ST_FromGDALRaster(ST_AsGDALRaster(rast, 'HFA'))) FROM dem;
 ----
-true
+EPSG:31370
 
 query III
 SELECT ST_MetaData(r) = ST_MetaData(rast), ST_DumpValues(r) = ST_DumpValues(rast), octet_length(tif) < octet_length(ST_AsTIFF(rast))

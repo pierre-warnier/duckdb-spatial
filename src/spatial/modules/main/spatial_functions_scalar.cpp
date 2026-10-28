@@ -2344,6 +2344,7 @@ struct ST_Azimuth {
 				variant.AddParameter("target", GeoTypes::POINT_2D());
 				variant.SetReturnType(LogicalType::DOUBLE);
 				variant.SetFunction(ExecutePoint);
+				variant.CanThrowErrors();
 			});
 
 			func.SetDescription(DESCRIPTION);
@@ -5072,6 +5073,7 @@ struct ST_GeomFromWKB {
 
 		        variant.SetInit(LocalState::Init);
 		        variant.SetFunction(ExecuteGeometry);
+		    	variant.CanThrowErrors();
 		    });
 
 		    builder.SetDescription(DESCRIPTION);
@@ -5984,6 +5986,7 @@ struct ST_Distance_Sphere {
 
 				variant.SetBind(Bind);
 				variant.SetFunction(ExecutePoint);
+				variant.CanThrowErrors();
 			});
 
 			func.SetDescription(DESCRIPTION);
@@ -6140,6 +6143,7 @@ struct ST_Hilbert {
 				variant.SetReturnType(LogicalType::UINTEGER);
 
 				variant.SetFunction(ExecuteLonlat);
+				variant.CanThrowErrors();
 			});
 
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
@@ -6158,6 +6162,7 @@ struct ST_Hilbert {
 
 				variant.SetFunction(ExecuteGeometry);
 				variant.SetInit(LocalState::Init);
+				variant.CanThrowErrors();
 			});
 
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
@@ -6166,6 +6171,7 @@ struct ST_Hilbert {
 				variant.SetReturnType(LogicalType::UINTEGER);
 
 				variant.SetFunction(ExecuteBox<double>);
+				variant.CanThrowErrors();
 			});
 
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
@@ -6174,6 +6180,7 @@ struct ST_Hilbert {
 				variant.SetReturnType(LogicalType::UINTEGER);
 
 				variant.SetFunction(ExecuteBox<float>);
+				variant.CanThrowErrors();
 			});
 
 			func.SetTag("ext", "spatial");
@@ -9256,6 +9263,7 @@ struct PointAccessFunctionBase {
 
 					variant.SetDescription(OP::DESCRIPTION);
 					variant.SetExample(OP::EXAMPLE);
+					variant.CanThrowErrors();
 				});
 				func.SetTag("ext", "spatial");
 				func.SetTag("category", "property");
@@ -9702,6 +9710,7 @@ struct ST_AddPoint {
 				variant.SetReturnType(LogicalType::GEOMETRY());
 				variant.SetFunction(Execute);
 				variant.SetInit(LocalState::Init);
+				variant.CanThrowErrors();
 			});
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
 				variant.AddParameter("line", LogicalType::GEOMETRY());
@@ -9710,6 +9719,7 @@ struct ST_AddPoint {
 				variant.SetReturnType(LogicalType::GEOMETRY());
 				variant.SetFunction(ExecuteWithPosition);
 				variant.SetInit(LocalState::Init);
+				variant.CanThrowErrors();
 			});
 			func.SetDescription("Adds a point to a linestring at a given position (default: end)");
 			func.SetExample("SELECT ST_AsText(ST_AddPoint(ST_GeomFromText('LINESTRING(0 0, 2 2)'), ST_Point(1, 1), 1))");
@@ -9781,6 +9791,7 @@ struct ST_SetPoint {
 				variant.SetReturnType(LogicalType::GEOMETRY());
 				variant.SetFunction(Execute);
 				variant.SetInit(LocalState::Init);
+				variant.CanThrowErrors();
 			});
 			func.SetDescription("Replaces a point in a linestring (0-indexed, negative from end)");
 			func.SetExample(
@@ -9840,6 +9851,7 @@ struct ST_RemovePoint {
 				variant.SetReturnType(LogicalType::GEOMETRY());
 				variant.SetFunction(Execute);
 				variant.SetInit(LocalState::Init);
+				variant.CanThrowErrors();
 			});
 			func.SetDescription("Removes a point from a linestring (0-indexed, negative from end)");
 			func.SetExample(
@@ -9919,6 +9931,7 @@ struct ST_SwapOrdinates {
 				variant.SetReturnType(LogicalType::GEOMETRY());
 				variant.SetFunction(Execute);
 				variant.SetInit(LocalState::Init);
+				variant.CanThrowErrors();
 			});
 			func.SetDescription("Swaps two ordinate values in a geometry (e.g., 'xy' swaps x and y)");
 			func.SetExample("SELECT ST_AsText(ST_SwapOrdinates(ST_Point(1, 2), 'xy'))");
@@ -10122,6 +10135,7 @@ struct ST_Scroll {
 				variant.SetReturnType(LogicalType::GEOMETRY());
 				variant.SetFunction(Execute);
 				variant.SetInit(LocalState::Init);
+				variant.CanThrowErrors();
 			});
 			func.SetDescription("Rotates a closed linestring's start point to the vertex nearest to the given point");
 			func.SetExample(
@@ -10262,6 +10276,7 @@ struct ST_Polygon_Func {
 				variant.SetReturnType(LogicalType::GEOMETRY());
 				variant.SetFunction(Execute);
 				variant.SetInit(LocalState::Init);
+				variant.CanThrowErrors();
 			});
 			func.SetDescription("Creates a polygon from a closed linestring");
 			func.SetExample("SELECT ST_AsText(ST_Polygon(ST_GeomFromText('LINESTRING(0 0, 1 0, 1 1, 0 1, 0 0)')))");
@@ -10320,6 +10335,7 @@ struct ST_LineFromMultiPoint {
 				variant.SetReturnType(LogicalType::GEOMETRY());
 				variant.SetFunction(Execute);
 				variant.SetInit(LocalState::Init);
+				variant.CanThrowErrors();
 			});
 			func.SetDescription("Creates a linestring from the points of a multipoint geometry");
 			func.SetExample(
@@ -10486,6 +10502,7 @@ struct ST_3DDistance {
 				variant.SetReturnType(LogicalType::DOUBLE);
 				variant.SetFunction(Execute);
 				variant.SetInit(LocalState::Init);
+				variant.CanThrowErrors();
 			});
 			func.SetDescription(
 			    "Returns the 3D Euclidean distance between two POINT geometries. "
@@ -10569,6 +10586,7 @@ struct ST_DFullyWithin {
 				variant.SetReturnType(LogicalType::BOOLEAN);
 				variant.SetFunction(Execute);
 				variant.SetInit(LocalState::Init);
+				variant.CanThrowErrors();
 			});
 			func.SetDescription(
 			    "Returns true if every point of geom1 is within the given distance of geom2. "
@@ -11049,6 +11067,7 @@ struct ST_AsLatLonText {
 				variant.SetReturnType(LogicalType::VARCHAR);
 				variant.SetFunction(Execute);
 				variant.SetInit(LocalState::Init);
+				variant.CanThrowErrors();
 			});
 			func.SetDescription("Returns a point as a DMS (degrees-minutes-seconds) latitude/longitude string");
 			func.SetExample("SELECT ST_AsLatLonText(ST_Point(-73.9857, 40.7484))");
@@ -11111,6 +11130,7 @@ struct ST_AsEncodedPolyline {
 				variant.SetReturnType(LogicalType::VARCHAR);
 				variant.SetFunction(Execute);
 				variant.SetInit(LocalState::Init);
+				variant.CanThrowErrors();
 			});
 			func.SetDescription("Encodes a linestring as a Google Encoded Polyline string");
 			func.SetExample("SELECT ST_AsEncodedPolyline(ST_GeomFromText('LINESTRING(-120.2 38.5, -120.95 40.7, -126.453 43.252)'))");
@@ -11178,6 +11198,7 @@ struct ST_LineFromEncodedPolyline {
 				variant.SetReturnType(LogicalType::GEOMETRY());
 				variant.SetFunction(Execute);
 				variant.SetInit(LocalState::Init);
+				variant.CanThrowErrors();
 			});
 			func.SetDescription("Decodes a Google Encoded Polyline string into a linestring");
 			func.SetExample("SELECT ST_AsText(ST_LineFromEncodedPolyline('_p~iF~ps|U_ulLnnqC_mqNvxq`@'))");
@@ -11281,6 +11302,7 @@ struct ST_AddMeasure {
 				variant.SetReturnType(LogicalType::GEOMETRY());
 				variant.SetFunction(Execute);
 				variant.SetInit(LocalState::Init);
+				variant.CanThrowErrors();
 			});
 			func.SetDescription("Adds M values along a linestring, interpolated between start and end measures");
 			func.SetExample(
@@ -11371,6 +11393,7 @@ struct ST_3DLineInterpolatePoint {
 				variant.SetReturnType(LogicalType::GEOMETRY());
 				variant.SetFunction(Execute);
 				variant.SetInit(LocalState::Init);
+				variant.CanThrowErrors();
 			});
 			func.SetDescription("Interpolates a point along a linestring at a fraction of its 3D length");
 			func.SetExample(
@@ -11576,6 +11599,7 @@ struct ST_GeomFromEWKT {
 				variant.SetReturnType(LogicalType::GEOMETRY());
 				variant.SetFunction(Execute);
 				variant.SetInit(LocalState::Init);
+				variant.CanThrowErrors();
 			});
 			func.SetDescription("Parses an Extended WKT (EWKT) string, optionally with SRID prefix");
 			func.SetExample("SELECT ST_AsText(ST_GeomFromEWKT('SRID=4326;POINT(1 2)'))");
@@ -11632,6 +11656,7 @@ struct ST_GeomFromEWKB {
 				variant.SetReturnType(LogicalType::GEOMETRY());
 				variant.SetFunction(Execute);
 				variant.SetInit(LocalState::Init);
+				variant.CanThrowErrors();
 			});
 			func.SetDescription("Creates a geometry from EWKB (Extended Well-Known Binary) data");
 			func.SetExample("SELECT ST_AsText(ST_GeomFromEWKB(ST_AsEWKB(ST_Point(1, 2))))");
@@ -11722,6 +11747,7 @@ struct ST_Project_Func {
 				variant.SetReturnType(LogicalType::GEOMETRY());
 				variant.SetFunction(Execute);
 				variant.SetInit(LocalState::Init);
+				variant.CanThrowErrors();
 			});
 			func.SetDescription("Projects a point along the geodesic by a distance (meters) and azimuth (radians)");
 			func.SetExample("SELECT ST_AsText(ST_Project(ST_Point(0, 0), 100000, 0))");
@@ -11887,6 +11913,7 @@ struct ST_AsTWKB_Func {
 				variant.SetReturnType(LogicalType::BLOB);
 				variant.SetFunction(Execute);
 				variant.SetInit(LocalState::Init);
+				variant.CanThrowErrors();
 			});
 			func.SetDescription("Encodes geometry as Tiny WKB (TWKB) with specified coordinate precision");
 			func.SetExample("SELECT ST_AsTWKB(ST_Point(1, 2), 0)");
@@ -11974,6 +12001,7 @@ struct ST_GeomFromTWKB_Func {
 				variant.SetReturnType(LogicalType::GEOMETRY());
 				variant.SetFunction(Execute);
 				variant.SetInit(LocalState::Init);
+				variant.CanThrowErrors();
 			});
 			func.SetDescription("Decodes a Tiny WKB (TWKB) binary into a geometry");
 			func.SetExample("SELECT ST_AsText(ST_GeomFromTWKB(ST_AsTWKB(ST_Point(1, 2), 0)))");
@@ -12118,6 +12146,7 @@ struct ST_KNN {
 				variant.SetReturnType(LogicalType::BOOLEAN);
 				variant.SetBind(Bind);
 				variant.SetFunction(Execute);
+				variant.CanThrowErrors();
 			});
 			func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
 				variant.AddParameter("geom1", LogicalType::GEOMETRY());
@@ -12127,6 +12156,7 @@ struct ST_KNN {
 				variant.SetReturnType(LogicalType::BOOLEAN);
 				variant.SetBind(Bind);
 				variant.SetFunction(Execute);
+				variant.CanThrowErrors();
 			});
 			func.SetDescription(R"(
 				K-nearest-neighbor join predicate: matches each row of the `geom1` side with its `k` nearest rows of the `geom2` side.

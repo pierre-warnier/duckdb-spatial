@@ -121,6 +121,16 @@ bool GeometryToGeographyCast(Vector &source, Vector &result, idx_t count, CastPa
 	return true;
 }
 
+BoundCastInfo BindGeometryToGeographyCast(BindCastInput &input, const LogicalType &source, const LogicalType &target) {
+	if (GeoType::HasCRS(source)) {
+		// There is no reprojection: the coordinates of a GEOG are longitude/latitude in degrees
+		throw BinderException("Cannot cast %s to GEOG: drop the coordinate reference system first, e.g. with "
+		                      "::GEOMETRY, after transforming the geometry to longitude/latitude",
+		                      source.ToString());
+	}
+	return BoundCastInfo(GeometryToGeographyCast, nullptr, LocalState::InitCast);
+}
+
 bool VarcharToGeographyCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
 	auto &lstate = parameters.local_state->Cast<LocalState>();
 	UnaryExecutor::Execute<string_t, string_t>(source, result, count, [&](const string_t &wkt) {
@@ -691,8 +701,7 @@ void RegisterGeographyModule(ExtensionLoader &loader) {
 
 	loader.RegisterType(GeographyType::NAME, geography_type);
 
-	loader.RegisterCastFunction(geometry_type, geography_type,
-	                            BoundCastInfo(GeometryToGeographyCast, nullptr, LocalState::InitCast));
+	loader.RegisterCastFunction(geometry_type, geography_type, BindGeometryToGeographyCast);
 	loader.RegisterCastFunction(geography_type, geometry_type, DefaultCasts::ReinterpretCast);
 	loader.RegisterCastFunction(LogicalType::VARCHAR, geography_type,
 	                            BoundCastInfo(VarcharToGeographyCast, nullptr, LocalState::InitCast));

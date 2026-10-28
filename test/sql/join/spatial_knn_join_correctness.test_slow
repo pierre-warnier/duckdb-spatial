@@ -64,7 +64,7 @@ pragma disabled_optimizers=''
 query II
 EXPLAIN SELECT * FROM lhs JOIN rhs ON ST_KNN(lhs.geom, rhs.geom, 1);
 ----
-physical_plan	<REGEX>:.*SPATIAL_KNN_JOIN.*
+physical_plan	<REGEX>:.*Spatial Knn Join.*
 
 # Count
 query I

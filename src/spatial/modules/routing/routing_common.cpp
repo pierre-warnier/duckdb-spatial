@@ -137,7 +137,7 @@ void RoutingResult::Emit(idx_t &offset, DataChunk &output) const {
 			}
 		}
 	}
-	output.SetCardinality(count);
+	output.SetChildCardinality(count);
 	offset += count;
 }
 
@@ -425,7 +425,7 @@ OperatorResultType RoutingInOut(ExecutionContext &context, TableFunctionInput &d
 		}
 	}
 	state.input.row_count += input.size();
-	output.SetCardinality(0);
+	output.SetChildCardinality(0);
 	return OperatorResultType::NEED_MORE_INPUT;
 }
 
@@ -440,7 +440,7 @@ OperatorFinalizeResultType RoutingFinal(ExecutionContext &context, TableFunction
 		state.input = RoutingInput();
 	}
 	if (state.offset >= state.result.RowCount()) {
-		output.SetCardinality(0);
+		output.SetChildCardinality(0);
 		return OperatorFinalizeResultType::FINISHED;
 	}
 	state.result.Emit(state.offset, output);
