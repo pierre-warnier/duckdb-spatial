@@ -127,10 +127,10 @@ struct ComponentData : public RoutingBindData {
 
 template <bool STRONG>
 unique_ptr<FunctionData> BindComponents(ClientContext &context, TableFunctionBindInput &input,
-                                        vector<LogicalType> &return_types, vector<string> &names) {
+                                        vector<LogicalType> &return_types, vector<Identifier> &names) {
 	auto result = make_uniq<ComponentData>();
 	result->strong = STRONG;
-	RoutingBinder binder(input.table_function.name.c_str(), input, 1);
+	RoutingBinder binder(input.table_function.GetName().GetIdentifierName().c_str(), input, 1);
 	binder.BindColumns(*result, EDGE_COLUMN_SPECS, "edges");
 	binder.Finish();
 	SetResultSchema(*result, return_types, names,

@@ -244,8 +244,7 @@ struct GeometryCasts {
 		// Register a free implicit cast that rewrites the legacy header + body into
 		// the native GEOMETRY format so old databases keep binding to spatial
 		// functions end-to-end.
-		LogicalType legacy_geom_type = LogicalType::BLOB;
-		legacy_geom_type.SetAlias("GEOMETRY");
+		const auto legacy_geom_type = LogicalType(LogicalTypeId::BLOB).WithAlias("GEOMETRY");
 		loader.RegisterCastFunction(legacy_geom_type, geom_type,
 		                            BoundCastInfo(LegacyBlobToGeometryCast, nullptr, LocalState::InitCast), 0);
 	}

@@ -208,7 +208,7 @@ vector<PointRecord> ParsePoints(RoutingBinder &binder, idx_t argument) {
 }
 
 unique_ptr<FunctionData> BindWithPoints(ClientContext &context, TableFunctionBindInput &input,
-                                        vector<LogicalType> &return_types, vector<string> &names) {
+                                        vector<LogicalType> &return_types, vector<Identifier> &names) {
 	auto result = make_uniq<WithPointsData>();
 	RoutingBinder binder("pgr_withPoints", input, 4);
 	binder.BindColumns(*result, EDGE_COLUMN_SPECS, "edges");
@@ -431,7 +431,7 @@ struct TurnRestrictedData : public RoutingBindData {
 };
 
 unique_ptr<FunctionData> BindTurnRestricted(ClientContext &context, TableFunctionBindInput &input,
-                                            vector<LogicalType> &return_types, vector<string> &names) {
+                                            vector<LogicalType> &return_types, vector<Identifier> &names) {
 	auto result = make_uniq<TurnRestrictedData>();
 	RoutingBinder binder("pgr_trsp", input, 4);
 	binder.BindColumns(*result, EDGE_COLUMN_SPECS, "edges");

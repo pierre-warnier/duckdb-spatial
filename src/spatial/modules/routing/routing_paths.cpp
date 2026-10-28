@@ -198,7 +198,7 @@ StructListArgument ParseStructList(RoutingBinder &binder, idx_t argument, const 
 		                      type.ToString());
 	}
 	for (auto &child : StructType::GetChildTypes(child_type)) {
-		result.names.push_back(child.first);
+		result.names.push_back(child.first.GetIdentifierName());
 		result.types.push_back(child.second);
 	}
 	if (value.IsNull()) {
@@ -492,11 +492,11 @@ struct ShortestPathData : public RoutingBindData {
 
 template <PathAlgorithm ALGORITHM, PathOutput OUTPUT>
 unique_ptr<FunctionData> BindShortestPath(ClientContext &context, TableFunctionBindInput &input,
-                                          vector<LogicalType> &return_types, vector<string> &names) {
+                                          vector<LogicalType> &return_types, vector<Identifier> &names) {
 	auto result = make_uniq<ShortestPathData>();
 	result->algorithm = ALGORITHM;
 	result->output = OUTPUT;
-	const auto name = input.table_function.name.c_str();
+	const auto name = input.table_function.GetName().GetIdentifierName().c_str();
 
 	RoutingBinder binder(name, input, OUTPUT == PathOutput::COST_MATRIX ? 2 : 3);
 	auto specs = EDGE_COLUMN_SPECS;
@@ -656,7 +656,7 @@ struct DrivingDistanceData : public RoutingBindData {
 };
 
 unique_ptr<FunctionData> BindDrivingDistance(ClientContext &context, TableFunctionBindInput &input,
-                                             vector<LogicalType> &return_types, vector<string> &names) {
+                                             vector<LogicalType> &return_types, vector<Identifier> &names) {
 	auto result = make_uniq<DrivingDistanceData>();
 	RoutingBinder binder("pgr_drivingDistance", input, 3);
 	binder.BindColumns(*result, EDGE_COLUMN_SPECS, "edges");
@@ -858,7 +858,7 @@ struct KShortestPathData : public RoutingBindData {
 };
 
 unique_ptr<FunctionData> BindKShortestPath(ClientContext &context, TableFunctionBindInput &input,
-                                           vector<LogicalType> &return_types, vector<string> &names) {
+                                           vector<LogicalType> &return_types, vector<Identifier> &names) {
 	auto result = make_uniq<KShortestPathData>();
 	RoutingBinder binder("pgr_KSP", input, 4);
 	binder.BindColumns(*result, EDGE_COLUMN_SPECS, "edges");

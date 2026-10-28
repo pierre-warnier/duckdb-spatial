@@ -172,7 +172,7 @@ void RoutingBinder::BindColumns(RoutingBindData &data, const vector<ColumnSpec> 
 		column.name = spec.name;
 		column.kind = spec.kind;
 		for (idx_t i = 0; i < table_names.size(); i++) {
-			if (!StringUtil::CIEquals(table_names[i], spec.name)) {
+			if (!StringUtil::CIEquals(table_names[i].GetIdentifierName(), spec.name)) {
 				continue;
 			}
 			auto &type = table_types[i];
@@ -303,13 +303,13 @@ Value RoutingBinder::Option(const char *option_name, const LogicalType &type, Va
 		has_null_argument = true;
 		return default_value;
 	}
-	Value result;
 	string error;
-	if (!value.DefaultTryCastAs(type, result, &error)) {
+	auto result = value.DefaultTryCastAs(type, &error);
+	if (!result) {
 		throw BinderException("%s: option \"%s\" must be of type %s, got %s", name, option_name, type.ToString(),
 		                      value.type().ToString());
 	}
-	return result;
+	return std::move(*result);
 }
 
 void RoutingBinder::Finish() {
@@ -318,7 +318,7 @@ void RoutingBinder::Finish() {
 	}
 }
 
-void SetResultSchema(RoutingBindData &data, vector<LogicalType> &return_types, vector<string> &names,
+void SetResultSchema(RoutingBindData &data, vector<LogicalType> &return_types, vector<Identifier> &names,
                      const vector<std::pair<const char *, LogicalType>> &schema) {
 	for (auto &entry : schema) {
 		names.emplace_back(entry.first);
@@ -328,9 +328,7 @@ void SetResultSchema(RoutingBindData &data, vector<LogicalType> &return_types, v
 }
 
 void CheckInterrupt(ClientContext &context) {
-	if (context.interrupted) {
-		throw InterruptException();
-	}
+	context.InterruptCheck();
 }
 
 //----------------------------------------------------------------------------------------------------------------------
@@ -475,7 +473,7 @@ void InsertInputBarrier(OptimizerExtensionInput &input, unique_ptr<LogicalOperat
 	auto &names = plan->Cast<LogicalGet>().input_table_names;
 	idx_t column = 0;
 	for (idx_t i = 0; i < child->types.size() && i < names.size(); i++) {
-		if (child->types[i].IsIntegral() && StringUtil::CIEquals(names[i], "id")) {
+		if (child->types[i].IsIntegral() && StringUtil::CIEquals(names[i].GetIdentifierName(), "id")) {
 			column = i;
 			break;
 		}
@@ -501,20 +499,23 @@ void RegisterRoutingOptimizer(ExtensionLoader &loader) {
 
 void RegisterRoutingFunction(ExtensionLoader &loader, const char *name, idx_t scalar_arguments, routing_bind_t bind,
                              const vector<NamedOption> &options, const char *description, const char *example) {
-	vector<LogicalType> arguments;
-	arguments.push_back(LogicalType::TABLE);
+	FunctionSignature signature;
+	signature.AddParameter(LogicalType::TABLE);
 	for (idx_t i = 0; i < scalar_arguments; i++) {
-		arguments.push_back(LogicalType::ANY);
+		signature.AddParameter(LogicalType::ANY);
 	}
-	TableFunction function(name, arguments, nullptr, bind, RoutingInitGlobal);
+	if (!options.empty()) {
+		// The options can also be given by position, after the arguments
+		signature.AddArgs(Identifier("options"), LogicalType::ANY);
+		signature.WithTypedKwargs(Identifier("named_options"), [&](TypedKwargs &kwargs) {
+			for (auto &option : options) {
+				kwargs.Add(Identifier(option.name), option.type);
+			}
+		});
+	}
+	TableFunction function(Identifier(name), std::move(signature), nullptr, bind, RoutingInitGlobal);
 	function.in_out_function = RoutingInOut;
 	function.in_out_function_final = RoutingFinal;
-	if (!options.empty()) {
-		function.varargs = LogicalType::ANY;
-	}
-	for (auto &option : options) {
-		function.named_parameters[option.name] = option.type;
-	}
 	loader.RegisterFunction(function);
 
 	InsertionOrderPreservingMap<string> tags;

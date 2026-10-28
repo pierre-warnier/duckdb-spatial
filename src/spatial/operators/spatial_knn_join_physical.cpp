@@ -7,6 +7,7 @@
 #include "spatial/spatial_settings.hpp"
 #include "spatial/spatial_types.hpp"
 
+#include "duckdb/common/vector/struct_vector.hpp"
 #include "duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp"
 #include "duckdb/common/types/row/tuple_data_collection.hpp"
 #include "duckdb/common/types/row/tuple_data_iterator.hpp"
@@ -71,13 +72,7 @@ PhysicalSpatialKNNJoin::PhysicalSpatialKNNJoin(PhysicalPlan &physical_plan, Logi
 
 	// Probe-side output columns
 	const auto &probe_side_input_types = children[0].get().types;
-	probe_side_output_columns = lop.left_projection_map;
-	if (probe_side_output_columns.empty()) {
-		probe_side_output_columns.reserve(probe_side_input_types.size());
-		for (idx_t i = 0; i < probe_side_input_types.size(); i++) {
-			probe_side_output_columns.emplace_back(i);
-		}
-	}
+	probe_side_output_columns = FillProjectionMap(children[0].get(), lop.left_projection_map);
 	for (const auto &probe_col_idx : probe_side_output_columns) {
 		probe_side_output_types.push_back(probe_side_input_types[probe_col_idx]);
 	}
@@ -96,13 +91,7 @@ PhysicalSpatialKNNJoin::PhysicalSpatialKNNJoin(PhysicalPlan &physical_plan, Logi
 	}
 
 	const auto &build_side_input_types = children[1].get().types;
-	auto right_projection_map_copy = lop.right_projection_map;
-	if (right_projection_map_copy.empty()) {
-		right_projection_map_copy.reserve(build_side_input_types.size());
-		for (idx_t i = 0; i < build_side_input_types.size(); i++) {
-			right_projection_map_copy.emplace_back(i);
-		}
-	}
+	auto right_projection_map_copy = FillProjectionMap(children[1].get(), lop.right_projection_map);
 
 	for (auto &rhs_col : right_projection_map_copy) {
 		auto &rhs_type = build_side_input_types[rhs_col];
@@ -290,8 +279,8 @@ SinkFinalizeType PhysicalSpatialKNNJoin::Finalize(Pipeline &pipeline, Event &eve
 
 	TupleDataChunkIterator iterator(*gstate.collection, TupleDataPinProperties::KEEP_EVERYTHING_PINNED, true);
 
-	const auto rows_ptr = iterator.GetRowLocations();
-	Vector row_pointer_vector(LogicalType::POINTER, reinterpret_cast<data_ptr_t>(rows_ptr));
+	auto &row_pointer_vector = iterator.GetChunkState().row_locations;
+	const auto rows_ptr = FlatVector::GetData<data_ptr_t>(row_pointer_vector);
 
 	auto &sel = *FlatVector::IncrementalSelectionVector();
 
@@ -332,10 +321,10 @@ SinkFinalizeType PhysicalSpatialKNNJoin::Finalize(Pipeline &pipeline, Event &eve
 		bbox_chunk.Flatten();
 		bbox_executor.Execute(geom_chunk, bbox_chunk);
 		const auto &entries = StructVector::GetEntries(bbox_chunk.data[0]);
-		const auto xmin_data = FlatVector::GetData<float>(*entries[0]);
-		const auto ymin_data = FlatVector::GetData<float>(*entries[1]);
-		const auto xmax_data = FlatVector::GetData<float>(*entries[2]);
-		const auto ymax_data = FlatVector::GetData<float>(*entries[3]);
+		const auto xmin_data = FlatVector::GetData<float>(entries[0]);
+		const auto ymin_data = FlatVector::GetData<float>(entries[1]);
+		const auto xmax_data = FlatVector::GetData<float>(entries[2]);
+		const auto ymax_data = FlatVector::GetData<float>(entries[3]);
 
 		auto &validity = FlatVector::Validity(bbox_chunk.data[0]);
 
@@ -516,10 +505,10 @@ OperatorResultType PhysicalSpatialKNNJoin::ExecuteInternal(ExecutionContext &con
 			lstate.probe_side_box_chunk.data[0].ToUnifiedFormat(input.size(), lstate.probe_side_box_vformat);
 
 			const auto &entries = StructVector::GetEntries(lstate.probe_side_box_chunk.data[0]);
-			entries[0]->ToUnifiedFormat(input.size(), lstate.probe_side_box_xmin_vformat);
-			entries[1]->ToUnifiedFormat(input.size(), lstate.probe_side_box_ymin_vformat);
-			entries[2]->ToUnifiedFormat(input.size(), lstate.probe_side_box_xmax_vformat);
-			entries[3]->ToUnifiedFormat(input.size(), lstate.probe_side_box_ymax_vformat);
+			entries[0].ToUnifiedFormat(lstate.probe_side_box_xmin_vformat);
+			entries[1].ToUnifiedFormat(lstate.probe_side_box_ymin_vformat);
+			entries[2].ToUnifiedFormat(lstate.probe_side_box_xmax_vformat);
+			entries[3].ToUnifiedFormat(lstate.probe_side_box_ymax_vformat);
 
 			lstate.probe_side_key_chunk.data[0].ToUnifiedFormat(input.size(), lstate.probe_side_key_vformat);
 

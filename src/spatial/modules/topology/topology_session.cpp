@@ -107,7 +107,7 @@ void TopoSession::Rethrow(const ErrorData &error) const {
 	error.Throw();
 }
 
-unique_ptr<MaterializedQueryResult> TopoSession::Query(const string &sql, vector<Value> params) {
+unique_ptr<QueryResult> TopoSession::Query(const string &sql, vector<Value> params) {
 	auto entry = statements.find(sql);
 	if (entry == statements.end()) {
 		auto prepared = con.Prepare(sql);
@@ -120,7 +120,7 @@ unique_ptr<MaterializedQueryResult> TopoSession::Query(const string &sql, vector
 	if (result->HasError()) {
 		Rethrow(result->GetErrorObject());
 	}
-	return unique_ptr_cast<QueryResult, MaterializedQueryResult>(std::move(result));
+	return result;
 }
 
 void TopoSession::Execute(const string &sql) {
@@ -167,7 +167,7 @@ bool TopoSession::RegistryExists() {
 	auto result = Query("SELECT count(*) FROM duckdb_tables() WHERE database_name = ? AND schema_name = 'topology' "
 	                    "AND table_name = 'topology'",
 	                    {Value(catalog)});
-	return result->GetValue(0, 0).GetValue<int64_t>() > 0;
+	return result->Collection().GetValue(0, 0).GetValue<int64_t>() > 0;
 }
 
 void TopoSession::CreateRegistry() {
@@ -189,10 +189,10 @@ bool TopoSession::TryOpenTopology(const string &name) {
 	if (result->RowCount() == 0) {
 		return false;
 	}
-	info.id = result->GetValue(0, 0).GetValue<int32_t>();
-	info.name = result->GetValue(1, 0).GetValue<string>();
-	info.srid = result->GetValue(2, 0).GetValue<int32_t>();
-	info.precision = result->GetValue(3, 0).GetValue<double>();
+	info.id = result->Collection().GetValue(0, 0).GetValue<int32_t>();
+	info.name = result->Collection().GetValue(1, 0).GetValue<string>();
+	info.srid = result->Collection().GetValue(2, 0).GetValue<int32_t>();
+	info.precision = result->Collection().GetValue(3, 0).GetValue<double>();
 	schema = SchemaFor(catalog, info.name);
 	return true;
 }

@@ -507,7 +507,7 @@ struct ExtractVerticesData : public RoutingBindData {
 };
 
 unique_ptr<FunctionData> BindExtractVertices(ClientContext &context, TableFunctionBindInput &input,
-                                             vector<LogicalType> &return_types, vector<string> &names) {
+                                             vector<LogicalType> &return_types, vector<Identifier> &names) {
 	auto result = make_uniq<ExtractVerticesData>();
 	RoutingBinder binder("pgr_extractVertices", input, 1);
 	binder.BindColumns(*result,
@@ -639,7 +639,7 @@ struct CreateTopologyData : public RoutingBindData {
 };
 
 unique_ptr<FunctionData> BindCreateTopology(ClientContext &context, TableFunctionBindInput &input,
-                                            vector<LogicalType> &return_types, vector<string> &names) {
+                                            vector<LogicalType> &return_types, vector<Identifier> &names) {
 	auto result = make_uniq<CreateTopologyData>();
 	RoutingBinder binder("pgr_createTopology", input, 2);
 	binder.BindColumns(*result, {{"id", ColumnKind::INTEGER, true}, {"geom", ColumnKind::GEOMETRY, true}}, "edges");
@@ -769,7 +769,7 @@ struct NodeNetworkData : public RoutingBindData {
 };
 
 unique_ptr<FunctionData> BindNodeNetwork(ClientContext &context, TableFunctionBindInput &input,
-                                         vector<LogicalType> &return_types, vector<string> &names) {
+                                         vector<LogicalType> &return_types, vector<Identifier> &names) {
 	auto result = make_uniq<NodeNetworkData>();
 	RoutingBinder binder("pgr_nodeNetwork", input, 2);
 	binder.BindColumns(*result, {{"id", ColumnKind::INTEGER, true}, {"geom", ColumnKind::GEOMETRY, true}}, "edges");
@@ -926,7 +926,7 @@ struct AnalyzeGraphData : public RoutingBindData {
 };
 
 unique_ptr<FunctionData> BindAnalyzeGraph(ClientContext &context, TableFunctionBindInput &input,
-                                          vector<LogicalType> &return_types, vector<string> &names) {
+                                          vector<LogicalType> &return_types, vector<Identifier> &names) {
 	auto result = make_uniq<AnalyzeGraphData>();
 	RoutingBinder binder("pgr_analyzeGraph", input, 2);
 	binder.BindColumns(*result,

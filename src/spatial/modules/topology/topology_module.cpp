@@ -49,7 +49,7 @@ struct TopoGlobalState final : public GlobalTableFunctionState {
 };
 
 unique_ptr<FunctionData> Bind(ClientContext &context, TableFunctionBindInput &input, vector<LogicalType> &return_types,
-                              vector<string> &names) {
+                              vector<Identifier> &names) {
 	auto &info = input.info->Cast<TopoFunctionInfo>();
 	auto result = make_uniq<TopoBindData>();
 	result->function = info.function;
@@ -220,7 +220,7 @@ void ExecGetTopologyName(ClientContext &context, const TopoCall &call, TopoRows 
 	if (!call.args[0].IsNull() && session.RegistryExists()) {
 		auto names = session.Query("SELECT name FROM " + session.Registry() + " WHERE id = ?", {call.args[0]});
 		if (names->RowCount() > 0) {
-			result = names->GetValue(0, 0);
+			result = names->Collection().GetValue(0, 0);
 		}
 	}
 	rows.push_back({result});

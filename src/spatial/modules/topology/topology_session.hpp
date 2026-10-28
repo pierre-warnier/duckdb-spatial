@@ -3,7 +3,7 @@
 #include "duckdb/common/mutex.hpp"
 #include "duckdb/common/types/value.hpp"
 #include "duckdb/main/connection.hpp"
-#include "duckdb/main/materialized_query_result.hpp"
+#include "duckdb/main/query_result.hpp"
 #include "duckdb/main/prepared_statement.hpp"
 #include "duckdb/storage/arena_allocator.hpp"
 
@@ -32,11 +32,11 @@ public:
 
 	void Commit();
 
-	unique_ptr<MaterializedQueryResult> Query(const string &sql, vector<Value> params = vector<Value>());
+	unique_ptr<QueryResult> Query(const string &sql, vector<Value> params = vector<Value>());
 	void Execute(const string &sql);
 
 	template <class FUN>
-	void ForEachRow(MaterializedQueryResult &result, FUN &&fun) {
+	void ForEachRow(QueryResult &result, FUN &&fun) {
 		for (auto &chunk : result.Collection().Chunks()) {
 			for (idx_t row = 0; row < chunk.size(); row++) {
 				fun(chunk, row);

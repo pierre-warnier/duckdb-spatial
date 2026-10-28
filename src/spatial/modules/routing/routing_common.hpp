@@ -129,7 +129,7 @@ struct RoutingFunctionDoc {
 };
 
 typedef unique_ptr<FunctionData> (*routing_bind_t)(ClientContext &context, TableFunctionBindInput &input,
-                                                   vector<LogicalType> &return_types, vector<string> &names);
+                                                   vector<LogicalType> &return_types, vector<Identifier> &names);
 
 struct NamedOption {
 	const char *name;
@@ -141,7 +141,7 @@ void RegisterRoutingFunction(ExtensionLoader &loader, const char *name, idx_t sc
 
 void RegisterRoutingOptimizer(ExtensionLoader &loader);
 
-void SetResultSchema(RoutingBindData &data, vector<LogicalType> &return_types, vector<string> &names,
+void SetResultSchema(RoutingBindData &data, vector<LogicalType> &return_types, vector<Identifier> &names,
                      const vector<std::pair<const char *, LogicalType>> &schema);
 
 void CheckInterrupt(ClientContext &context);

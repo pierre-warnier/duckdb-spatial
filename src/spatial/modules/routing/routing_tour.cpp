@@ -319,7 +319,7 @@ struct TourData : public RoutingBindData {
 };
 
 unique_ptr<FunctionData> BindTour(ClientContext &context, TableFunctionBindInput &input,
-                                  vector<LogicalType> &return_types, vector<string> &names) {
+                                  vector<LogicalType> &return_types, vector<Identifier> &names) {
 	auto result = make_uniq<TourData>();
 	RoutingBinder binder("pgr_TSP", input, 1);
 	binder.BindColumns(*result,

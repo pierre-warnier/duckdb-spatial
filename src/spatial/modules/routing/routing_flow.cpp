@@ -371,10 +371,10 @@ struct FlowData : public RoutingBindData {
 
 template <FlowOutput OUTPUT>
 unique_ptr<FunctionData> BindFlow(ClientContext &context, TableFunctionBindInput &input,
-                                  vector<LogicalType> &return_types, vector<string> &names) {
+                                  vector<LogicalType> &return_types, vector<Identifier> &names) {
 	auto result = make_uniq<FlowData>();
 	result->output = OUTPUT;
-	const auto name = input.table_function.name.c_str();
+	const auto name = input.table_function.GetName().GetIdentifierName().c_str();
 	RoutingBinder binder(name, input, 3);
 	vector<ColumnSpec> specs = {{"id", ColumnKind::INTEGER, true},
 	                            {"source", ColumnKind::INTEGER, true},

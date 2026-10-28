@@ -360,11 +360,17 @@ void ValueCountExecute(Call &c) {
 //======================================================================================================================
 
 struct SummaryStatsAgg {
-	static idx_t StateSize(const AggregateFunction &) {
+	static idx_t StateSize(AggregateStateInput &) {
 		return sizeof(SummaryStats);
 	}
 
-	static void Initialize(const AggregateFunction &, data_ptr_t state) {
+	static void Initialize(AggregateStateInput &, data_ptr_t *states, idx_t count) {
+		for (idx_t i = 0; i < count; i++) {
+			InitializeState(states[i]);
+		}
+	}
+
+	static void InitializeState(data_ptr_t state) {
 		new (state) SummaryStats();
 	}
 
@@ -425,7 +431,7 @@ struct SummaryStatsAgg {
 		}
 	}
 
-	static void Finalize(Vector &state_vec, AggregateInputData &, Vector &result, idx_t count, idx_t offset) {
+	static void Finalize(Vector &state_vec, AggregateFinalizeInputData &, Vector &result, idx_t count, idx_t offset) {
 		UnifiedVectorFormat state_format;
 		state_vec.ToUnifiedFormat(count, state_format);
 		const auto states = UnifiedVectorFormat::GetData<SummaryStats *>(state_format);

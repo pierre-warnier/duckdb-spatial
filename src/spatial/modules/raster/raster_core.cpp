@@ -25,9 +25,7 @@ namespace raster {
 //======================================================================================================================
 
 LogicalType RasterType() {
-	auto type = LogicalType(LogicalTypeId::BLOB);
-	type.SetAlias("RASTER");
-	return type;
+	return LogicalType(LogicalTypeId::BLOB).WithAlias("RASTER");
 }
 
 //======================================================================================================================
@@ -403,9 +401,7 @@ string SerializeRaster(GDALDataset &ds) {
 }
 
 Value RasterValue(GDALDataset &ds) {
-	auto value = Value::BLOB_RAW(SerializeRaster(ds));
-	value.Reinterpret(RasterType());
-	return value;
+	return Value::BLOB_RAW(SerializeRaster(ds)).WithType(RasterType());
 }
 
 string_t SerializeRaster(GDALDataset &ds, Vector &result) {
@@ -1061,7 +1057,7 @@ void Call::ReturnRaster(GDALDataset &ds) {
 void Call::ReturnGeometry(const OGRGeometry &geom) {
 	const auto wkb = GeometryToWKB(geom);
 	string_t blob;
-	Geometry::FromBinary(string_t(wkb.data(), NumericCast<uint32_t>(wkb.size())), blob, result, true);
+	Geometry::FromBinary(string_t(wkb.data(), NumericCast<uint32_t>(wkb.size())), blob, StringVector::GetStringHeap(result), true);
 	Return(blob);
 }
 

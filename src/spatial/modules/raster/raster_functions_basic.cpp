@@ -1,3 +1,4 @@
+#include "duckdb/common/vector/list_vector.hpp"
 #include "spatial/modules/raster/raster_core.hpp"
 
 namespace duckdb {

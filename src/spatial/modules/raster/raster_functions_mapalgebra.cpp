@@ -109,7 +109,7 @@ protected:
 			auto &colref = expr.Cast<ColumnRefExpression>();
 			if (!colref.IsQualified()) {
 				for (const auto &placeholder : placeholders) {
-					if (StringUtil::CIEquals(colref.GetColumnName(), placeholder.name)) {
+					if (StringUtil::CIEquals(colref.GetColumnName().GetIdentifierName(), placeholder.name)) {
 						return BindResult(make_uniq<BoundReferenceExpression>(placeholder.name,
 						                                                     types[placeholder.column],
 						                                                     placeholder.column));
@@ -136,8 +136,7 @@ unique_ptr<Expression> BindPixelExpression(ClientContext &context, const string 
 	const auto placeholders = Placeholders(two_rasters);
 	const auto types = PixelChunkTypes(two_rasters);
 	try {
-		auto parsed = Parser::ParseExpressionList(QuotePlaceholders(expression, placeholders),
-		                                          context.GetParserOptions());
+		auto parsed = Parser(context).ParseExpressionList(QuotePlaceholders(expression, placeholders));
 		if (parsed.size() != 1) {
 			throw BinderException("expected a single expression");
 		}
@@ -211,10 +210,11 @@ unique_ptr<Expression> BindExpressionArgument(ClientContext &context, const vect
 	return nullptr;
 }
 
-unique_ptr<FunctionData> MapAlgebraBind(ClientContext &context, ScalarFunction &bound_function,
-                                        vector<unique_ptr<Expression>> &arguments) {
+unique_ptr<FunctionData> MapAlgebraBind(BindScalarFunctionInput &input) {
+	auto &context = input.GetClientContext();
+	auto &arguments = input.GetArguments();
 	auto result = make_uniq<MapAlgebraBindData>();
-	result->params = bound_function.GetExtraFunctionInfo().Cast<ParamsInfo>().params;
+	result->params = input.GetBoundFunction().GetExtraFunctionInfo().Cast<ParamsInfo>().params;
 	const auto &params = *result->params;
 	result->two_rasters = strcmp(params[0].name, "rast1") == 0;
 	result->expression = BindExpressionArgument(context, params, arguments, "expression", result->two_rasters);

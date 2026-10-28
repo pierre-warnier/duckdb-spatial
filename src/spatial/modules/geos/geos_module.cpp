@@ -1,3 +1,5 @@
+#include <numeric>
+
 #include "duckdb/parallel/task_executor.hpp"
 #include "duckdb/parallel/task_scheduler.hpp"
 #include <atomic>
@@ -4079,9 +4081,9 @@ struct ST_IsValidDetail {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto count = args.size();
 		auto &struct_entries = StructVector::GetEntries(result);
-		auto valid_data = FlatVector::GetData<bool>(*struct_entries[0]);
-		auto &reason_vec = *struct_entries[1];
-		auto &location_vec = *struct_entries[2];
+		auto valid_data = FlatVector::GetDataMutable<bool>(struct_entries[0]);
+		auto &reason_vec = struct_entries[1];
+		auto &location_vec = struct_entries[2];
 
 		auto &input = args.data[0];
 		UnifiedVectorFormat input_fmt;
@@ -4106,15 +4108,15 @@ struct ST_IsValidDetail {
 			valid_data[i] = is_valid == 1;
 
 			if (reason_str) {
-				FlatVector::GetData<string_t>(reason_vec)[i] = StringVector::AddString(reason_vec, reason_str);
+				FlatVector::GetDataMutable<string_t>(reason_vec)[i] = StringVector::AddString(reason_vec, reason_str);
 				GEOSFree_r(ctx, reason_str);
 			} else {
-				FlatVector::GetData<string_t>(reason_vec)[i] = StringVector::AddString(reason_vec, "Valid Geometry");
+				FlatVector::GetDataMutable<string_t>(reason_vec)[i] = StringVector::AddString(reason_vec, "Valid Geometry");
 			}
 
 			if (location_geom) {
 				auto loc_wrapper = GeosGeometry(ctx, location_geom);
-				FlatVector::GetData<string_t>(location_vec)[i] = lstate.Serialize(location_vec, loc_wrapper);
+				FlatVector::GetDataMutable<string_t>(location_vec)[i] = lstate.Serialize(location_vec, loc_wrapper);
 			} else {
 				FlatVector::SetNull(location_vec, i, true);
 			}
@@ -4279,9 +4281,15 @@ struct ST_ClusterIntersecting {
 		vector<GEOSGeometry *> geoms;
 	};
 
-	static idx_t StateSize(const AggregateFunction &) { return sizeof(State); }
+	static idx_t StateSize(AggregateStateInput &) { return sizeof(State); }
 
-	static void Initialize(const AggregateFunction &, data_ptr_t state_mem) {
+	static void Initialize(AggregateStateInput &, data_ptr_t *states, idx_t count) {
+		for (idx_t i = 0; i < count; i++) {
+			InitializeState(states[i]);
+		}
+	}
+
+	static void InitializeState(data_ptr_t state_mem) {
 		auto state = new (state_mem) State();
 		state->context = GEOS_init_r();
 	}
@@ -4319,7 +4327,7 @@ struct ST_ClusterIntersecting {
 		}
 	}
 
-	static void Finalize(Vector &state_vec, AggregateInputData &, Vector &result, idx_t count, idx_t offset) {
+	static void Finalize(Vector &state_vec, AggregateFinalizeInputData &, Vector &result, idx_t count, idx_t offset) {
 		UnifiedVectorFormat state_fmt;
 		state_vec.ToUnifiedFormat(count, state_fmt);
 		const auto state_ptr = UnifiedVectorFormat::GetData<State *>(state_fmt);
@@ -4409,9 +4417,15 @@ struct ST_ClusterWithin {
 		double distance = 0;
 	};
 
-	static idx_t StateSize(const AggregateFunction &) { return sizeof(State); }
+	static idx_t StateSize(AggregateStateInput &) { return sizeof(State); }
 
-	static void Initialize(const AggregateFunction &, data_ptr_t state_mem) {
+	static void Initialize(AggregateStateInput &, data_ptr_t *states, idx_t count) {
+		for (idx_t i = 0; i < count; i++) {
+			InitializeState(states[i]);
+		}
+	}
+
+	static void InitializeState(data_ptr_t state_mem) {
 		auto state = new (state_mem) State();
 		state->context = GEOS_init_r();
 	}
@@ -4452,7 +4466,7 @@ struct ST_ClusterWithin {
 		}
 	}
 
-	static void Finalize(Vector &state_vec, AggregateInputData &, Vector &result, idx_t count, idx_t offset) {
+	static void Finalize(Vector &state_vec, AggregateFinalizeInputData &, Vector &result, idx_t count, idx_t offset) {
 		UnifiedVectorFormat state_fmt;
 		state_vec.ToUnifiedFormat(count, state_fmt);
 		const auto state_ptr = UnifiedVectorFormat::GetData<State *>(state_fmt);

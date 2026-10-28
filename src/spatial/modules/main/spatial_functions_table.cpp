@@ -1,3 +1,4 @@
+#include "duckdb/common/vector/list_vector.hpp"
 #include "duckdb/common/vector/map_vector.hpp"
 #include "duckdb/common/vector/struct_vector.hpp"
 #include "spatial/geometry/bbox.hpp"
@@ -174,7 +175,7 @@ struct ST_SquareGrid {
 	};
 
 	static unique_ptr<FunctionData> Bind(ClientContext &context, TableFunctionBindInput &input,
-	                                     vector<LogicalType> &return_types, vector<string> &names) {
+	                                     vector<LogicalType> &return_types, vector<Identifier> &names) {
 		auto result = make_uniq<SquareGridBindData>();
 
 		// Return columns: geom (GEOMETRY), i (BIGINT), j (BIGINT)
@@ -384,7 +385,7 @@ struct ST_HexagonGrid {
 	};
 
 	static unique_ptr<FunctionData> Bind(ClientContext &context, TableFunctionBindInput &input,
-	                                     vector<LogicalType> &return_types, vector<string> &names) {
+	                                     vector<LogicalType> &return_types, vector<Identifier> &names) {
 		auto result = make_uniq<HexagonGridBindData>();
 
 		// Return columns: geom (GEOMETRY), i (BIGINT), j (BIGINT)
@@ -691,7 +692,7 @@ struct ST_DumpPoints {
 	}
 
 	static unique_ptr<FunctionData> Bind(ClientContext &context, TableFunctionBindInput &input,
-	                                     vector<LogicalType> &return_types, vector<string> &names) {
+	                                     vector<LogicalType> &return_types, vector<Identifier> &names) {
 		auto result = make_uniq<DumpPointsBindData>();
 
 		return_types.push_back(LogicalType::GEOMETRY());
@@ -819,7 +820,7 @@ struct ST_DumpRings {
 	};
 
 	static unique_ptr<FunctionData> Bind(ClientContext &context, TableFunctionBindInput &input,
-	                                     vector<LogicalType> &return_types, vector<string> &names) {
+	                                     vector<LogicalType> &return_types, vector<Identifier> &names) {
 		auto result = make_uniq<DumpRingsBindData>();
 
 		return_types.push_back(LogicalType::GEOMETRY());
@@ -1021,7 +1022,7 @@ struct ST_DumpSegments {
 	}
 
 	static unique_ptr<FunctionData> Bind(ClientContext &context, TableFunctionBindInput &input,
-	                                     vector<LogicalType> &return_types, vector<string> &names) {
+	                                     vector<LogicalType> &return_types, vector<Identifier> &names) {
 		auto result = make_uniq<DumpSegmentsBindData>();
 
 		return_types.push_back(LogicalType::GEOMETRY());

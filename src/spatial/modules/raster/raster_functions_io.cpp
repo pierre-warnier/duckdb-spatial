@@ -51,7 +51,7 @@ GDALDatasetUniquePtr OpenRasterFile(const RasterFile &file) {
 }
 
 unique_ptr<FunctionData> ReadRasterBind(ClientContext &context, TableFunctionBindInput &input,
-                                        vector<LogicalType> &return_types, vector<string> &names) {
+                                        vector<LogicalType> &return_types, vector<Identifier> &names) {
 	const GDALScope scope;
 	auto result = make_uniq<ReadRasterBindData>();
 	if (input.inputs[0].IsNull()) {
@@ -219,7 +219,7 @@ struct DriversGlobalState final : public GlobalTableFunctionState {
 };
 
 unique_ptr<FunctionData> DriversBind(ClientContext &context, TableFunctionBindInput &input,
-                                     vector<LogicalType> &return_types, vector<string> &names) {
+                                     vector<LogicalType> &return_types, vector<Identifier> &names) {
 	names.emplace_back("idx");
 	return_types.emplace_back(LogicalType::INTEGER);
 	names.emplace_back("short_name");
