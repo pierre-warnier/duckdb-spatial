@@ -22,8 +22,8 @@ public:
 	// Set to 0 when the join order optimizer swapped children.
 	idx_t build_child_idx = 1;
 
-	vector<idx_t> left_projection_map;
-	vector<idx_t> right_projection_map;
+	vector<ProjectionIndex> left_projection_map;
+	vector<ProjectionIndex> right_projection_map;
 	vector<unique_ptr<BaseStatistics>> join_stats;
 
 public:

@@ -1290,7 +1290,7 @@ static bool BlobToRasterCast(Vector &source, Vector &result, idx_t count, CastPa
 
 	HandleCastError::AssignError(INVALID_RASTER_MESSAGE, parameters);
 	result.SetVectorType(VectorType::FLAT_VECTOR);
-	const auto rasters = FlatVector::GetData<string_t>(result);
+	const auto rasters = FlatVector::GetDataMutable<string_t>(result);
 	idx_t next_invalid = 0;
 	for (idx_t i = 0; i < count; i++) {
 		const auto idx = format.sel->get_index(i);

@@ -324,7 +324,7 @@ public:
 
 	template <class T>
 	void Return(T value) {
-		FlatVector::GetData<T>(result)[row] = value;
+		FlatVector::GetDataMutable<T>(result)[row] = value;
 		returned = true;
 	}
 	void ReturnString(const string &value);

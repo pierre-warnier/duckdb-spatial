@@ -9690,7 +9690,7 @@ struct ST_AddPoint {
 				       line_geom.get_vertex_array() + position * vertex_width, (old_count - position) * vertex_width);
 			}
 			line_geom.set_vertex_array(new_array, new_count);
-			FlatVector::GetData<string_t>(result)[i] = lstate.Serialize(result, line_geom);
+			FlatVector::GetDataMutable<string_t>(result)[i] = lstate.Serialize(result, line_geom);
 		}
 	}
 
@@ -9768,7 +9768,7 @@ struct ST_SetPoint {
 			auto point_vtx = point_geom.get_vertex_xyzm(0);
 			memcpy(new_array + position * vertex_width, &point_vtx, vertex_width);
 			line_geom.set_vertex_array(new_array, vertex_count);
-			FlatVector::GetData<string_t>(result)[i] = lstate.Serialize(result, line_geom);
+			FlatVector::GetDataMutable<string_t>(result)[i] = lstate.Serialize(result, line_geom);
 		}
 	}
 
@@ -10516,7 +10516,7 @@ struct ST_DFullyWithin {
 		const auto g2_data = UnifiedVectorFormat::GetData<string_t>(g2_fmt);
 		const auto d_data = UnifiedVectorFormat::GetData<double>(d_fmt);
 
-		auto result_data = FlatVector::GetData<bool>(result);
+		auto result_data = FlatVector::GetDataMutable<bool>(result);
 
 		for (idx_t i = 0; i < count; i++) {
 			const auto g1i = g1_fmt.sel->get_index(i);
@@ -11268,7 +11268,7 @@ struct ST_AddMeasure {
 			}
 
 			out_geom.set_vertex_array(new_array, n);
-			FlatVector::GetData<string_t>(result)[i] = lstate.Serialize(result, out_geom);
+			FlatVector::GetDataMutable<string_t>(result)[i] = lstate.Serialize(result, out_geom);
 		}
 	}
 
@@ -11514,7 +11514,7 @@ struct ST_AsEWKT {
 		auto count = args.size();
 		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, count, [&](const string_t &blob) {
 			// Use DuckDB's built-in GEOMETRY→WKT conversion
-			return Geometry::ToString(result, blob);
+			return Geometry::ToString(StringVector::GetStringHeap(result), blob);
 		});
 	}
 
@@ -11588,7 +11588,7 @@ struct ST_GeomFromEWKT {
 //======================================================================================================================
 struct ST_AsEWKB {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
-		return Geometry::ToBinary(args.data[0], result, args.size());
+		return Geometry::ToBinary(args.data[0], result);
 	}
 
 	static void Register(ExtensionLoader &loader) {
@@ -11709,7 +11709,7 @@ struct ST_Project_Func {
 			memcpy(vtx_array, &result_vtx, sizeof(sgl::vertex_xy));
 			pt.set_vertex_array(vtx_array, 1);
 
-			FlatVector::GetData<string_t>(result)[i] = lstate.Serialize(result, pt);
+			FlatVector::GetDataMutable<string_t>(result)[i] = lstate.Serialize(result, pt);
 		}
 	}
 
@@ -12086,10 +12086,10 @@ struct ST_KNN {
 		}
 	};
 
-	static unique_ptr<FunctionData> Bind(ClientContext &context, ScalarFunction &bound_function,
-	                                     vector<unique_ptr<Expression>> &arguments) {
+	static unique_ptr<FunctionData> Bind(BindScalarFunctionInput &input) {
+		auto &arguments = input.GetArguments();
 		if (arguments[2]->IsFoldable()) {
-			const auto k_expr = ExpressionExecutor::EvaluateScalar(context, *arguments[2]);
+			const auto k_expr = ExpressionExecutor::EvaluateScalar(input.GetClientContext(), *arguments[2]);
 			if (k_expr.IsNull()) {
 				throw InvalidInputException("ST_KNN: k must not be NULL");
 			}
@@ -12097,7 +12097,6 @@ struct ST_KNN {
 			if (k_value < 1) {
 				throw InvalidInputException("ST_KNN: k must be >= 1, got %d", k_value);
 			}
-			Function::EraseArgument(bound_function, arguments, 2);
 			return make_uniq<BindData>(k_value);
 		}
 		throw InvalidInputException("ST_KNN: k must be a constant expression");

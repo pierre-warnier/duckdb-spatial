@@ -24,10 +24,10 @@ void LogicalSpatialKNNJoin::ResolveColumnBindings(ColumnBindingResolver &res, ve
 	// After the optimizer, children are always in correct order:
 	// children[0] = probe (arg0), children[1] = build (arg1).
 	res.VisitOperator(*children[0]);
-	res.VisitExpression(&cond.children[0]);
+	res.VisitExpression(&cond.GetChildrenMutable()[0]);
 	res.VisitOperator(*children[1]);
-	for (idx_t i = 1; i < cond.children.size(); i++) {
-		res.VisitExpression(&cond.children[i]);
+	for (idx_t i = 1; i < cond.GetChildren().size(); i++) {
+		res.VisitExpression(&cond.GetChildrenMutable()[i]);
 	}
 
 	bindings = GetColumnBindings();
@@ -51,8 +51,8 @@ void LogicalSpatialKNNJoin::Serialize(Serializer &writer) const {
 	LogicalExtensionOperator::Serialize(writer);
 	writer.WritePropertyWithDefault(300, "operator_type", string(OPERATOR_TYPE_NAME));
 	writer.WritePropertyWithDefault<JoinType>(400, "join_type", join_type, JoinType::INNER);
-	writer.WritePropertyWithDefault<vector<idx_t>>(402, "left_projection_map", left_projection_map);
-	writer.WritePropertyWithDefault<vector<idx_t>>(403, "right_projection_map", right_projection_map);
+	writer.WritePropertyWithDefault<vector<ProjectionIndex>>(402, "left_projection_map", left_projection_map);
+	writer.WritePropertyWithDefault<vector<ProjectionIndex>>(403, "right_projection_map", right_projection_map);
 	writer.WritePropertyWithDefault<unique_ptr<Expression>>(404, "spatial_predicate", spatial_predicate);
 	writer.WritePropertyWithDefault<int32_t>(405, "k", k, 1);
 	writer.WritePropertyWithDefault<idx_t>(406, "build_child_idx", build_child_idx, static_cast<idx_t>(1));
@@ -60,8 +60,8 @@ void LogicalSpatialKNNJoin::Serialize(Serializer &writer) const {
 
 unique_ptr<LogicalExtensionOperator> LogicalSpatialKNNJoin::Deserialize(Deserializer &reader) {
 	auto join_type = reader.ReadPropertyWithExplicitDefault<JoinType>(400, "join_type", JoinType::INNER);
-	auto left_projection_map = reader.ReadPropertyWithDefault<vector<idx_t>>(402, "left_projection_map");
-	auto right_projection_map = reader.ReadPropertyWithDefault<vector<idx_t>>(403, "right_projection_map");
+	auto left_projection_map = reader.ReadPropertyWithDefault<vector<ProjectionIndex>>(402, "left_projection_map");
+	auto right_projection_map = reader.ReadPropertyWithDefault<vector<ProjectionIndex>>(403, "right_projection_map");
 	auto spatial_predicate = reader.ReadPropertyWithDefault<unique_ptr<Expression>>(404, "spatial_predicate");
 	auto k = reader.ReadPropertyWithExplicitDefault<int32_t>(405, "k", 1);
 	auto build_child_idx = reader.ReadPropertyWithExplicitDefault<idx_t>(406, "build_child_idx", static_cast<idx_t>(1));

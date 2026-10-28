@@ -61,10 +61,10 @@ PhysicalSpatialKNNJoin::PhysicalSpatialKNNJoin(PhysicalPlan &physical_plan, Logi
 
 	// After optimizer child swap, arg0 always references children[0] (probe)
 	// and arg1 always references children[1] (build/sink).
-	probe_side_key = func.children[0].get();
-	build_side_key = func.children[1].get();
-	if (func.children.size() == 3) {
-		build_side_partition_key = func.children[2].get();
+	probe_side_key = func.GetChildren()[0].get();
+	build_side_key = func.GetChildren()[1].get();
+	if (func.GetChildren().size() == 4) {
+		build_side_partition_key = func.GetChildren()[3].get();
 	}
 
 	const auto &lop = op.Cast<LogicalSpatialKNNJoin>();
@@ -85,14 +85,14 @@ PhysicalSpatialKNNJoin::PhysicalSpatialKNNJoin(PhysicalPlan &physical_plan, Logi
 	// Build-side layout: key columns first, then payload columns
 	unordered_map<idx_t, idx_t> conditions_in_layout;
 	if (build_side_key->GetExpressionClass() == ExpressionClass::BOUND_REF) {
-		conditions_in_layout.emplace(build_side_key->Cast<BoundReferenceExpression>().index, 0);
+		conditions_in_layout.emplace(build_side_key->Cast<BoundReferenceExpression>().Index(), 0);
 	}
-	build_side_key_types.push_back(build_side_key->return_type);
+	build_side_key_types.push_back(build_side_key->GetReturnType());
 	if (build_side_partition_key) {
 		if (build_side_partition_key->GetExpressionClass() == ExpressionClass::BOUND_REF) {
-			conditions_in_layout.emplace(build_side_partition_key->Cast<BoundReferenceExpression>().index, 1);
+			conditions_in_layout.emplace(build_side_partition_key->Cast<BoundReferenceExpression>().Index(), 1);
 		}
-		build_side_key_types.push_back(build_side_partition_key->return_type);
+		build_side_key_types.push_back(build_side_partition_key->GetReturnType());
 	}
 
 	const auto &build_side_input_types = children[1].get().types;
@@ -128,10 +128,10 @@ PhysicalSpatialKNNJoin::PhysicalSpatialKNNJoin(PhysicalPlan &physical_plan, Logi
 InsertionOrderPreservingMap<string> PhysicalSpatialKNNJoin::ParamsToString() const {
 	auto result = PhysicalOperator::ParamsToString();
 	result["Join Type"] = EnumUtil::ToString(join_type);
-	result["Conditions"] = condition->GetName();
+	result["Conditions"] = condition->GetName().GetIdentifierName();
 	result["K"] = to_string(k);
 	if (build_side_partition_key) {
-		result["Partition"] = build_side_partition_key->GetName();
+		result["Partition"] = build_side_partition_key->GetName().GetIdentifierName();
 	}
 	SetEstimatedCardinality(result, estimated_cardinality);
 	return result;
@@ -180,22 +180,22 @@ public:
 		build_side_row_chunk.InitializeEmpty(layout->GetTypes());
 		build_side_payload_chunk.InitializeEmpty(op.build_side_payload_types);
 
-		auto &geom_type = op.build_side_key->return_type;
+		auto &geom_type = op.build_side_key->GetReturnType();
 		auto &catalog = Catalog::GetSystemCatalog(context);
 		auto &entry = catalog.GetEntry<ScalarFunctionCatalogEntry>(context, DEFAULT_SCHEMA, "ST_IsEmpty");
 		auto func = entry.functions.GetFunctionByArguments(context, {geom_type});
 
 		auto is_empty_expr = make_uniq<BoundFunctionExpression>(LogicalTypeId::BOOLEAN, func,
 		                                                        vector<unique_ptr<Expression>> {}, nullptr);
-		is_empty_expr->children.push_back(make_uniq_base<Expression, BoundReferenceExpression>(geom_type, 0));
+		is_empty_expr->GetChildrenMutable().push_back(make_uniq_base<Expression, BoundReferenceExpression>(geom_type, 0));
 
 		auto is_not_empty_expr =
 		    make_uniq<BoundOperatorExpression>(ExpressionType::OPERATOR_NOT, LogicalTypeId::BOOLEAN);
-		is_not_empty_expr->children.push_back(std::move(is_empty_expr));
+		is_not_empty_expr->GetChildrenMutable().push_back(std::move(is_empty_expr));
 
 		auto is_not_null_expr =
 		    make_uniq<BoundOperatorExpression>(ExpressionType::OPERATOR_IS_NOT_NULL, LogicalTypeId::BOOLEAN);
-		is_not_null_expr->children.push_back(make_uniq_base<Expression, BoundReferenceExpression>(geom_type, 0));
+		is_not_null_expr->GetChildrenMutable().push_back(make_uniq_base<Expression, BoundReferenceExpression>(geom_type, 0));
 
 		auto filter_expr = make_uniq_base<Expression, BoundConjunctionExpression>(
 		    ExpressionType::CONJUNCTION_AND, std::move(is_not_empty_expr), std::move(is_not_null_expr));
@@ -459,12 +459,12 @@ unique_ptr<OperatorState> PhysicalSpatialKNNJoin::GetOperatorState(ExecutionCont
 
 	lstate->join_probe_executor.AddExpression(*probe_side_key);
 
-	lstate->bound_expr = GetKNNBBOXExpression(context.client, probe_side_key->return_type);
+	lstate->bound_expr = GetKNNBBOXExpression(context.client, probe_side_key->GetReturnType());
 	lstate->bbox_probe_executor.AddExpression(*lstate->bound_expr);
 
 	lstate->probe_side_row_chunk.Initialize(context.client, probe_side_output_types);
-	lstate->probe_side_key_chunk.Initialize(context.client, {probe_side_key->return_type});
-	lstate->probe_side_box_chunk.Initialize(context.client, {lstate->bound_expr->return_type});
+	lstate->probe_side_key_chunk.Initialize(context.client, {probe_side_key->GetReturnType()});
+	lstate->probe_side_box_chunk.Initialize(context.client, {lstate->bound_expr->GetReturnType()});
 
 	return std::move(lstate);
 }
@@ -651,7 +651,7 @@ OperatorResultType PhysicalSpatialKNNJoin::ExecuteInternal(ExecutionContext &con
 
 			// Set up row pointers for gathering build-side columns
 			Vector row_pointers(LogicalType::POINTER);
-			auto ptr_data = FlatVector::GetData<data_ptr_t>(row_pointers);
+			auto ptr_data = FlatVector::GetDataMutable<data_ptr_t>(row_pointers);
 			for (idx_t i = 0; i < batch; i++) {
 				ptr_data[i] = lstate.refined_results[lstate.emit_idx + i].row_ptr;
 				lstate.probe_side_source_sel.set_index(output_index + i, lstate.input_index);

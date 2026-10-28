@@ -172,8 +172,8 @@ struct GeometryCasts {
 		auto &arena = lstate.GetArena();
 		bool success = true;
 
-		UnaryExecutor::ExecuteWithNulls<string_t, string_t>(
-		    source, result, count, [&](const string_t &blob, ValidityMask &mask, idx_t row_idx) -> string_t {
+		UnaryExecutor::Execute<string_t, string_t>(
+		    source, result, count, [&](const string_t &blob) -> optional<string_t> {
 			    // BinaryReader / sgl::geometry parsing throws on malformed or
 			    // truncated input. Convert any exception into a cast-level error
 			    // so the query surfaces a row-level NULL instead of aborting.
@@ -224,8 +224,7 @@ struct GeometryCasts {
 					    success = false;
 					    HandleCastError::AssignError(ex.what(), params.error_message);
 				    }
-				    mask.SetInvalid(row_idx);
-				    return string_t {};
+				    return nullopt;
 			    }
 		    });
 

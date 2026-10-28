@@ -137,9 +137,9 @@ void ReadRasterScan(ClientContext &context, TableFunctionInput &input, DataChunk
 	auto &gstate = input.global_state->Cast<ReadRasterGlobalState>();
 	auto &lstate = input.local_state->Cast<ReadRasterLocalState>();
 
-	const auto xs = FlatVector::GetData<int32_t>(output.data[0]);
-	const auto ys = FlatVector::GetData<int32_t>(output.data[1]);
-	const auto rasters = FlatVector::GetData<string_t>(output.data[2]);
+	const auto xs = FlatVector::GetDataMutable<int32_t>(output.data[0]);
+	const auto ys = FlatVector::GetDataMutable<int32_t>(output.data[1]);
+	const auto rasters = FlatVector::GetDataMutable<string_t>(output.data[2]);
 
 	idx_t count = 0;
 	idx_t bytes = 0;

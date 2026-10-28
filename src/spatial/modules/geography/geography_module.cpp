@@ -19,9 +19,7 @@
 namespace duckdb {
 
 LogicalType GeographyType::Get() {
-	LogicalType type(LogicalTypeId::BLOB);
-	type.SetAlias(NAME);
-	return type;
+	return LogicalType(LogicalTypeId::BLOB).WithAlias(NAME);
 }
 
 namespace {
@@ -139,14 +137,14 @@ bool BlobToGeographyCast(Vector &source, Vector &result, idx_t count, CastParame
 	UnaryExecutor::Execute<string_t, string_t>(source, result, count, [&](const string_t &wkb) {
 		lstate.arena.Reset();
 		string_t blob;
-		Geometry::FromBinary(wkb, blob, result, true);
+		Geometry::FromBinary(wkb, blob, StringVector::GetStringHeap(result), true);
 		return lstate.Verify(blob);
 	});
 	return true;
 }
 
 bool GeographyToBlobCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
-	Geometry::ToBinary(source, result, count);
+	Geometry::ToBinary(source, result);
 	return true;
 }
 
@@ -158,7 +156,7 @@ bool NullToGeographyCast(Vector &source, Vector &result, idx_t count, CastParame
 
 bool GeographyToVarcharCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
 	UnaryExecutor::Execute<string_t, string_t>(source, result, count,
-	                                           [&](const string_t &blob) { return Geometry::ToString(result, blob); });
+	                                           [&](const string_t &blob) { return Geometry::ToString(StringVector::GetStringHeap(result), blob); });
 	return true;
 }
 
@@ -204,7 +202,7 @@ struct ST_GeogFromWKB {
 		auto &lstate = LocalState::ResetAndGet(state);
 		UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &wkb) {
 			string_t blob;
-			Geometry::FromBinary(wkb, blob, result, true);
+			Geometry::FromBinary(wkb, blob, StringVector::GetStringHeap(result), true);
 			return lstate.Verify(blob);
 		});
 	}
@@ -264,7 +262,7 @@ struct ST_GeogPoint {
 struct ST_AsText {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		UnaryExecutor::Execute<string_t, string_t>(
-		    args.data[0], result, args.size(), [&](const string_t &blob) { return Geometry::ToString(result, blob); });
+		    args.data[0], result, args.size(), [&](const string_t &blob) { return Geometry::ToString(StringVector::GetStringHeap(result), blob); });
 	}
 
 	static void Register(ExtensionLoader &loader) {
@@ -284,7 +282,7 @@ struct ST_AsText {
 
 struct ST_AsWKB {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
-		Geometry::ToBinary(args.data[0], result, args.size());
+		Geometry::ToBinary(args.data[0], result);
 	}
 
 	static void Register(ExtensionLoader &loader) {
@@ -360,9 +358,9 @@ constexpr auto DISTANCE_DESCRIPTION = R"(
 struct ST_Distance {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
-		BinaryExecutor::ExecuteWithNulls<string_t, string_t, double>(
+		BinaryExecutor::Execute<string_t, string_t, double>(
 		    args.data[0], args.data[1], result, args.size(),
-		    [&](const string_t &lhs_blob, const string_t &rhs_blob, ValidityMask &mask, idx_t row_idx) {
+		    [&](const string_t &lhs_blob, const string_t &rhs_blob) -> optional<double> {
 			    sgl::geometry lhs;
 			    sgl::geometry rhs;
 			    lstate.Deserialize(lhs_blob, lhs);
@@ -370,8 +368,7 @@ struct ST_Distance {
 			    lstate.ops.SetSources(lhs_blob, rhs_blob);
 			    const auto distance = lstate.ops.Distance(lhs, rhs);
 			    if (std::isnan(distance)) {
-				    mask.SetInvalid(row_idx);
-				    return 0.0;
+				    return nullopt;
 			    }
 			    return distance;
 		    });
@@ -400,7 +397,7 @@ struct ST_DWithin {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 		TernaryExecutor::Execute<string_t, string_t, double, bool>(
-		    args.data[0], args.data[1], args.data[2], result, args.size(),
+		    args.data[0], args.data[1], args.data[2], result,
 		    [&](const string_t &lhs_blob, const string_t &rhs_blob, double limit) {
 			    sgl::geometry lhs;
 			    sgl::geometry rhs;
@@ -475,17 +472,16 @@ struct ST_Intersects {
 struct ST_Azimuth {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
-		BinaryExecutor::ExecuteWithNulls<string_t, string_t, double>(
+		BinaryExecutor::Execute<string_t, string_t, double>(
 		    args.data[0], args.data[1], result, args.size(),
-		    [&](const string_t &lhs_blob, const string_t &rhs_blob, ValidityMask &mask, idx_t row_idx) {
+		    [&](const string_t &lhs_blob, const string_t &rhs_blob) -> optional<double> {
 			    GeographyOps::Point lhs;
 			    GeographyOps::Point rhs;
 			    if (!lstate.TryGetPoint(lhs_blob, lhs) || !lstate.TryGetPoint(rhs_blob, rhs)) {
 				    throw InvalidInputException("ST_Azimuth only accepts non-empty POINT geographies");
 			    }
 			    if (lhs.lon == rhs.lon && lhs.lat == rhs.lat) {
-				    mask.SetInvalid(row_idx);
-				    return 0.0;
+				    return nullopt;
 			    }
 			    return lstate.ops.Azimuth(lhs, rhs) * DEG;
 		    });
@@ -516,7 +512,7 @@ struct ST_Project {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
 		TernaryExecutor::Execute<string_t, double, double, string_t>(
-		    args.data[0], args.data[1], args.data[2], result, args.size(),
+		    args.data[0], args.data[1], args.data[2], result,
 		    [&](const string_t &blob, double distance, double azimuth) {
 			    GeographyOps::Point origin;
 			    if (!lstate.TryGetPoint(blob, origin)) {
@@ -591,15 +587,14 @@ struct ST_Buffer {
 		}
 	};
 
-	static string_t Buffer(LocalState &lstate, Vector &result, const string_t &blob, double distance,
-	                       int32_t quad_segs, ValidityMask &mask, idx_t row_idx) {
+	static optional<string_t> Buffer(LocalState &lstate, Vector &result, const string_t &blob, double distance,
+	                                 int32_t quad_segs) {
 		sgl::geometry geom;
 		lstate.Deserialize(blob, geom);
 
 		GeographyOps::Point center;
 		if (!lstate.ops.TryGetCenter(geom, center)) {
-			mask.SetInvalid(row_idx);
-			return string_t();
+			return nullopt;
 		}
 
 		lstate.ops.ToPlane(lstate.allocator, geom, center);
@@ -628,19 +623,19 @@ struct ST_Buffer {
 
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
-		BinaryExecutor::ExecuteWithNulls<string_t, double, string_t>(
+		BinaryExecutor::Execute<string_t, double, string_t>(
 		    args.data[0], args.data[1], result, args.size(),
-		    [&](const string_t &blob, double distance, ValidityMask &mask, idx_t row_idx) {
-			    return Buffer(lstate, result, blob, distance, 8, mask, row_idx);
+		    [&](const string_t &blob, double distance) -> optional<string_t> {
+			    return Buffer(lstate, result, blob, distance, 8);
 		    });
 	}
 
 	static void ExecuteWithSegments(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
-		TernaryExecutor::ExecuteWithNulls<string_t, double, int32_t, string_t>(
-		    args.data[0], args.data[1], args.data[2], result, args.size(),
-		    [&](const string_t &blob, double distance, int32_t quad_segs, ValidityMask &mask, idx_t row_idx) {
-			    return Buffer(lstate, result, blob, distance, quad_segs, mask, row_idx);
+		TernaryExecutor::Execute<string_t, double, int32_t, string_t>(
+		    args.data[0], args.data[1], args.data[2], result,
+		    [&](const string_t &blob, double distance, int32_t quad_segs) -> optional<string_t> {
+			    return Buffer(lstate, result, blob, distance, quad_segs);
 		    });
 	}
 

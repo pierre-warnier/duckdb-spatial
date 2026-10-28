@@ -412,43 +412,44 @@ static void TrySwapAnyJoin(OptimizerExtensionInput &input, unique_ptr<LogicalOpe
 // KNN Join Detection
 //======================================================================================================================
 
-static bool IsKNNJoinPredicate(const unique_ptr<Expression> &expr, const unordered_set<idx_t> &left_bindings,
-                               const unordered_set<idx_t> &right_bindings, bool &needs_flipping, int32_t &k_value) {
+static bool IsKNNJoinPredicate(const unique_ptr<Expression> &expr, const unordered_set<TableIndex> &left_bindings,
+                               const unordered_set<TableIndex> &right_bindings, bool &needs_flipping, int32_t &k_value) {
 
 	const auto total_side = JoinSide::GetJoinSide(*expr, left_bindings, right_bindings);
 	if (total_side != JoinSide::BOTH) {
 		return false;
 	}
 
-	if (expr->type != ExpressionType::BOUND_FUNCTION) {
+	if (expr->GetExpressionType() != ExpressionType::BOUND_FUNCTION) {
 		return false;
 	}
 
 	auto &func = expr->Cast<BoundFunctionExpression>();
 
-	if (!StringUtil::CIEquals(func.function.name, "ST_KNN")) {
+	if (!StringUtil::CIEquals(func.Function().GetName().GetIdentifierName(), "ST_KNN")) {
 		return false;
 	}
 
-	// After bind, ST_KNN has 2 args (k was folded into bind_data), plus an optional partition key
-	if (func.children.size() != 2 && func.children.size() != 3) {
+	// ST_KNN(geom1, geom2, k [, partition]), k is a constant that was also folded into the bind data
+	const auto &args = func.GetChildren();
+	if (args.size() != 3 && args.size() != 4) {
 		return false;
 	}
 
-	if (func.return_type != LogicalType::BOOLEAN) {
+	if (func.GetReturnType() != LogicalType::BOOLEAN) {
 		return false;
 	}
 
-	const auto left_side = JoinSide::GetJoinSide(*func.children[0], left_bindings, right_bindings);
-	const auto right_side = JoinSide::GetJoinSide(*func.children[1], left_bindings, right_bindings);
+	const auto left_side = JoinSide::GetJoinSide(*args[0], left_bindings, right_bindings);
+	const auto right_side = JoinSide::GetJoinSide(*args[1], left_bindings, right_bindings);
 
 	if (left_side == JoinSide::BOTH || right_side == JoinSide::BOTH) {
 		return false;
 	}
 
-	if (func.children.size() == 3) {
+	if (args.size() == 4) {
 		// The partition key has to come from the build side
-		const auto partition_side = JoinSide::GetJoinSide(*func.children[2], left_bindings, right_bindings);
+		const auto partition_side = JoinSide::GetJoinSide(*args[3], left_bindings, right_bindings);
 		if (partition_side != JoinSide::NONE && partition_side != right_side) {
 			return false;
 		}
@@ -456,7 +457,7 @@ static bool IsKNNJoinPredicate(const unique_ptr<Expression> &expr, const unorder
 
 	needs_flipping = (left_side == JoinSide::RIGHT);
 
-	if (!ST_KNNHelper::TryGetConstK(func.bind_info, k_value)) {
+	if (!ST_KNNHelper::TryGetConstK(func.BindInfo(), k_value)) {
 		return false;
 	}
 
@@ -482,8 +483,8 @@ static bool TrySwapKNNAnyJoin(OptimizerExtensionInput &input, unique_ptr<Logical
 
 	auto &left_child = any_join.children[0];
 	auto &right_child = any_join.children[1];
-	unordered_set<idx_t> left_bindings;
-	unordered_set<idx_t> right_bindings;
+	unordered_set<TableIndex> left_bindings;
+	unordered_set<TableIndex> right_bindings;
 	LogicalJoin::GetTableReferences(*left_child, left_bindings);
 	LogicalJoin::GetTableReferences(*right_child, right_bindings);
 
@@ -520,7 +521,7 @@ static bool TrySwapKNNAnyJoin(OptimizerExtensionInput &input, unique_ptr<Logical
 	// DuckDB sinks children[1], so we need the build side at children[1].
 	// Determine which child the build key (second arg) currently references.
 	auto &knn_func = knn_pred_expr->Cast<BoundFunctionExpression>();
-	auto build_key_side = JoinSide::GetJoinSide(*knn_func.children[1], left_bindings, right_bindings);
+	auto build_key_side = JoinSide::GetJoinSide(*knn_func.GetChildren()[1], left_bindings, right_bindings);
 	bool needs_child_swap = (build_key_side == JoinSide::LEFT);
 
 
@@ -554,7 +555,6 @@ static bool TrySwapKNNAnyJoin(OptimizerExtensionInput &input, unique_ptr<Logical
 	// build_child_idx is always 1 after potential swap
 	knn_join->build_child_idx = 1;
 
-	knn_join->join_stats = std::move(any_join.join_stats);
 	knn_join->has_estimated_cardinality = any_join.has_estimated_cardinality;
 	knn_join->estimated_cardinality = any_join.estimated_cardinality;
 

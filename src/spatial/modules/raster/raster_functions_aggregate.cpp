@@ -287,7 +287,7 @@ struct UnionState {
 			SetNoData(out_band, has_nodata, nodata);
 			WriteBand(out_band, values);
 		}
-		FlatVector::GetData<string_t>(result)[row] = SerializeRaster(*output, result);
+		FlatVector::GetDataMutable<string_t>(result)[row] = SerializeRaster(*output, result);
 	}
 };
 

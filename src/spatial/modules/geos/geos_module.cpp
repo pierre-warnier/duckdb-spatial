@@ -224,7 +224,7 @@ bool TryExecuteOverlayInParallel(DataChunk &args, ExpressionState &state, Vector
 	executor.WorkOnTasks();
 
 	result.SetVectorType(VectorType::FLAT_VECTOR);
-	const auto result_data = FlatVector::GetData<string_t>(result);
+	const auto result_data = FlatVector::GetDataMutable<string_t>(result);
 	for (idx_t row = 0; row < count; row++) {
 		if (!job.is_valid[row]) {
 			FlatVector::SetNull(result, row, true);
@@ -4367,7 +4367,7 @@ struct ST_ClusterIntersecting {
 			auto blob = StringVector::EmptyString(result, size);
 			GeosSerde::Serialize(state.context, outer, blob.GetDataWriteable(), size);
 			blob.Finalize();
-			FlatVector::GetData<string_t>(result)[out_idx] = blob;
+			FlatVector::GetDataMutable<string_t>(result)[out_idx] = blob;
 		}
 	}
 
@@ -4497,7 +4497,7 @@ struct ST_ClusterWithin {
 			auto blob = StringVector::EmptyString(result, size);
 			GeosSerde::Serialize(state.context, outer, blob.GetDataWriteable(), size);
 			blob.Finalize();
-			FlatVector::GetData<string_t>(result)[out_idx] = blob;
+			FlatVector::GetDataMutable<string_t>(result)[out_idx] = blob;
 
 			GEOSGeom_destroy_r(state.context, outer);
 		}
@@ -4549,7 +4549,7 @@ struct ST_UnaryUnion {
 		FunctionBuilder::RegisterScalar(loader, "ST_UnaryUnion", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
 				v.AddParameter("geom", LogicalType::GEOMETRY()); v.SetReturnType(LogicalType::GEOMETRY());
-				v.SetBind(GeoTypes::PropagateCRS); v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
+				v.SetResolveTypes(GeoTypes::PropagateCRS); v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
 			});
 			func.SetDescription("Dissolves a geometry collection into a single geometry"); func.SetTag("ext", "spatial"); func.SetTag("category", "construction");
 		});
@@ -4568,7 +4568,7 @@ struct ST_SharedPaths {
 		FunctionBuilder::RegisterScalar(loader, "ST_SharedPaths", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
 				v.AddParameter("geom1", LogicalType::GEOMETRY()); v.AddParameter("geom2", LogicalType::GEOMETRY());
-				v.SetReturnType(LogicalType::GEOMETRY()); v.SetBind(GeoTypes::PropagateCRS);
+				v.SetReturnType(LogicalType::GEOMETRY()); v.SetResolveTypes(GeoTypes::PropagateCRS);
 				v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
 			});
 			func.SetDescription("Returns shared paths between two linear geometries"); func.SetTag("ext", "spatial"); func.SetTag("category", "construction");
@@ -4588,7 +4588,7 @@ struct ST_OffsetCurve {
 		FunctionBuilder::RegisterScalar(loader, "ST_OffsetCurve", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
 				v.AddParameter("geom", LogicalType::GEOMETRY()); v.AddParameter("distance", LogicalType::DOUBLE);
-				v.SetReturnType(LogicalType::GEOMETRY()); v.SetBind(GeoTypes::PropagateCRS);
+				v.SetReturnType(LogicalType::GEOMETRY()); v.SetResolveTypes(GeoTypes::PropagateCRS);
 				v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
 			});
 			func.SetDescription("Returns an offset curve from a linestring"); func.SetTag("ext", "spatial"); func.SetTag("category", "construction");
@@ -4608,7 +4608,7 @@ struct ST_DelaunayTriangles {
 		FunctionBuilder::RegisterScalar(loader, "ST_DelaunayTriangles", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
 				v.AddParameter("geom", LogicalType::GEOMETRY()); v.SetReturnType(LogicalType::GEOMETRY());
-				v.SetBind(GeoTypes::PropagateCRS);
+				v.SetResolveTypes(GeoTypes::PropagateCRS);
 				v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
 			});
 			func.SetDescription("Returns Delaunay triangulation of input geometry vertices"); func.SetTag("ext", "spatial"); func.SetTag("category", "construction");
@@ -4628,7 +4628,7 @@ struct ST_TriangulatePolygon {
 		FunctionBuilder::RegisterScalar(loader, "ST_TriangulatePolygon", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
 				v.AddParameter("geom", LogicalType::GEOMETRY()); v.SetReturnType(LogicalType::GEOMETRY());
-				v.SetBind(GeoTypes::PropagateCRS);
+				v.SetResolveTypes(GeoTypes::PropagateCRS);
 				v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
 			});
 			func.SetDescription("Returns constrained Delaunay triangulation of a polygon"); func.SetTag("ext", "spatial"); func.SetTag("category", "construction");
@@ -4648,7 +4648,7 @@ struct ST_Segmentize {
 		FunctionBuilder::RegisterScalar(loader, "ST_Segmentize", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
 				v.AddParameter("geom", LogicalType::GEOMETRY()); v.AddParameter("max_segment_length", LogicalType::DOUBLE);
-				v.SetReturnType(LogicalType::GEOMETRY()); v.SetBind(GeoTypes::PropagateCRS);
+				v.SetReturnType(LogicalType::GEOMETRY()); v.SetResolveTypes(GeoTypes::PropagateCRS);
 				v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
 			});
 			func.SetDescription("Densifies a geometry by adding vertices so no segment exceeds max_segment_length"); func.SetTag("ext", "spatial"); func.SetTag("category", "construction");
@@ -4668,7 +4668,7 @@ struct ST_SimplifyPolygonHull {
 		FunctionBuilder::RegisterScalar(loader, "ST_SimplifyPolygonHull", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
 				v.AddParameter("geom", LogicalType::GEOMETRY()); v.AddParameter("vertex_fraction", LogicalType::DOUBLE);
-				v.SetReturnType(LogicalType::GEOMETRY()); v.SetBind(GeoTypes::PropagateCRS);
+				v.SetReturnType(LogicalType::GEOMETRY()); v.SetResolveTypes(GeoTypes::PropagateCRS);
 				v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
 			});
 			func.SetDescription("Simplifies a polygon while preserving topology"); func.SetTag("ext", "spatial"); func.SetTag("category", "construction");
@@ -4686,7 +4686,7 @@ struct ST_MinimumBoundingCircle {
 		FunctionBuilder::RegisterScalar(loader, "ST_MinimumBoundingCircle", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
 				v.AddParameter("geom", LogicalType::GEOMETRY()); v.SetReturnType(LogicalType::GEOMETRY());
-				v.SetBind(GeoTypes::PropagateCRS);
+				v.SetResolveTypes(GeoTypes::PropagateCRS);
 				v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
 			});
 			func.SetDescription("Returns the minimum bounding circle of a geometry"); func.SetTag("ext", "spatial"); func.SetTag("category", "construction");
@@ -4706,7 +4706,7 @@ struct ST_LargestEmptyCircle {
 		FunctionBuilder::RegisterScalar(loader, "ST_LargestEmptyCircle", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
 				v.AddParameter("geom", LogicalType::GEOMETRY()); v.AddParameter("tolerance", LogicalType::DOUBLE);
-				v.SetReturnType(LogicalType::GEOMETRY()); v.SetBind(GeoTypes::PropagateCRS);
+				v.SetReturnType(LogicalType::GEOMETRY()); v.SetResolveTypes(GeoTypes::PropagateCRS);
 				v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
 			});
 			func.SetDescription("Returns the largest empty circle within a geometry"); func.SetTag("ext", "spatial"); func.SetTag("category", "construction");
@@ -4730,7 +4730,7 @@ struct ST_ClipByBox2D {
 		FunctionBuilder::RegisterScalar(loader, "ST_ClipByBox2D", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
 				v.AddParameter("geom", LogicalType::GEOMETRY()); v.AddParameter("box", LogicalType::GEOMETRY());
-				v.SetReturnType(LogicalType::GEOMETRY()); v.SetBind(GeoTypes::PropagateCRS);
+				v.SetReturnType(LogicalType::GEOMETRY()); v.SetResolveTypes(GeoTypes::PropagateCRS);
 				v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
 			});
 			func.SetDescription("Clips a geometry by a bounding box"); func.SetTag("ext", "spatial"); func.SetTag("category", "construction");
@@ -4805,7 +4805,7 @@ struct ST_MinimumClearanceLine {
 		FunctionBuilder::RegisterScalar(loader, "ST_MinimumClearanceLine", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
 				v.AddParameter("geom", LogicalType::GEOMETRY()); v.SetReturnType(LogicalType::GEOMETRY());
-				v.SetBind(GeoTypes::PropagateCRS);
+				v.SetResolveTypes(GeoTypes::PropagateCRS);
 				v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
 			});
 			func.SetDescription("Returns the line spanning the minimum clearance"); func.SetTag("ext", "spatial"); func.SetTag("category", "property");
@@ -4871,7 +4871,7 @@ struct ST_ForcePolygonCCW {
 		FunctionBuilder::RegisterScalar(loader, "ST_ForcePolygonCCW", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
 				v.AddParameter("geom", LogicalType::GEOMETRY()); v.SetReturnType(LogicalType::GEOMETRY());
-				v.SetBind(GeoTypes::PropagateCRS); v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
+				v.SetResolveTypes(GeoTypes::PropagateCRS); v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
 			});
 			func.SetDescription("Forces polygon exterior rings to be counter-clockwise"); func.SetTag("ext", "spatial"); func.SetTag("category", "construction");
 		});
@@ -4892,7 +4892,7 @@ struct ST_ForcePolygonCW {
 		FunctionBuilder::RegisterScalar(loader, "ST_ForcePolygonCW", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
 				v.AddParameter("geom", LogicalType::GEOMETRY()); v.SetReturnType(LogicalType::GEOMETRY());
-				v.SetBind(GeoTypes::PropagateCRS); v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
+				v.SetResolveTypes(GeoTypes::PropagateCRS); v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
 			});
 			func.SetDescription("Forces polygon exterior rings to be clockwise"); func.SetTag("ext", "spatial"); func.SetTag("category", "construction");
 		});
@@ -4946,7 +4946,7 @@ struct ST_SnapToGrid_GEOS {
 		FunctionBuilder::RegisterScalar(loader, "ST_SnapToGrid", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
 				v.AddParameter("geom", LogicalType::GEOMETRY()); v.AddParameter("size", LogicalType::DOUBLE);
-				v.SetReturnType(LogicalType::GEOMETRY()); v.SetBind(GeoTypes::PropagateCRS);
+				v.SetReturnType(LogicalType::GEOMETRY()); v.SetResolveTypes(GeoTypes::PropagateCRS);
 				v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
 			});
 			func.SetDescription("Snaps all coordinates to a grid of the given size"); func.SetTag("ext", "spatial"); func.SetTag("category", "construction");
@@ -5120,7 +5120,7 @@ struct ST_BoundingDiagonal_GEOS {
 		FunctionBuilder::RegisterScalar(loader, "ST_BoundingDiagonal", [](ScalarFunctionBuilder &func) {
 			func.AddVariant([](ScalarFunctionVariantBuilder &v) {
 				v.AddParameter("geom", LogicalType::GEOMETRY()); v.SetReturnType(LogicalType::GEOMETRY());
-				v.SetBind(GeoTypes::PropagateCRS);
+				v.SetResolveTypes(GeoTypes::PropagateCRS);
 				v.SetInit(LocalState::Init); v.SetFunction(Execute); v.CanThrowErrors();
 			});
 			func.SetDescription("Returns the diagonal of the bounding box as a linestring"); func.SetTag("ext", "spatial"); func.SetTag("category", "property");
@@ -5133,16 +5133,15 @@ struct ST_BoundingDiagonal_GEOS {
 struct ST_GeometryN_GEOS {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 		auto &lstate = LocalState::ResetAndGet(state);
-		BinaryExecutor::ExecuteWithNulls<string_t, int32_t, string_t>(
+		BinaryExecutor::Execute<string_t, int32_t, string_t>(
 		    args.data[0], args.data[1], result, args.size(),
-		    [&](const string_t &blob, int32_t n, ValidityMask &mask, idx_t row_idx) {
+		    [&](const string_t &blob, int32_t n) -> optional<string_t> {
 			    auto geom = lstate.Deserialize(blob);
 			    auto raw = geom.get_raw();
 			    // A single geometry counts as a collection of one
 			    auto num = GEOSGetNumGeometries_r(lstate.GetContext(), raw);
 			    if (n < 1 || n > num) {
-				    mask.SetInvalid(row_idx);
-				    return string_t();
+				    return nullopt;
 			    }
 			    auto sub = GEOSGetGeometryN_r(lstate.GetContext(), raw, n - 1);
 			    auto clone = GEOSGeom_clone_r(lstate.GetContext(), sub);
@@ -5155,7 +5154,7 @@ struct ST_GeometryN_GEOS {
 				v.AddParameter("geom", LogicalType::GEOMETRY());
 				v.AddParameter("n", LogicalType::INTEGER);
 				v.SetReturnType(LogicalType::GEOMETRY());
-				v.SetBind(GeoTypes::PropagateCRS);
+				v.SetResolveTypes(GeoTypes::PropagateCRS);
 				v.SetInit(LocalState::Init);
 				v.SetFunction(Execute);
 				v.CanThrowErrors();

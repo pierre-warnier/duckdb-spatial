@@ -98,7 +98,7 @@ void RoutingResult::Emit(idx_t &offset, DataChunk &output) const {
 		switch (column.storage) {
 		case Storage::INTEGER:
 			if (column.type.id() == LogicalTypeId::INTEGER) {
-				auto data = FlatVector::GetData<int32_t>(vector);
+				auto data = FlatVector::GetDataMutable<int32_t>(vector);
 				for (idx_t i = 0; i < count; i++) {
 					const auto value = column.integers[offset + i];
 					if (value > NumericLimits<int32_t>::Maximum() || value < NumericLimits<int32_t>::Minimum()) {
@@ -107,20 +107,20 @@ void RoutingResult::Emit(idx_t &offset, DataChunk &output) const {
 					data[i] = UnsafeNumericCast<int32_t>(value);
 				}
 			} else {
-				auto data = FlatVector::GetData<int64_t>(vector);
+				auto data = FlatVector::GetDataMutable<int64_t>(vector);
 				for (idx_t i = 0; i < count; i++) {
 					data[i] = column.integers[offset + i];
 				}
 			}
 			break;
 		case Storage::DOUBLE: {
-			auto data = FlatVector::GetData<double>(vector);
+			auto data = FlatVector::GetDataMutable<double>(vector);
 			for (idx_t i = 0; i < count; i++) {
 				data[i] = column.doubles[offset + i];
 			}
 		} break;
 		case Storage::STRING: {
-			auto data = FlatVector::GetData<string_t>(vector);
+			auto data = FlatVector::GetDataMutable<string_t>(vector);
 			for (idx_t i = 0; i < count; i++) {
 				data[i] = StringVector::AddStringOrBlob(vector, column.strings[offset + i]);
 			}

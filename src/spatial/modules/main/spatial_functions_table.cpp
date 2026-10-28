@@ -279,8 +279,8 @@ struct ST_SquareGrid {
 		auto &i_vec = output.data[1];
 		auto &j_vec = output.data[2];
 
-		auto i_data = FlatVector::GetData<int64_t>(i_vec);
-		auto j_data = FlatVector::GetData<int64_t>(j_vec);
+		auto i_data = FlatVector::GetDataMutable<int64_t>(i_vec);
+		auto j_data = FlatVector::GetDataMutable<int64_t>(j_vec);
 
 		for (idx_t k = 0; k < chunk_size; k++) {
 			const auto flat_idx = state.current_idx + k;
@@ -316,7 +316,7 @@ struct ST_SquareGrid {
 			auto str = StringVector::EmptyString(geom_vec, size);
 			Serde::Serialize(poly, str.GetDataWriteable(), size);
 			str.Finalize();
-			FlatVector::GetData<string_t>(geom_vec)[k] = str;
+			FlatVector::GetDataMutable<string_t>(geom_vec)[k] = str;
 		}
 
 		state.current_idx += chunk_size;
@@ -501,8 +501,8 @@ struct ST_HexagonGrid {
 		auto &i_vec = output.data[1];
 		auto &j_vec = output.data[2];
 
-		auto i_data = FlatVector::GetData<int64_t>(i_vec);
-		auto j_data = FlatVector::GetData<int64_t>(j_vec);
+		auto i_data = FlatVector::GetDataMutable<int64_t>(i_vec);
+		auto j_data = FlatVector::GetDataMutable<int64_t>(j_vec);
 
 		for (idx_t k = 0; k < chunk_size; k++) {
 			const auto flat_idx = state.current_idx + k;
@@ -547,7 +547,7 @@ struct ST_HexagonGrid {
 			auto str = StringVector::EmptyString(geom_vec, blob_size);
 			Serde::Serialize(poly, str.GetDataWriteable(), blob_size);
 			str.Finalize();
-			FlatVector::GetData<string_t>(geom_vec)[k] = str;
+			FlatVector::GetDataMutable<string_t>(geom_vec)[k] = str;
 		}
 
 		state.current_idx += chunk_size;
@@ -745,7 +745,7 @@ struct ST_DumpPoints {
 			auto blob = StringVector::EmptyString(geom_vec, blob_data.size());
 			memcpy(blob.GetDataWriteable(), blob_data.data(), blob_data.size());
 			blob.Finalize();
-			FlatVector::GetData<string_t>(geom_vec)[i] = blob;
+			FlatVector::GetDataMutable<string_t>(geom_vec)[i] = blob;
 
 			// Write path as LIST(INTEGER)
 			const auto &path = bind_data.paths[row_idx];
@@ -882,7 +882,7 @@ struct ST_DumpRings {
 
 		auto &geom_vec = output.data[0];
 		auto &path_vec = output.data[1];
-		auto path_data = FlatVector::GetData<int32_t>(path_vec);
+		auto path_data = FlatVector::GetDataMutable<int32_t>(path_vec);
 
 		for (idx_t i = 0; i < chunk_size; i++) {
 			const auto row_idx = state.current_idx + i;
@@ -891,7 +891,7 @@ struct ST_DumpRings {
 			auto blob = StringVector::EmptyString(geom_vec, blob_data.size());
 			memcpy(blob.GetDataWriteable(), blob_data.data(), blob_data.size());
 			blob.Finalize();
-			FlatVector::GetData<string_t>(geom_vec)[i] = blob;
+			FlatVector::GetDataMutable<string_t>(geom_vec)[i] = blob;
 
 			path_data[i] = bind_data.paths[row_idx];
 		}
@@ -1066,7 +1066,7 @@ struct ST_DumpSegments {
 
 		auto &geom_vec = output.data[0];
 		auto &path_vec = output.data[1];
-		auto path_data = FlatVector::GetData<int32_t>(path_vec);
+		auto path_data = FlatVector::GetDataMutable<int32_t>(path_vec);
 
 		for (idx_t i = 0; i < chunk_size; i++) {
 			const auto row_idx = state.current_idx + i;
@@ -1075,7 +1075,7 @@ struct ST_DumpSegments {
 			auto blob = StringVector::EmptyString(geom_vec, blob_data.size());
 			memcpy(blob.GetDataWriteable(), blob_data.data(), blob_data.size());
 			blob.Finalize();
-			FlatVector::GetData<string_t>(geom_vec)[i] = blob;
+			FlatVector::GetDataMutable<string_t>(geom_vec)[i] = blob;
 
 			path_data[i] = bind_data.paths[row_idx];
 		}

@@ -307,14 +307,14 @@ void OneRasterExecute(Call &c, MapAlgebraLocalState &local) {
 
 	vector<double> values(pixel_count);
 	vector<bool> valid(pixel_count);
-	const auto input_values = FlatVector::GetData<double>(local.input.data[VALUE_1]);
-	const auto input_x = FlatVector::GetData<int32_t>(local.input.data[X_1]);
-	const auto input_y = FlatVector::GetData<int32_t>(local.input.data[Y_1]);
+	const auto input_values = FlatVector::GetDataMutable<double>(local.input.data[VALUE_1]);
+	const auto input_x = FlatVector::GetDataMutable<int32_t>(local.input.data[X_1]);
+	const auto input_y = FlatVector::GetDataMutable<int32_t>(local.input.data[Y_1]);
 
 	for (idx_t offset = 0; offset < pixel_count; offset += STANDARD_VECTOR_SIZE) {
 		const auto count = MinValue<idx_t>(STANDARD_VECTOR_SIZE, pixel_count - offset);
 		local.input.Reset();
-		auto &validity = FlatVector::Validity(local.input.data[VALUE_1]);
+		auto &validity = FlatVector::ValidityMutable(local.input.data[VALUE_1]);
 		for (idx_t i = 0; i < count; i++) {
 			const auto pixel = offset + i;
 			input_values[i] = source.values[pixel];
@@ -426,12 +426,12 @@ void TwoRasterExecute(Call &c, MapAlgebraLocalState &local) {
 	vector<double> values(pixel_count);
 	vector<bool> valid(pixel_count);
 
-	const auto input_value1 = FlatVector::GetData<double>(local.input.data[VALUE_1]);
-	const auto input_x1 = FlatVector::GetData<int32_t>(local.input.data[X_1]);
-	const auto input_y1 = FlatVector::GetData<int32_t>(local.input.data[Y_1]);
-	const auto input_value2 = FlatVector::GetData<double>(local.input.data[VALUE_2]);
-	const auto input_x2 = FlatVector::GetData<int32_t>(local.input.data[X_2]);
-	const auto input_y2 = FlatVector::GetData<int32_t>(local.input.data[Y_2]);
+	const auto input_value1 = FlatVector::GetDataMutable<double>(local.input.data[VALUE_1]);
+	const auto input_x1 = FlatVector::GetDataMutable<int32_t>(local.input.data[X_1]);
+	const auto input_y1 = FlatVector::GetDataMutable<int32_t>(local.input.data[Y_1]);
+	const auto input_value2 = FlatVector::GetDataMutable<double>(local.input.data[VALUE_2]);
+	const auto input_x2 = FlatVector::GetDataMutable<int32_t>(local.input.data[X_2]);
+	const auto input_y2 = FlatVector::GetDataMutable<int32_t>(local.input.data[Y_2]);
 	bool has1[STANDARD_VECTOR_SIZE];
 	bool has2[STANDARD_VECTOR_SIZE];
 
@@ -441,8 +441,8 @@ void TwoRasterExecute(Call &c, MapAlgebraLocalState &local) {
 	for (idx_t offset = 0; offset < pixel_count; offset += STANDARD_VECTOR_SIZE) {
 		const auto count = MinValue<idx_t>(STANDARD_VECTOR_SIZE, pixel_count - offset);
 		local.input.Reset();
-		auto &validity1 = FlatVector::Validity(local.input.data[VALUE_1]);
-		auto &validity2 = FlatVector::Validity(local.input.data[VALUE_2]);
+		auto &validity1 = FlatVector::ValidityMutable(local.input.data[VALUE_1]);
+		auto &validity2 = FlatVector::ValidityMutable(local.input.data[VALUE_2]);
 		auto any_both = false;
 		auto any_only1 = false;
 		auto any_only2 = false;
@@ -530,7 +530,7 @@ void TwoRasterExecute(Call &c, MapAlgebraLocalState &local) {
 }
 
 void MapAlgebraExecute(DataChunk &args, ExpressionState &state, Vector &result) {
-	auto &bind_data = state.expr.Cast<BoundFunctionExpression>().bind_info->Cast<MapAlgebraBindData>();
+	auto &bind_data = state.expr.Cast<BoundFunctionExpression>().BindInfo()->Cast<MapAlgebraBindData>();
 	auto &local = ExecuteFunctionState::GetFunctionState(state)->Cast<MapAlgebraLocalState>();
 	ExecuteCall(
 	    *bind_data.params,
