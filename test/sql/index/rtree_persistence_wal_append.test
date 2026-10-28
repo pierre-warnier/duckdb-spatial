@@ -11,7 +11,10 @@
 
 require spatial
 
-load __TEST_DIR__/rtree_persistence_wal_append.db
+load {TEST_DIR}/rtree_persistence_wal_append.db
+
+statement ok
+SET profiling_renderer_settings = MAP {'operator_casing': 'upper'};
 
 statement ok
 SET checkpoint_threshold='1GB';
@@ -35,6 +38,9 @@ SELECT count(*) FROM t1 WHERE ST_Within(geom, ST_MakeEnvelope(9.5, 9.5, 20.5, 20
 121
 
 restart
+
+statement ok
+SET profiling_renderer_settings = MAP {'operator_casing': 'upper'};
 
 statement ok
 SET checkpoint_threshold='1GB';
@@ -75,6 +81,9 @@ statement ok
 DELETE FROM t1 WHERE rowid < 1000;
 
 restart
+
+statement ok
+SET profiling_renderer_settings = MAP {'operator_casing': 'upper'};
 
 statement ok
 SET checkpoint_threshold='1GB';

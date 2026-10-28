@@ -3,10 +3,10 @@
 
 require spatial
 
-statement ok
-PRAGMA enable_verification
-
 # Set up test tables
+statement ok
+SET profiling_renderer_settings = MAP {'operator_casing': 'upper'};
+
 statement ok
 CREATE TABLE lhs AS
 SELECT

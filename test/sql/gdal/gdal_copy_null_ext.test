@@ -10,8 +10,8 @@ require spatial
 
 statement ok
 COPY (SELECT ST_GeomFromText('POINT (0 0)') AS geom)
-TO '__TEST_DIR__/issue818.mapml' WITH (FORMAT GDAL, DRIVER 'MapML');
+TO '{TEST_DIR}/issue818.mapml' WITH (FORMAT GDAL, DRIVER 'MapML');
 
 statement ok
 COPY (SELECT ST_GeomFromText('POINT (0 0)') AS geom)
-TO '__TEST_DIR__/issue818.xml' WITH (FORMAT GDAL, DRIVER 'GeoRSS');
+TO '{TEST_DIR}/issue818.xml' WITH (FORMAT GDAL, DRIVER 'GeoRSS');

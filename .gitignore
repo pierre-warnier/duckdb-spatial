@@ -38,6 +38,8 @@ tmp
 .vscode
 duckdb_unittest_tempdir
 __pycache__
+.idea
+.cache
 
 # Local CI hooks and tooling
 .ci/

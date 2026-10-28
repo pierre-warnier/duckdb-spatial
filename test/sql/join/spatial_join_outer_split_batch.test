@@ -13,6 +13,9 @@
 require spatial
 
 statement ok
+SET profiling_renderer_settings = MAP {'operator_casing': 'upper'};
+
+statement ok
 PRAGMA threads=4;
 
 # Build side: 50x50 grid of points, ids 0..2499

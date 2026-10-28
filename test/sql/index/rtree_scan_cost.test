@@ -6,6 +6,9 @@
 # regular (filter-pushdown capable) table scan otherwise.
 require spatial
 
+statement ok
+SET profiling_renderer_settings = MAP {'operator_casing': 'upper'};
+
 # 50k uniform points: large enough to clear the rtree_index_scan_min_rows floor
 statement ok
 CREATE TABLE t1 AS SELECT point::GEOMETRY AS geom

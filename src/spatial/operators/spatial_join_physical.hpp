@@ -11,8 +11,8 @@ class DynamicTableFilterSet;
 struct SpatialJoinPushdownTarget {
 	//! The dynamic table filter set of the probe-side LogicalGet to push the filter into
 	shared_ptr<DynamicTableFilterSet> dynamic_filters;
-	//! The storage column index of the probe-side geometry column
-	idx_t probe_column_index;
+	//! The projection index of the probe-side geometry column in the LogicalGet
+	ProjectionIndex probe_column_index;
 	//! The type of the probe-side geometry column. The pushed filter's column reference must use this
 	//! exact type (it may be a GEOMETRY with a CRS, which does not compare equal to plain GEOMETRY).
 	LogicalType column_type;

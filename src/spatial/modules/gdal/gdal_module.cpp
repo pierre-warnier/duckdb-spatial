@@ -4,6 +4,9 @@
 
 // DUCKDB
 #include "duckdb/main/extension/extension_loader.hpp"
+#include "duckdb/logging/logger.hpp"
+#include "duckdb/planner/expression_iterator.hpp"
+#include "duckdb/planner/expression/bound_columnref_expression.hpp"
 #include "duckdb/function/copy_function.hpp"
 #include "duckdb/function/table/arrow.hpp"
 #include "duckdb/common/arrow/arrow_converter.hpp"
@@ -15,6 +18,7 @@
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/common/multi_file/multi_file_reader.hpp"
 #include "duckdb/common/types/uuid.hpp"
+#include "duckdb/common/operator/cast_operators.hpp"
 #include "duckdb/parser/tableref/table_function_ref.hpp"
 
 #include <utility>
@@ -26,14 +30,12 @@
 #include "ogr_srs_api.h"
 #include "ogrsf_frmts.h"
 #include "cpl_string.h"
-#include "cpl_minixml.h"
 #include "cpl_error.h"
 #include "cpl_vsi.h"
 #include "cpl_vsi_error.h"
 #include "cpl_vsi_virtual.h"
 #include "duckdb/common/types/geometry_crs.hpp"
 #include "duckdb/main/settings.hpp"
-#include "duckdb/common/operator/cast_operators.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "spatial/spatial_settings.hpp"
@@ -128,7 +130,7 @@ auto VSIGuard(FUNC &&func, decltype(std::declval<FUNC &>()()) error_value) -> de
 class DuckDBFileHandle final : public VSIVirtualHandle {
 public:
 	explicit DuckDBFileHandle(unique_ptr<FileHandle> file_handle_p)
-	    : file_handle(std::move(file_handle_p)), is_eof(false), can_seek(file_handle->CanSeek()) {
+	    : file_handle(std::move(file_handle_p)), is_eof(false), is_error(false), can_seek(file_handle->CanSeek()) {
 	}
 
 	vsi_l_offset Tell() override {
@@ -187,9 +189,11 @@ public:
 			if (file_handle->SeekPosition() == file_handle->GetFileSize()) {
 				is_eof = true;
 			} else {
+				is_error = true;
 				VSIError(VSIE_FileError, "%s", CleanGDALMessage(ex.what()).c_str());
 			}
 		} catch (...) {
+			is_error = true;
 			VSIError(VSIE_FileError, "Unknown error reading file");
 		}
 
@@ -198,6 +202,15 @@ public:
 
 	int Eof() override {
 		return is_eof ? TRUE : FALSE;
+	}
+
+	int Error() override {
+		return is_error ? TRUE : FALSE;
+	}
+
+	void ClearErr() override {
+		is_eof = false;
+		is_error = false;
 	}
 
 	size_t Write(const void *buffer, size_t size, size_t count) override {
@@ -240,6 +253,7 @@ public:
 private:
 	unique_ptr<FileHandle> file_handle = nullptr;
 	bool is_eof = false;
+	bool is_error = false;
 	bool can_seek = false;
 };
 
@@ -255,8 +269,8 @@ public:
 		return client_prefix + value;
 	}
 
-	VSIVirtualHandle *Open(const char *gdal_file_path, const char *access, bool set_error,
-	                       CSLConstList /*papszoptions */) override {
+	VSIVirtualHandleUniquePtr Open(const char *gdal_file_path, const char *access, bool set_error,
+	                               CSLConstList /*papszoptions */) override {
 
 		// Strip the prefix to get the real file path
 		const auto real_file_path = StripPrefix(gdal_file_path);
@@ -304,7 +318,7 @@ public:
 
 		try {
 			auto file = fs.OpenFile(real_file_path, flags | FileCompressionType::AUTO_DETECT);
-			return new DuckDBFileHandle(std::move(file));
+			return VSIVirtualHandleUniquePtr(new DuckDBFileHandle(std::move(file)));
 
 		} catch (std::exception &ex) {
 
@@ -409,7 +423,7 @@ public:
 		    -1);
 	}
 
-	bool IsLocal(const char *gdal_file_path) override {
+	bool IsLocal(const char *gdal_file_path) const override {
 		const auto real_file_path = StripPrefix(gdal_file_path);
 		return !FileSystem::IsRemoteFile(real_file_path);
 	}
@@ -512,7 +526,8 @@ public:
 		}
 	}
 
-	int Rename(const char *oldpath, const char *newpath) override {
+	int Rename(const char *oldpath, const char *newpath, GDALProgressFunc /*pfnProgress*/,
+	           void * /*pProgressData*/) override {
 		auto &fs = FileSystem::GetFileSystem(context);
 		const auto real_old_path = StripPrefix(oldpath);
 		const auto real_new_path = StripPrefix(newpath);
@@ -646,8 +661,8 @@ public:
 	OGRwkbGeometryType layer_type = wkbUnknown;
 };
 
-auto Bind(ClientContext &ctx, TableFunctionBindInput &input, vector<LogicalType> &col_types, vector<string> &col_names)
-    -> unique_ptr<FunctionData> {
+auto Bind(ClientContext &ctx, TableFunctionBindInput &input, vector<LogicalType> &col_types,
+          vector<Identifier> &col_names) -> unique_ptr<FunctionData> {
 
 	auto result = make_uniq<BindData>();
 
@@ -706,7 +721,7 @@ auto Bind(ClientContext &ctx, TableFunctionBindInput &input, vector<LogicalType>
 		ThrowGDALError(StringUtil::Format("Could not open GDAL dataset at: %s", result->real_file_path));
 	}
 
-	// Zero-initialized: if an error is raised before they are filled, the cleanup below must not call garbage
+	// Zero-initialize so that the cleanup path below can safely check the release callbacks
 	ArrowSchema schema = {};
 	ArrowArrayStream stream = {};
 
@@ -720,37 +735,37 @@ auto Bind(ClientContext &ctx, TableFunctionBindInput &input, vector<LogicalType>
 		// Find layer
 		const auto layer_param = input.named_parameters.find("layer");
 
-		if (layer_param != input.named_parameters.end()) {
-			if (layer_param->second.IsNull()) {
-				throw BinderException("ST_Read: the layer must not be NULL");
-			}
-			// A layer is chosen by name, or by its index (counted from 0) when no layer has that name
-			const auto layer_name = layer_param->second.ToString();
+		// A NULL layer means "use the first layer"
+		if (layer_param != input.named_parameters.end() && !layer_param->second.IsNull()) {
+			const auto &layer_name = StringValue::Get(layer_param->second);
 			auto found = false;
-			vector<string> layer_names;
+
+			// First, try to find the layer by name
 			for (int i = 0; i < layer_count; i++) {
 				const auto layer = GDALDatasetGetLayer(dataset, i);
 				if (!layer) {
 					continue;
 				}
-				layer_names.push_back(OGR_L_GetName(layer));
-				if (!found && layer_names.back() == layer_name) {
+				if (OGR_L_GetName(layer) == layer_name) {
 					result->layer_idx = i;
 					found = true;
+					break;
 				}
 			}
-			if (!found) {
-				int64_t layer_idx;
-				if (TryCast::Operation<string_t, int64_t>(string_t(layer_name), layer_idx, true)) {
-					if (layer_idx < 0 || layer_idx >= layer_count) {
-						throw BinderException("ST_Read: layer index %lld is out of range, the dataset has %d layer(s)",
-						                      static_cast<long long>(layer_idx), layer_count);
-					}
-					result->layer_idx = NumericCast<idx_t>(layer_idx);
-				} else {
-					throw BinderException("ST_Read: could not find a layer named '%s', the dataset has: %s", layer_name,
-					                      StringUtil::Join(layer_names, ", "));
+
+			// Otherwise, try to interpret the value as a layer index
+			int32_t layer_idx;
+			if (!found && TryCast::Operation(string_t(layer_name), layer_idx, true)) {
+				if (layer_idx < 0 || layer_idx >= layer_count) {
+					throw BinderException("Layer index out of range (%d), dataset has %d layer(s)", layer_idx,
+					                      layer_count);
 				}
+				result->layer_idx = layer_idx;
+				found = true;
+			}
+
+			if (!found) {
+				throw BinderException("Could not find layer with name: %s", layer_name);
 			}
 		}
 
@@ -776,17 +791,13 @@ auto Bind(ClientContext &ctx, TableFunctionBindInput &input, vector<LogicalType>
 		// Get the layer geometry type if available
 		result->layer_type = OGR_L_GetGeomType(layer);
 
-		// Suppress the auto-FID column when it would collide with a regular attribute.
-		// Some drivers (e.g. GeoJSON) return "" from GetFIDColumn but still synthesize
-		// an "ogc_fid" column — check for that name explicitly as a fallback.
+		// Only suppress the FID if the layer already exposes it as a regular attribute field
 		const auto fid_col = OGR_L_GetFIDColumn(layer);
-		const auto layer_defn = OGR_L_GetLayerDefn(layer);
 		if (fid_col && strcmp(fid_col, "") != 0) {
+			const auto layer_defn = OGR_L_GetLayerDefn(layer);
 			if (OGR_FD_GetFieldIndex(layer_defn, fid_col) >= 0) {
 				result->layer_options.AddString("INCLUDE_FID=NO");
 			}
-		} else if (OGR_FD_GetFieldIndex(layer_defn, "ogc_fid") >= 0) {
-			result->layer_options.AddString("INCLUDE_FID=NO");
 		}
 
 		const auto geom_col_name = OGR_L_GetGeometryColumn(layer);
@@ -817,7 +828,7 @@ auto Bind(ClientContext &ctx, TableFunctionBindInput &input, vector<LogicalType>
 				// Rename the geometry column to "geom" unless keep_wkb is set
 				col_names.push_back("geom");
 			} else {
-				col_names.push_back(child_schema.name);
+				col_names.emplace_back(child_schema.name);
 			}
 
 			if (duck_type.id() != LogicalTypeId::GEOMETRY) {
@@ -904,16 +915,16 @@ auto Pushdown(ClientContext &context, LogicalGet &get, FunctionData *bind_data, 
 		if (expr->GetExpressionType() != ExpressionType::BOUND_FUNCTION) {
 			continue;
 		}
-		if (expr->return_type != LogicalType::BOOLEAN) {
+		if (expr->GetReturnType() != LogicalType::BOOLEAN) {
 			continue;
 		}
 		const auto &func = expr->Cast<BoundFunctionExpression>();
-		if (func.children.size() != 2) {
+		if (func.GetChildren().size() != 2) {
 			continue;
 		}
 
-		if (func.children[0]->return_type.id() != LogicalTypeId::GEOMETRY ||
-		    func.children[1]->return_type.id() != LogicalTypeId::GEOMETRY) {
+		if (func.GetChildren()[0]->GetReturnType().id() != LogicalTypeId::GEOMETRY ||
+		    func.GetChildren()[1]->GetReturnType().id() != LogicalTypeId::GEOMETRY) {
 			continue;
 		}
 
@@ -924,7 +935,7 @@ auto Pushdown(ClientContext &context, LogicalGet &get, FunctionData *bind_data, 
 
 		auto found = false;
 		for (const auto &name : geometry_predicates) {
-			if (StringUtil::CIEquals(func.function.name.c_str(), name)) {
+			if (StringUtil::CIEquals(func.Function().GetName().c_str(), name)) {
 				found = true;
 				break;
 			}
@@ -934,8 +945,8 @@ auto Pushdown(ClientContext &context, LogicalGet &get, FunctionData *bind_data, 
 			continue;
 		}
 
-		const auto lhs_kind = func.children[0]->GetExpressionType();
-		const auto rhs_kind = func.children[1]->GetExpressionType();
+		const auto lhs_kind = func.GetChildren()[0]->GetExpressionType();
+		const auto rhs_kind = func.GetChildren()[1]->GetExpressionType();
 
 		const auto lhs_is_const = lhs_kind == ExpressionType::VALUE_CONSTANT;
 		const auto rhs_is_const = rhs_kind == ExpressionType::VALUE_CONSTANT;
@@ -945,8 +956,8 @@ auto Pushdown(ClientContext &context, LogicalGet &get, FunctionData *bind_data, 
 			continue;
 		}
 
-		auto &constant_expr = func.children[lhs_is_const ? 0 : 1]->Cast<BoundConstantExpression>();
-		auto &geometry_expr = func.children[lhs_is_const ? 1 : 0];
+		auto &constant_expr = func.GetChildren()[lhs_is_const ? 0 : 1]->Cast<BoundConstantExpression>();
+		auto &geometry_expr = func.GetChildren()[lhs_is_const ? 1 : 0];
 
 		auto found_geom_expr = false;
 		auto multi_geom_expr = false;
@@ -956,13 +967,13 @@ auto Pushdown(ClientContext &context, LogicalGet &get, FunctionData *bind_data, 
 				    multi_geom_expr = true;
 				    return;
 			    }
-			    if (ref.binding.table_index != get.table_index) {
+			    if (ref.Binding().table_index != get.table_index) {
 				    // Not from the same table
 				    return;
 			    }
 
 			    const auto &col_ids = get.GetColumnIds();
-			    const auto &col = col_ids[ref.binding.column_index];
+			    const auto &col = col_ids[ref.Binding().column_index];
 
 			    if (!col.HasPrimaryIndex()) {
 				    return;
@@ -978,21 +989,21 @@ auto Pushdown(ClientContext &context, LogicalGet &get, FunctionData *bind_data, 
 			continue;
 		}
 
-		if (constant_expr.value.type().id() != LogicalTypeId::GEOMETRY) {
+		if (constant_expr.GetValue().type().id() != LogicalTypeId::GEOMETRY) {
 			// Constant is not geometry
 			continue;
 		}
-		if (constant_expr.value.IsNull()) {
+		if (constant_expr.GetValue().IsNull()) {
 			// Constant is NULL
 			continue;
 		}
-		if (geometry_expr->return_type.id() != LogicalTypeId::GEOMETRY) {
+		if (geometry_expr->GetReturnType().id() != LogicalTypeId::GEOMETRY) {
 			// Not the geometry column
 			continue;
 		}
 
 		auto geom_extent = GeometryExtent::Empty();
-		auto geom_binary = string_t(StringValue::Get(constant_expr.value));
+		auto geom_binary = string_t(StringValue::Get(constant_expr.GetValue()));
 
 		if (Geometry::GetExtent(geom_binary, geom_extent)) {
 			bdata.has_filter = true;
@@ -1006,7 +1017,7 @@ auto Pushdown(ClientContext &context, LogicalGet &get, FunctionData *bind_data, 
 		// We can __ONLY__ do this if the filter predicate is "&&" or "st_intersects_extent"
 		// as other predicates may require exact geometry evaluation, the filter cannot be fully removed
 		for (auto &name : {"&&", "ST_Intersects_Extent"}) {
-			if (StringUtil::CIEquals(func.function.name.c_str(), name)) {
+			if (StringUtil::CIEquals(func.Function().GetName().c_str(), name)) {
 				geom_filter_idx = expr_idx;
 				break;
 			}
@@ -1041,11 +1052,11 @@ public:
 		}
 	}
 
-	GDALDatasetH dataset;
+	GDALDatasetH dataset = nullptr;
 	CPLStringList layer_options;
-	OGRLayerH layer;
-	ArrowArrayStream stream;
-	ArrowSchema schema;
+	OGRLayerH layer = nullptr;
+	ArrowArrayStream stream = {};
+	ArrowSchema schema = {};
 	vector<unique_ptr<ArrowType>> col_types;
 	atomic<idx_t> features_read = {0};
 };
@@ -1084,6 +1095,10 @@ auto InitGlobal(ClientContext &context, TableFunctionInitInput &input) -> unique
 				OGR_F_Destroy(feature);
 			}
 		}
+	}
+
+	if (!result->layer) {
+		throw IOException("Could not get GDAL layer at: %s", bdata.real_file_path);
 	}
 
 	// Set the filter, if we got one
@@ -1158,6 +1173,7 @@ void Scan(ClientContext &context, TableFunctionInput &input, DataChunk &output) 
 		default:
 			throw NotImplementedException("ArrowArrayPhysicalType not recognized");
 		}
+		FlatVector::SetSize(vec, count_t(arrow_array.length));
 	}
 
 	state.features_read += arrow_array.length;
@@ -1256,7 +1272,7 @@ auto ReplacementScan(ClientContext &, ReplacementScanInput &input, optional_ptr<
 
 		auto table_function = make_uniq<TableFunctionRef>();
 		vector<unique_ptr<ParsedExpression>> children;
-		children.push_back(make_uniq<ConstantExpression>(Value(table_name)));
+		children.push_back(ConstantExpression::FromValue(Value(table_name)));
 		table_function->function = make_uniq<FunctionExpression>("ST_Read", std::move(children));
 		return std::move(table_function);
 	}
@@ -1332,19 +1348,23 @@ static constexpr auto EXAMPLE = R"(
 	)";
 
 void Register(ExtensionLoader &loader) {
-	TableFunction read_func("ST_Read", {LogicalType::VARCHAR}, Scan, Bind, InitGlobal);
+	FunctionSignature signature;
+	signature.AddParameter("file_name", LogicalType::VARCHAR).WithTypedKwargs("options", [&](TypedKwargs &options) {
+		options.Add("open_options", LogicalType::LIST(LogicalType::VARCHAR))
+		    .Add("allowed_drivers", LogicalType::LIST(LogicalType::VARCHAR))
+		    .Add("sibling_files", LogicalType::LIST(LogicalType::VARCHAR))
+		    .Add("layer", LogicalType::VARCHAR)
+		    .Add("max_batch_size", LogicalType::INTEGER)
+		    .Add("keep_wkb", LogicalType::BOOLEAN);
+	});
+
+	TableFunction read_func("ST_Read", std::move(signature), Scan, Bind, InitGlobal);
 	read_func.cardinality = Cardinality;
 	read_func.statistics = Statistics;
 	read_func.table_scan_progress = Progress;
 	read_func.pushdown_complex_filter = Pushdown;
 	read_func.to_string = ToString;
-
-	read_func.named_parameters["open_options"] = LogicalType::LIST(LogicalType::VARCHAR);
-	read_func.named_parameters["allowed_drivers"] = LogicalType::LIST(LogicalType::VARCHAR);
-	read_func.named_parameters["sibling_files"] = LogicalType::LIST(LogicalType::VARCHAR);
-	read_func.named_parameters["layer"] = LogicalType::VARCHAR;
-	read_func.named_parameters["max_batch_size"] = LogicalType::INTEGER;
-	read_func.named_parameters["keep_wkb"] = LogicalType::BOOLEAN;
+	read_func.parallelism = TableFunctionParallelism::SEQUENTIAL;
 
 	loader.RegisterFunction(read_func);
 
@@ -1422,8 +1442,8 @@ public:
 	}
 };
 
-bool MatchOption(const char *name, const pair<string, vector<Value>> &option, bool list = false) {
-	if (StringUtil::CIEquals(name, option.first)) {
+bool MatchOption(const char *name, const pair<const Identifier, vector<Value>> &option, bool list = false) {
+	if (option.first == name) {
 		if (option.second.empty()) {
 			throw BinderException("GDAL COPY option '%s' requires a value", name);
 		}
@@ -1446,7 +1466,7 @@ bool MatchOption(const char *name, const pair<string, vector<Value>> &option, bo
 	return false;
 }
 
-auto Bind(ClientContext &context, CopyFunctionBindInput &input, const vector<string> &names,
+auto Bind(ClientContext &context, CopyFunctionBindInput &input, const vector<Identifier> &names,
           const vector<LogicalType> &sql_types) -> unique_ptr<FunctionData> {
 	auto result = make_uniq<BindData>();
 
@@ -1510,26 +1530,6 @@ auto Bind(ClientContext &context, CopyFunctionBindInput &input, const vector<str
 		throw BinderException("Unknown GDAL COPY option: '%s'", option.first);
 	}
 
-	// Read the global geometry_always_xy setting to control axis order
-	{
-		bool is_set = false;
-		result->always_xy = SpatialSettings::AlwaysXY(context, is_set);
-
-		if (!is_set) {
-			constexpr auto message =
-			    "GDAL COPY TO with an SRS is sensitive to the coordinate axis order.\n"
-			    "DuckDB GEOMETRY uses [EASTING, NORTHING] (= LONGITUDE, LATITUDE) internally.\n"
-			    "Without 'geometry_always_xy', GDAL may interpret coordinates in authority-defined order\n"
-			    "(e.g., [LATITUDE, LONGITUDE] for EPSG:4326), causing incorrect output in KML and similar formats.\n"
-			    "To avoid unexpected results:\n"
-			    " * 'SET geometry_always_xy = true' to always use [EASTING, NORTHING] (recommended)\n"
-			    " * 'SET geometry_always_xy = false' to use authority-defined axis order";
-
-			auto &logger = Logger::Get(context);
-			logger.WriteLog("Spatial", LogLevel::LOG_WARNING, message);
-		}
-	}
-
 	// If no override SRS is set, we will use the SRS of the first geometry column
 	if (result->target_srs.empty()) {
 		for (auto &col : sql_types) {
@@ -1538,6 +1538,17 @@ auto Bind(ClientContext &context, CopyFunctionBindInput &input, const vector<str
 				break;
 			}
 		}
+	}
+
+	// Read the global geometry_always_xy setting to control axis order.
+	// The axis order only matters when the output has an SRS, so only require the setting in that case.
+	if (!result->target_srs.empty()) {
+		constexpr auto message =
+		    "GDAL COPY TO with an SRS is sensitive to the coordinate axis order.\n"
+		    "DuckDB GEOMETRY uses [EASTING, NORTHING] (= LONGITUDE, LATITUDE) internally.\n"
+		    "Unless 'geometry_always_xy' is enabled, GDAL interprets coordinates in authority-defined order\n"
+		    "(e.g., [LATITUDE, LONGITUDE] for EPSG:4326), causing incorrect output in KML and similar formats.";
+		result->always_xy = SpatialSettings::AlwaysXYOrThrow(context, message);
 	}
 
 	// Check that options are valid
@@ -1576,7 +1587,7 @@ auto Bind(ClientContext &context, CopyFunctionBindInput &input, const vector<str
 	// Setup arrow schema
 	result->props = context.GetClientProperties();
 	result->extension_type_cast = duckdb::ArrowTypeExtensionData::GetExtensionTypes(context, sql_types);
-	ArrowConverter::ToArrowSchema(&result->schema, sql_types, names, result->props);
+	ArrowConverter::ToArrowSchema(&result->schema, sql_types, IdentifiersToStrings(names), result->props);
 
 	return std::move(result);
 }
@@ -1880,329 +1891,6 @@ void Register(ExtensionLoader &loader) {
 } // namespace gdal_copy
 } // namespace
 
-string GDALFileSystemPath(ClientContext &context, const string &path) {
-	return DuckDBFileSystemPrefix::GetOrCreate(context).AddPrefix(path);
-}
-
-//======================================================================================================================
-// GML / KML
-//======================================================================================================================
-namespace gdal_markup {
-
-struct OGRGeometryDeleter {
-	void operator()(OGRGeometryH geom) const {
-		OGR_G_DestroyGeometry(geom);
-	}
-};
-using OGRGeometryPtr = std::unique_ptr<std::remove_pointer<OGRGeometryH>::type, OGRGeometryDeleter>;
-
-struct CPLStringDeleter {
-	void operator()(char *str) const {
-		CPLFree(str);
-	}
-};
-using CPLStringPtr = std::unique_ptr<char, CPLStringDeleter>;
-
-[[noreturn]] static void ThrowMarkupError(const string &fallback) {
-	string msg = fallback;
-	if (CPLGetLastErrorType() >= CE_Failure) {
-		msg += ": " + CleanGDALMessage(CPLGetLastErrorMsg());
-	}
-	CPLErrorReset();
-	throw InvalidInputException(msg);
-}
-
-static OGRGeometryPtr GeometryFromWKB(const string_t &wkb) {
-	OGRGeometryH geom = nullptr;
-	CPLErrorReset();
-	const auto err = OGR_G_CreateFromWkb(wkb.GetData(), nullptr, &geom, static_cast<int>(wkb.GetSize()));
-	OGRGeometryPtr result(geom);
-	if (err != OGRERR_NONE || !result) {
-		ThrowMarkupError("Could not convert geometry");
-	}
-	// An empty point is stored with NaN coordinates, which OGR reads back as a regular point
-	if (wkbFlatten(OGR_G_GetGeometryType(geom)) == wkbPoint && std::isnan(OGR_G_GetX(geom, 0))) {
-		OGR_G_Empty(geom);
-	}
-	return result;
-}
-
-static string_t GeometryToBlob(OGRGeometryH geom, Vector &result, vector<data_t> &buffer) {
-	buffer.resize(OGR_G_WkbSizeEx(geom));
-	if (OGR_G_ExportToIsoWkb(geom, wkbNDR, buffer.data()) != OGRERR_NONE) {
-		ThrowMarkupError("Could not convert geometry");
-	}
-	const string_t wkb(const_char_ptr_cast(buffer.data()), NumericCast<uint32_t>(buffer.size()));
-	string_t blob;
-	Geometry::FromBinary(wkb, blob, result, true);
-	return blob;
-}
-
-struct CPLXMLTreeDeleter {
-	void operator()(CPLXMLNode *node) const {
-		CPLDestroyXMLNode(node);
-	}
-};
-
-// GDAL reads coordinates with atof and silently turns anything it cannot parse into 0
-static void VerifyCoordinates(const CPLXMLNode *node, const char *format) {
-	static const char *const COORDINATE_ELEMENTS[] = {"coordinates", "pos", "posList", "X", "Y", "Z"};
-
-	for (; node; node = node->psNext) {
-		if (node->eType != CXT_Element) {
-			continue;
-		}
-		auto is_coordinate_element = false;
-		for (const auto name : COORDINATE_ELEMENTS) {
-			is_coordinate_element = is_coordinate_element || EQUAL(node->pszValue, name);
-		}
-		if (!is_coordinate_element) {
-			VerifyCoordinates(node->psChild, format);
-			continue;
-		}
-		for (auto child = node->psChild; child; child = child->psNext) {
-			if (child->eType != CXT_Text) {
-				continue;
-			}
-			for (auto c = child->pszValue; *c; c++) {
-				if (!StringUtil::CharacterIsDigit(*c) && !StringUtil::CharacterIsSpace(*c) && !strchr("+-.,eE", *c)) {
-					throw InvalidInputException("Could not parse %s geometry: invalid coordinates '%s'", format,
-					                            child->pszValue);
-				}
-			}
-		}
-	}
-}
-
-// KML geometries use the element names and coordinate syntax of GML 2, which GDAL's GML parser handles, except for
-// MultiGeometry, whose members are direct children instead of being wrapped in member elements
-static OGRGeometryPtr ParseNode(const CPLXMLNode *node, bool is_kml) {
-	const auto fallback = is_kml ? "Could not parse KML geometry" : "Could not parse GML geometry";
-	if (!is_kml || !EQUAL(node->pszValue, "MultiGeometry")) {
-		OGRGeometryPtr geom(OGR_G_CreateFromGMLTree(node));
-		if (!geom) {
-			ThrowMarkupError(fallback);
-		}
-		return geom;
-	}
-	OGRGeometryPtr collection(OGR_G_CreateGeometry(wkbGeometryCollection));
-	for (auto child = node->psChild; child; child = child->psNext) {
-		if (child->eType != CXT_Element) {
-			continue;
-		}
-		auto member = ParseNode(child, is_kml);
-		if (OGR_G_AddGeometryDirectly(collection.get(), member.get()) != OGRERR_NONE) {
-			ThrowMarkupError(fallback);
-		}
-		member.release();
-	}
-	return collection;
-}
-
-template <bool IS_KML>
-static void ParseExecute(DataChunk &args, ExpressionState &state, Vector &result) {
-	const auto format = IS_KML ? "KML" : "GML";
-	const auto fallback = IS_KML ? "Could not parse KML geometry" : "Could not parse GML geometry";
-
-	vector<data_t> buffer;
-	UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &input) {
-		const auto text = input.GetString();
-		CPLErrorReset();
-		const std::unique_ptr<CPLXMLNode, CPLXMLTreeDeleter> tree(CPLParseXMLString(text.c_str()));
-		if (!tree) {
-			ThrowMarkupError(fallback);
-		}
-		CPLStripXMLNamespace(tree.get(), nullptr, TRUE);
-
-		// Skip the XML declaration and comments in front of the geometry element
-		const CPLXMLNode *root = tree.get();
-		while (root && root->eType != CXT_Element) {
-			root = root->psNext;
-		}
-		if (!root) {
-			ThrowMarkupError(fallback);
-		}
-		VerifyCoordinates(root->psChild, format);
-
-		const auto geom = ParseNode(root, IS_KML);
-		return GeometryToBlob(geom.get(), result, buffer);
-	});
-}
-
-// Neither format can represent an empty geometry or M values: empty geometries become NULL and M values are dropped
-static bool PrepareExport(OGRGeometryH geom, ValidityMask &mask, idx_t row_idx) {
-	if (OGR_G_IsEmpty(geom)) {
-		mask.SetInvalid(row_idx);
-		return false;
-	}
-	OGR_G_SetMeasured(geom, FALSE);
-	return true;
-}
-
-static string_t ExportGML(const string_t &wkb, int32_t version, Vector &result, ValidityMask &mask, idx_t row_idx) {
-	if (version != 2 && version != 3) {
-		throw InvalidInputException("ST_AsGML: version must be 2 or 3, got %d", version);
-	}
-	const auto geom = GeometryFromWKB(wkb);
-	if (!PrepareExport(geom.get(), mask, row_idx)) {
-		return string_t();
-	}
-	const char *const options[] = {version == 2 ? "FORMAT=GML2" : "FORMAT=GML3", nullptr};
-	CPLErrorReset();
-	const CPLStringPtr gml(OGR_G_ExportToGMLEx(geom.get(), const_cast<char **>(options)));
-	if (!gml) {
-		ThrowMarkupError("Could not export geometry to GML");
-	}
-	return StringVector::AddString(result, gml.get());
-}
-
-static void AsGMLExecute(DataChunk &args, ExpressionState &state, Vector &result) {
-	const auto count = args.size();
-	Vector wkb_vec(LogicalType::BLOB, count);
-	Geometry::ToBinary(args.data[0], wkb_vec, count);
-	UnaryExecutor::ExecuteWithNulls<string_t, string_t>(
-	    wkb_vec, result, count,
-	    [&](const string_t &wkb, ValidityMask &mask, idx_t row_idx) { return ExportGML(wkb, 2, result, mask, row_idx); });
-}
-
-static void AsGMLVersionExecute(DataChunk &args, ExpressionState &state, Vector &result) {
-	const auto count = args.size();
-	Vector wkb_vec(LogicalType::BLOB, count);
-	Geometry::ToBinary(args.data[1], wkb_vec, count);
-	BinaryExecutor::ExecuteWithNulls<int32_t, string_t, string_t>(
-	    args.data[0], wkb_vec, result, count,
-	    [&](int32_t version, const string_t &wkb, ValidityMask &mask, idx_t row_idx) {
-		    return ExportGML(wkb, version, result, mask, row_idx);
-	    });
-}
-
-static void AsKMLExecute(DataChunk &args, ExpressionState &state, Vector &result) {
-	const auto count = args.size();
-	Vector wkb_vec(LogicalType::BLOB, count);
-	Geometry::ToBinary(args.data[0], wkb_vec, count);
-	UnaryExecutor::ExecuteWithNulls<string_t, string_t>(
-	    wkb_vec, result, count, [&](const string_t &wkb, ValidityMask &mask, idx_t row_idx) {
-		    const auto geom = GeometryFromWKB(wkb);
-		    if (!PrepareExport(geom.get(), mask, row_idx)) {
-			    return string_t();
-		    }
-
-		    // GDAL silently wraps longitudes into [-180, 180], which would corrupt projected coordinates
-		    OGREnvelope envelope;
-		    OGR_G_GetEnvelope(geom.get(), &envelope);
-		    if (envelope.MinX < -180 || envelope.MaxX > 180 || envelope.MinY < -90 || envelope.MaxY > 90) {
-			    throw InvalidInputException(
-			        "ST_AsKML: coordinates are not longitude/latitude in degrees, transform the geometry to "
-			        "'EPSG:4326' (with always_xy := true) first");
-		    }
-
-		    CPLErrorReset();
-		    const CPLStringPtr kml(OGR_G_ExportToKML(geom.get(), nullptr));
-		    if (!kml) {
-			    ThrowMarkupError("Could not export geometry to KML");
-		    }
-		    return StringVector::AddString(result, kml.get());
-	    });
-}
-
-static void Register(ExtensionLoader &loader) {
-	FunctionBuilder::RegisterScalar(loader, "ST_AsGML", [](ScalarFunctionBuilder &func) {
-		func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
-			variant.AddParameter("geom", LogicalType::GEOMETRY());
-			variant.SetReturnType(LogicalType::VARCHAR);
-			variant.SetFunction(AsGMLExecute);
-			variant.CanThrowErrors();
-		});
-		func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
-			variant.AddParameter("version", LogicalType::INTEGER);
-			variant.AddParameter("geom", LogicalType::GEOMETRY());
-			variant.SetReturnType(LogicalType::VARCHAR);
-			variant.SetFunction(AsGMLVersionExecute);
-			variant.CanThrowErrors();
-		});
-		func.SetDescription(R"(
-			Returns the geometry as a GML (Geography Markup Language) element.
-
-			The `version` is 2 (GML 2.1.2, the default) or 3 (GML 3.1.1). Coordinates are written as they are, with 15 significant digits, and no `srsName` is emitted. M values are dropped, and an empty geometry returns `NULL`.
-		)");
-		func.SetExample(R"(
-			SELECT ST_AsGML(ST_Point(1, 2));
-			----
-			<gml:Point><gml:coordinates>1,2</gml:coordinates></gml:Point>
-
-			SELECT ST_AsGML(3, ST_Point(1, 2));
-			----
-			<gml:Point><gml:pos>1 2</gml:pos></gml:Point>
-		)");
-		func.SetTag("ext", "spatial");
-		func.SetTag("category", "conversion");
-	});
-
-	FunctionBuilder::RegisterScalar(loader, "ST_GeomFromGML", [](ScalarFunctionBuilder &func) {
-		func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
-			variant.AddParameter("gml", LogicalType::VARCHAR);
-			variant.SetReturnType(LogicalType::GEOMETRY());
-			variant.SetFunction(ParseExecute<false>);
-			variant.CanThrowErrors();
-		});
-		func.SetDescription(R"(
-			Creates a geometry from a GML (Geography Markup Language) geometry element.
-
-			Accepts GML 2 and GML 3 geometry elements, with or without the `gml:` namespace prefix. The `srsName` attribute is ignored.
-		)");
-		func.SetExample(R"(
-			SELECT ST_GeomFromGML('<gml:LineString><gml:coordinates>0,0 1,1</gml:coordinates></gml:LineString>');
-			----
-			LINESTRING (0 0, 1 1)
-		)");
-		func.SetTag("ext", "spatial");
-		func.SetTag("category", "conversion");
-	});
-
-	FunctionBuilder::RegisterScalar(loader, "ST_AsKML", [](ScalarFunctionBuilder &func) {
-		func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
-			variant.AddParameter("geom", LogicalType::GEOMETRY());
-			variant.SetReturnType(LogicalType::VARCHAR);
-			variant.SetFunction(AsKMLExecute);
-			variant.CanThrowErrors();
-		});
-		func.SetDescription(R"(
-			Returns the geometry as a KML (Keyhole Markup Language) geometry element.
-
-			KML coordinates are longitude, latitude in WGS84, written with 15 significant digits. The geometry is not reprojected: coordinates outside of the longitude/latitude range raise an error, so transform the geometry to `EPSG:4326` (with `always_xy := true`) first if it is in another coordinate system. M values are dropped, and an empty geometry returns `NULL`.
-		)");
-		func.SetExample(R"(
-			SELECT ST_AsKML(ST_Point(4.35, 50.85));
-			----
-			<Point><coordinates>4.35,50.85</coordinates></Point>
-		)");
-		func.SetTag("ext", "spatial");
-		func.SetTag("category", "conversion");
-	});
-
-	FunctionBuilder::RegisterScalar(loader, "ST_GeomFromKML", [](ScalarFunctionBuilder &func) {
-		func.AddVariant([](ScalarFunctionVariantBuilder &variant) {
-			variant.AddParameter("kml", LogicalType::VARCHAR);
-			variant.SetReturnType(LogicalType::GEOMETRY());
-			variant.SetFunction(ParseExecute<true>);
-			variant.CanThrowErrors();
-		});
-		func.SetDescription(R"(
-			Creates a geometry from a KML (Keyhole Markup Language) geometry element.
-
-			Accepts a single `Point`, `LineString`, `LinearRing`, `Polygon` or `MultiGeometry` element, not a whole KML document (use `ST_Read` to read KML files). A `MultiGeometry` is returned as a geometry collection.
-		)");
-		func.SetExample(R"(
-			SELECT ST_GeomFromKML('<Point><coordinates>4.35,50.85</coordinates></Point>');
-			----
-			POINT (4.35 50.85)
-		)");
-		func.SetTag("ext", "spatial");
-		func.SetTag("category", "conversion");
-	});
-}
-
-} // namespace gdal_markup
 //======================================================================================================================
 // GDAL LIST
 //======================================================================================================================
@@ -2216,7 +1904,7 @@ public:
 	idx_t driver_count;
 };
 
-auto Bind(ClientContext &context, TableFunctionBindInput &input, vector<LogicalType> &types, vector<string> &names)
+auto Bind(ClientContext &context, TableFunctionBindInput &input, vector<LogicalType> &types, vector<Identifier> &names)
     -> unique_ptr<FunctionData> {
 
 	types.emplace_back(LogicalType::VARCHAR);
@@ -2296,7 +1984,7 @@ void Scan(ClientContext &context, TableFunctionInput &input, DataChunk &output) 
 		output.data[5].SetValue(count, help_topic_value);
 		count++;
 	}
-	output.SetCardinality(count);
+	output.SetChildCardinality(count);
 }
 
 //----------------------------------------------------------------------------------------------------------------------
@@ -2374,7 +2062,7 @@ LogicalType GetLayerType() {
 	});
 }
 
-auto Bind(ClientContext &context, TableFunctionBindInput &input, vector<LogicalType> &types, vector<string> &names)
+auto Bind(ClientContext &context, TableFunctionBindInput &input, vector<LogicalType> &types, vector<Identifier> &names)
     -> unique_ptr<FunctionData> {
 	names.push_back("file_name");
 	names.push_back("driver_short_name");
@@ -2535,7 +2223,7 @@ void Scan(ClientContext &context, TableFunctionInput &input, DataChunk &output) 
 		output_idx++;
 	}
 
-	output.SetCardinality(output_idx);
+	output.SetChildCardinality(output_idx);
 }
 
 //----------------------------------------------------------------------------------------------------------------------
@@ -2557,7 +2245,8 @@ static constexpr auto EXAMPLE = R"(
 	)";
 
 static void Register(ExtensionLoader &loader) {
-	const TableFunction func("ST_Read_Meta", {LogicalType::VARCHAR}, Scan, Bind, InitGlobal);
+	const TableFunction func("ST_Read_Meta", FunctionSignature().AddPositionalOnly("path", LogicalType::VARCHAR), Scan,
+	                         Bind, InitGlobal);
 	loader.RegisterFunction(MultiFileReader::CreateFunctionSet(func));
 
 	InsertionOrderPreservingMap<string> tags;
@@ -2597,6 +2286,5 @@ void RegisterGDALModule(ExtensionLoader &loader) {
 	gdal_copy::Register(loader);
 	gdal_list::Register(loader);
 	gdal_meta::Register(loader);
-	gdal_markup::Register(loader);
 }
 } // namespace duckdb

@@ -1,6 +1,6 @@
 #include "spatial/operators/spatial_knn_join_physical.hpp"
 #include "spatial/operators/spatial_knn_join_logical.hpp"
-#include "spatial/operators/flat_rtree.hpp"
+#include "spatial/index/flat_rtree.hpp"
 #include "spatial/geometry/sgl.hpp"
 #include "spatial/geometry/bbox.hpp"
 #include "spatial/geometry/geometry_serialization.hpp"
@@ -21,6 +21,8 @@
 #include "spatial/util/math.hpp"
 
 namespace duckdb {
+
+using KNNRTree = FlatRTree<data_ptr_t>;
 
 //======================================================================================================================
 // Helpers
@@ -149,7 +151,7 @@ public:
 	idx_t total_rtree_size = 0;
 
 	// One R-tree per partition value, or a single one if the join is not partitioned
-	vector<unique_ptr<FlatRTree>> rtrees;
+	vector<unique_ptr<KNNRTree>> rtrees;
 
 	mutex combine_lock;
 };
@@ -369,11 +371,14 @@ SinkFinalizeType PhysicalSpatialKNNJoin::Finalize(Pipeline &pipeline, Event &eve
 		if (entries.empty()) {
 			continue;
 		}
-		auto rtree = make_uniq<FlatRTree>(allocator, entries.size(), RTREE_NODE_SIZE);
-		for (auto &entry : entries) {
-			rtree->Push(entry.bbox, entry.row_ptr);
+		const auto count = entries.size();
+		auto rtree = make_uniq<KNNRTree>(allocator, count, RTREE_NODE_SIZE);
+		for (idx_t i = 0; i < count; i++) {
+			rtree->Set(i, entries[i].bbox, entries[i].row_ptr);
 		}
-		rtree->Build();
+		const auto scratch_size = KNNRTree::GetBuildScratchSize(count, RTREE_NODE_SIZE);
+		auto scratch = scratch_size ? allocator.Allocate(scratch_size) : AllocatedData();
+		rtree->Build(count, scratch.get());
 		gstate.rtrees.push_back(std::move(rtree));
 	}
 
@@ -445,7 +450,7 @@ public:
 
 class KNNJoinGlobalOperatorState final : public GlobalOperatorState {
 public:
-	vector<unique_ptr<FlatRTree>> rtrees;
+	vector<unique_ptr<KNNRTree>> rtrees;
 	unique_ptr<TupleDataCollection> collection;
 };
 

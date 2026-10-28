@@ -5,6 +5,9 @@
 require spatial
 
 statement ok
+SET profiling_renderer_settings = MAP {'operator_casing': 'upper'};
+
+statement ok
 CREATE TABLE s AS
 SELECT i AS id, {'a': i::DOUBLE, 'b': i::VARCHAR} AS st, ST_MakeEnvelope(i, 0, i + 1, 1) AS g
 FROM range(5000) r(i);

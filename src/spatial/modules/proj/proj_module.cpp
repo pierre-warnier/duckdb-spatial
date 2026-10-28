@@ -6,11 +6,13 @@
 #include "spatial/geometry/geometry_serialization.hpp"
 
 #include "duckdb/common/vector_operations/generic_executor.hpp"
+#include "duckdb/logging/logger.hpp"
 #include "duckdb/parser/parsed_data/create_table_function_info.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/common/types/geometry_crs.hpp"
 #include "duckdb/parser/parsed_data/create_coordinate_system_info.hpp"
+#include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/coordinate_system_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
 #include "duckdb/common/exception/binder_exception.hpp"
@@ -147,6 +149,16 @@ using ProjCRS = unique_ptr<PJ, ProjCRSDelete>;
 // ST_Transform
 //======================================================================================================================
 
+//------------------------------------------------------------------------------------------------------------------
+// Axis order
+//------------------------------------------------------------------------------------------------------------------
+static constexpr auto TRANSFORM_AXIS_ORDER_MESSAGE =
+    "'ST_Transform' is sensitive to the coordinate axis order of the input geometry.\n"
+    "Unless 'geometry_always_xy' is enabled, the axis order of the input geometry is assumed to be the same as defined "
+    "by the source CRS.\n"
+    "E.g., EPSG:4326 expects [NORTHING, EASTING] (= LATITUDE, LONGITUDE).\n"
+    "Alternatively, pass 'true' or 'false' as the last optional 'always_xy' parameter to override this per-call.";
+
 struct ST_Transform {
 
 	//------------------------------------------------------------------------------------------------------------------
@@ -167,7 +179,10 @@ struct ST_Transform {
 		}
 	};
 
-	static unique_ptr<FunctionData> Bind(ClientContext &ctx, ScalarFunction &, vector<unique_ptr<Expression>> &args) {
+	static unique_ptr<FunctionData> Bind(BindScalarFunctionInput &input) {
+		auto &ctx = input.GetClientContext();
+		auto &args = input.GetArguments();
+
 		auto result = make_uniq<BindData>();
 
 		// If always_xy is set, then always normalize
@@ -184,24 +199,7 @@ struct ST_Transform {
 		} else {
 
 			// Otherwise check the setting for whether to ignore axis order in PROJ transformations, and set the normalize flag accordingly
-			auto is_set = false;
-			result->normalize = SpatialSettings::AlwaysXY(ctx, is_set);
-
-			if (!is_set) {
-				constexpr auto message =
-				    "'ST_Transform' assumes the axis order of the input geometry to be the same as defined by the "
-				    "source CRS.\n"
-				    "E.g., EPSG:4326 expects [NORTHING, EASTING] (= LATITUDE, LONGITUDE).\n"
-				    "In the future this will change to always assume [EASTING, NORTHING] regardless of CRS "
-				    "definition.\n"
-				    "To avoid unexpected results when this changes:\n"
-				    " * 'SET geometry_always_xy = true' to always expect [EASTING, NORTHING]\n"
-				    " * 'SET geometry_always_xy = false' to keep current behavior\n"
-				    " * Pass 'true' or 'false' as last optional 'always_xy' parameter to override per-call";
-
-				auto &logger = Logger::Get(ctx);
-				logger.WriteLog("Spatial", LogLevel::LOG_WARNING, message);
-			}
+			result->normalize = SpatialSettings::AlwaysXYOrThrow(ctx, TRANSFORM_AXIS_ORDER_MESSAGE);
 		}
 
 		return std::move(result);
@@ -227,14 +225,14 @@ struct ST_Transform {
 		}
 
 		static void Serialize(Serializer &serializer, const optional_ptr<FunctionData> bind_data_p,
-		                      const ScalarFunction &function) {
+		                      const BoundScalarFunction &function) {
 			auto &bind_data = bind_data_p->Cast<TypedBindData>();
 			serializer.WritePropertyWithDefault(100, "normalize", bind_data.normalize);
 			serializer.WritePropertyWithDefault(101, "source", bind_data.source_crs);
 			serializer.WritePropertyWithDefault(102, "target", bind_data.target_crs);
 		}
 
-		static unique_ptr<FunctionData> Deserialize(Deserializer &deserializer, ScalarFunction &function) {
+		static unique_ptr<FunctionData> Deserialize(Deserializer &deserializer, BoundScalarFunction &function) {
 			auto result = make_uniq<TypedBindData>();
 			deserializer.ReadPropertyWithDefault(100, "normalize", result->normalize);
 			deserializer.ReadPropertyWithDefault(101, "source", result->source_crs);
@@ -243,55 +241,70 @@ struct ST_Transform {
 		}
 	};
 
-	static unique_ptr<FunctionData> BindTyped(ClientContext &ctx, ScalarFunction &func,
-	                                          vector<unique_ptr<Expression>> &args) {
+	//! Constant-folds the 'target_crs' parameter
+	static string GetTargetCRS(ClientContext &ctx, const Expression &crs_arg) {
+		if (crs_arg.HasParameter()) {
+			throw BinderException(crs_arg.GetQueryLocation(), "The 'target_crs' parameter must be a constant");
+		}
+		if (!crs_arg.IsFoldable()) {
+			throw BinderException(crs_arg.GetQueryLocation(), "The 'target_crs' parameter must be a constant");
+		}
+		if (crs_arg.GetReturnType().id() != LogicalTypeId::VARCHAR) {
+			throw BinderException(crs_arg.GetQueryLocation(), "The 'target_crs' parameter must be a string");
+		}
+		auto target_crs = StringValue::Get(ExpressionExecutor::EvaluateScalar(ctx, crs_arg));
+		if (target_crs.empty()) {
+			throw BinderException(crs_arg.GetQueryLocation(), "The 'target_crs' parameter cannot be empty");
+		}
+		return target_crs;
+	}
+
+	//! The source CRS is the CRS of the geometry type, which is kept by resolving the argument type before the cast
+	static void ResolveTypesTyped(ResolveScalarFunctionTypesInput &input) {
+		auto &ctx = input.GetClientContext();
+		auto &func = input.GetBoundFunction();
+
+		const auto &geo_arg = input.GetArgument(0);
+		const auto &geo_type = geo_arg.GetReturnType();
+		if (!GeoType::HasCRS(geo_type) || GeoType::GetCRS(geo_type).GetDefinition().empty()) {
+			throw BinderException(geo_arg.GetQueryLocation(),
+			                      "Source geometry must have a coordinate reference system");
+		}
+
+		const auto &crs_arg = input.GetArgument(1);
+		const auto target_crs = GetTargetCRS(ctx, crs_arg);
+		const auto result_crs = CoordinateReferenceSystem::TryIdentify(ctx, target_crs);
+		if (!result_crs) {
+			throw BinderException(crs_arg.GetQueryLocation(),
+			                      "The 'target_crs' parameter '%s' is not a recognized coordinate reference system",
+			                      target_crs);
+		}
+
+		func.GetArguments()[0] = geo_type;
+		func.SetReturnType(LogicalType::GEOMETRY(*result_crs));
+	}
+
+	static unique_ptr<FunctionData> BindTyped(BindScalarFunctionInput &input) {
+		auto &ctx = input.GetClientContext();
+		auto &func = input.GetBoundFunction();
+		auto &args = input.GetArguments();
 
 		auto result = make_uniq<TypedBindData>();
-
-		// Get CRS from source geometry
-		const auto &geo_arg = args[0];
-		if (!GeoType::HasCRS(geo_arg->return_type)) {
-			throw BinderException(geo_arg->query_location, "Source geometry must have a coordinate reference system");
-		}
-		result->source_crs = GeoType::GetCRS(geo_arg->return_type).GetDefinition();
-		if (result->source_crs.empty()) {
-			throw BinderException(geo_arg->query_location, "Source geometry must have a coordinate reference system");
-		}
-
-		// Constant-fold target_crs
-		const auto &crs_arg = args[1];
-		if (crs_arg->HasParameter()) {
-			throw BinderException(crs_arg->query_location, "The 'target_crs' parameter must be a constant");
-		}
-		if (!crs_arg->IsFoldable()) {
-			throw BinderException(crs_arg->query_location, "The 'target_crs' parameter must be a constant");
-		}
-		if (crs_arg->return_type.id() != LogicalTypeId::VARCHAR) {
-			throw BinderException(crs_arg->query_location, "The 'target_crs' parameter must be a string");
-		}
-		result->target_crs = StringValue::Get(ExpressionExecutor::EvaluateScalar(ctx, *crs_arg));
-		if (result->target_crs.empty()) {
-			throw BinderException(crs_arg->query_location, "The 'target_crs' parameter cannot be empty");
-		}
-		const auto result_crs = CoordinateReferenceSystem::TryIdentify(ctx, result->target_crs);
-		if (!result_crs) {
-			throw BinderException(crs_arg->query_location,
-			                      "The 'target_crs' parameter '%s' is not a recognized coordinate reference system",
-			                      result->target_crs);
-		}
+		result->source_crs = GeoType::GetCRS(func.GetArguments()[0]).GetDefinition();
+		result->target_crs = GetTargetCRS(ctx, *args[1]);
 
 		// Constant-fold always-xy, if present
 		auto explicit_normalize = false;
 		if (args.size() == 3) {
 			const auto &xy_arg = args[2];
 			if (xy_arg->HasParameter()) {
-				throw BinderException(xy_arg->query_location, "The 'always_xy' parameter must be a constant");
+				throw BinderException(xy_arg->GetQueryLocation(), "The 'always_xy' parameter must be a constant");
 			}
 			if (!xy_arg->IsFoldable()) {
-				throw BinderException(xy_arg->query_location, "The 'always_xy' parameter must be a constant");
+				throw BinderException(xy_arg->GetQueryLocation(), "The 'always_xy' parameter must be a constant");
 			}
-			if (xy_arg->return_type.id() != LogicalTypeId::BOOLEAN) {
-				throw BinderException(xy_arg->query_location, "The 'always_xy' parameter must be a boolean");
+			if (xy_arg->GetReturnType().id() != LogicalTypeId::BOOLEAN) {
+				throw BinderException(xy_arg->GetQueryLocation(), "The 'always_xy' parameter must be a boolean");
 			}
 			result->normalize = BooleanValue::Get(ExpressionExecutor::EvaluateScalar(ctx, *xy_arg));
 			explicit_normalize = true;
@@ -299,31 +312,9 @@ struct ST_Transform {
 			explicit_normalize = false;
 		}
 
-		// Set return types
-		func.arguments[0] = geo_arg->return_type;
-		func.return_type = LogicalType::GEOMETRY(*result_crs);
-
-		// Check if we need to warn for this
+		// Otherwise, fall back to the global setting (which must be set explicitly)
 		if (!explicit_normalize) {
-
-			auto is_set = false;
-			result->normalize = SpatialSettings::AlwaysXY(ctx, is_set);
-
-			if (!is_set) {
-				constexpr auto message =
-				    "'ST_Transform' assumes the axis order of the input geometry to be the same as defined by the "
-				    "source CRS.\n"
-				    "E.g., EPSG:4326 expects [NORTHING, EASTING] (= LATITUDE, LONGITUDE).\n"
-				    "In the future this will change to always assume [EASTING, NORTHING] regardless of CRS "
-				    "definition.\n"
-				    "To avoid unexpected results when this changes:\n"
-				    " * 'SET geometry_always_xy = true' to always expect [EASTING, NORTHING]\n"
-				    " * 'SET geometry_always_xy = false' to keep current behavior\n"
-				    " * Pass 'true' or 'false' as last optional 'always_xy' parameter to override per-call";
-
-				auto &logger = Logger::Get(ctx);
-				logger.WriteLog("Spatial", LogLevel::LOG_WARNING, message);
-			}
+			result->normalize = SpatialSettings::AlwaysXYOrThrow(ctx, TRANSFORM_AXIS_ORDER_MESSAGE);
 		}
 
 		return std::move(result);
@@ -417,7 +408,7 @@ struct ST_Transform {
 
 		auto &lstate = LocalState::ResetAndGet(state);
 		auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
-		const auto &info = func_expr.bind_info->Cast<BindData>();
+		const auto &info = func_expr.BindInfo()->Cast<BindData>();
 
 		GenericExecutor::ExecuteTernary<POINT_TYPE, PROJ_TYPE, PROJ_TYPE, POINT_TYPE>(
 		    args.data[0], args.data[1], args.data[2], result, args.size(),
@@ -445,7 +436,7 @@ struct ST_Transform {
 
 		auto &lstate = LocalState::ResetAndGet(state);
 		auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
-		const auto &info = func_expr.bind_info->Cast<BindData>();
+		const auto &info = func_expr.BindInfo()->Cast<BindData>();
 
 		GenericExecutor::ExecuteTernary<BOX_TYPE, PROJ_TYPE, PROJ_TYPE, BOX_TYPE>(
 		    args.data[0], args.data[1], args.data[2], result, args.size(),
@@ -471,10 +462,10 @@ struct ST_Transform {
 		auto &lstate = LocalState::ResetAndGet(state);
 		auto &alloc = lstate.allocator;
 		auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
-		const auto &info = func_expr.bind_info->Cast<BindData>();
+		const auto &info = func_expr.BindInfo()->Cast<BindData>();
 
 		TernaryExecutor::Execute<string_t, string_t, string_t, string_t>(
-		    args.data[0], args.data[1], args.data[2], result, args.size(),
+		    args.data[0], args.data[1], args.data[2], result,
 		    [&](const string_t &blob, const string_t &source, const string_t &target) {
 			    const auto source_str = source.GetString();
 			    const auto target_str = target.GetString();
@@ -503,7 +494,7 @@ struct ST_Transform {
 		auto &lstate = LocalState::ResetAndGet(state);
 		auto &alloc = lstate.allocator;
 		auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
-		const auto &info = func_expr.bind_info->Cast<TypedBindData>();
+		const auto &info = func_expr.BindInfo()->Cast<TypedBindData>();
 
 		const auto crs = lstate.GetOrCreateProjection(info.source_crs, info.target_crs, info.normalize);
 
@@ -674,6 +665,7 @@ struct ST_Transform {
 				variant.SetReturnType(LogicalType::GEOMETRY());
 
 				variant.SetInit(LocalState::Init);
+				variant.SetResolveTypes(ResolveTypesTyped);
 				variant.SetBind(BindTyped);
 				variant.SetSerialize(TypedBindData::Serialize);
 				variant.SetDeserialize(TypedBindData::Deserialize);
@@ -688,6 +680,7 @@ struct ST_Transform {
 				variant.SetReturnType(LogicalType::GEOMETRY());
 
 				variant.SetInit(LocalState::Init);
+				variant.SetResolveTypes(ResolveTypesTyped);
 				variant.SetBind(BindTyped);
 				variant.SetSerialize(TypedBindData::Serialize);
 				variant.SetDeserialize(TypedBindData::Deserialize);
@@ -729,26 +722,18 @@ struct GeodesicBindData final : FunctionData {
 		return always_xy == data.always_xy;
 	}
 
-	static unique_ptr<FunctionData> Bind(ClientContext &ctx, ScalarFunction &func,
-	                                     vector<unique_ptr<Expression>> &args) {
+	static unique_ptr<FunctionData> Bind(BindScalarFunctionInput &input) {
+		auto &ctx = input.GetClientContext();
+		auto &func = input.GetBoundFunction();
+
 		auto result = make_uniq<GeodesicBindData>();
 
-		bool is_set = false;
-		result->always_xy = SpatialSettings::AlwaysXY(ctx, is_set);
-
-		if (!is_set) {
-			constexpr auto raw_message =
-			    "The '%s' function is sensitive to the coordinate axis order of the input geometry.\n"
-			    "The current default for this function is to assume [LATITUDE, LONGITUDE] axis order.\n"
-			    "This is expected to change to [LONGITUDE, LATITUDE] in the future.\n "
-			    "Please explicitly set the 'geometry_always_xy' setting to avoid unexpected changes in behavior.\n"
-			    " * 'SET geometry_always_xy = true' to make this function assume all geometries are [LONGITUDE, "
-			    "LATITUDE]\n"
-			    " * 'SET geometry_always_xy = false' to keep the current behavior and make this warning go away.";
-
-			auto &logger = Logger::Get(ctx);
-			logger.WriteLog("Spatial", LogLevel::LOG_WARNING, StringUtil::Format(raw_message, func.name.c_str()));
-		}
+		constexpr auto raw_message =
+		    "The '%s' function is sensitive to the coordinate axis order of the input geometry.\n"
+		    "Unless 'geometry_always_xy' is enabled, all input geometries are assumed to be in [LATITUDE, LONGITUDE] "
+		    "axis order.";
+		result->always_xy =
+		    SpatialSettings::AlwaysXYOrThrow(ctx, StringUtil::Format(raw_message, func.GetName().c_str()));
 
 		return std::move(result);
 	}
@@ -801,24 +786,24 @@ struct GeodesicLocalState final : FunctionLocalState {
 
 struct ST_Area_Spheroid {
 
-	//------------------------------------------------------------------------------------------------------------------
+	//--------------------------------------------------------------------------------------o----------------------------
 	// Execute (POLYGON_2D)
 	//------------------------------------------------------------------------------------------------------------------
 
 	static void ExecutePolygon(DataChunk &args, ExpressionState &state, Vector &result) {
 		D_ASSERT(args.data.size() == 1);
 
-		auto &bdata = state.expr.Cast<BoundFunctionExpression>().bind_info->Cast<GeodesicBindData>();
+		auto &bdata = state.expr.Cast<BoundFunctionExpression>().BindInfo()->Cast<GeodesicBindData>();
 
 		auto &input = args.data[0];
 		auto count = args.size();
 
-		auto &ring_vec = ListVector::GetEntry(input);
-		auto ring_entries = ListVector::GetData(ring_vec);
-		auto &coord_vec = ListVector::GetEntry(ring_vec);
+		auto &ring_vec = ListVector::GetChild(input);
+		auto ring_entries = FlatVector::GetData<list_entry_t>(ring_vec);
+		auto &coord_vec = ListVector::GetChild(ring_vec);
 		auto &coord_vec_children = StructVector::GetEntries(coord_vec);
-		auto x_data = FlatVector::GetData<double>(*coord_vec_children[0]);
-		auto y_data = FlatVector::GetData<double>(*coord_vec_children[1]);
+		auto x_data = FlatVector::GetData<double>(coord_vec_children[0]);
+		auto y_data = FlatVector::GetData<double>(coord_vec_children[1]);
 
 		if (bdata.always_xy) {
 			std::swap(x_data, y_data);
@@ -922,7 +907,7 @@ struct ST_Area_Spheroid {
 
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 
-		const auto &bdata = state.expr.Cast<BoundFunctionExpression>().bind_info->Cast<GeodesicBindData>();
+		const auto &bdata = state.expr.Cast<BoundFunctionExpression>().BindInfo()->Cast<GeodesicBindData>();
 		auto &lstate = GeodesicLocalState::ResetAndGet(state);
 
 		UnaryExecutor::Execute<string_t, double>(args.data[0], result, args.size(), [&](const string_t &input) {
@@ -1002,17 +987,17 @@ struct ST_Perimeter_Spheroid {
 	static void ExecutePolygon(DataChunk &args, ExpressionState &state, Vector &result) {
 		D_ASSERT(args.data.size() == 1);
 
-		const auto &bdata = state.expr.Cast<BoundFunctionExpression>().bind_info->Cast<GeodesicBindData>();
+		const auto &bdata = state.expr.Cast<BoundFunctionExpression>().BindInfo()->Cast<GeodesicBindData>();
 
 		auto &input = args.data[0];
 		auto count = args.size();
 
-		auto &ring_vec = ListVector::GetEntry(input);
-		auto ring_entries = ListVector::GetData(ring_vec);
-		auto &coord_vec = ListVector::GetEntry(ring_vec);
+		auto &ring_vec = ListVector::GetChild(input);
+		auto ring_entries = FlatVector::GetData<list_entry_t>(ring_vec);
+		auto &coord_vec = ListVector::GetChild(ring_vec);
 		auto &coord_vec_children = StructVector::GetEntries(coord_vec);
-		auto x_data = FlatVector::GetData<double>(*coord_vec_children[0]);
-		auto y_data = FlatVector::GetData<double>(*coord_vec_children[1]);
+		auto x_data = FlatVector::GetData<double>(coord_vec_children[0]);
+		auto y_data = FlatVector::GetData<double>(coord_vec_children[1]);
 
 		if (bdata.always_xy) {
 			std::swap(x_data, y_data);
@@ -1103,7 +1088,7 @@ struct ST_Perimeter_Spheroid {
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 
 		auto &lstate = GeodesicLocalState::ResetAndGet(state);
-		auto &bdata = state.expr.Cast<BoundFunctionExpression>().bind_info->Cast<GeodesicBindData>();
+		auto &bdata = state.expr.Cast<BoundFunctionExpression>().BindInfo()->Cast<GeodesicBindData>();
 
 		UnaryExecutor::Execute<string_t, double>(args.data[0], result, args.size(), [&](const string_t &input) {
 			sgl::geometry geom;
@@ -1182,15 +1167,15 @@ struct ST_Length_Spheroid {
 	static void ExecuteLineString(DataChunk &args, ExpressionState &state, Vector &result) {
 		D_ASSERT(args.data.size() == 1);
 
-		const auto &bdata = state.expr.Cast<BoundFunctionExpression>().bind_info->Cast<GeodesicBindData>();
+		const auto &bdata = state.expr.Cast<BoundFunctionExpression>().BindInfo()->Cast<GeodesicBindData>();
 
 		auto &line_vec = args.data[0];
 		auto count = args.size();
 
-		auto &coord_vec = ListVector::GetEntry(line_vec);
+		auto &coord_vec = ListVector::GetChild(line_vec);
 		auto &coord_vec_children = StructVector::GetEntries(coord_vec);
-		auto x_data = FlatVector::GetData<double>(*coord_vec_children[0]);
-		auto y_data = FlatVector::GetData<double>(*coord_vec_children[1]);
+		auto x_data = FlatVector::GetData<double>(coord_vec_children[0]);
+		auto y_data = FlatVector::GetData<double>(coord_vec_children[1]);
 
 		if (bdata.always_xy) {
 			std::swap(x_data, y_data);
@@ -1259,7 +1244,7 @@ struct ST_Length_Spheroid {
 
 	static void Execute(DataChunk &args, ExpressionState &state, Vector &result) {
 
-		const auto &bdata = state.expr.Cast<BoundFunctionExpression>().bind_info->Cast<GeodesicBindData>();
+		const auto &bdata = state.expr.Cast<BoundFunctionExpression>().BindInfo()->Cast<GeodesicBindData>();
 		auto &lstate = GeodesicLocalState::ResetAndGet(state);
 
 		UnaryExecutor::Execute<string_t, double>(args.data[0], result, args.size(), [&](const string_t &input) {
@@ -1340,7 +1325,7 @@ struct ST_Distance_Spheroid {
 		geod_geodesic geod = {};
 		geod_init(&geod, EARTH_A, EARTH_F);
 
-		const auto &bdata = state.expr.Cast<BoundFunctionExpression>().bind_info->Cast<GeodesicBindData>();
+		const auto &bdata = state.expr.Cast<BoundFunctionExpression>().BindInfo()->Cast<GeodesicBindData>();
 
 		if (bdata.always_xy) {
 			GenericExecutor::ExecuteBinary<POINT_TYPE, POINT_TYPE, DISTANCE_TYPE>(
@@ -1413,7 +1398,7 @@ struct ST_DWithin_Spheroid {
 		geod_geodesic geod = {};
 		geod_init(&geod, EARTH_A, EARTH_F);
 
-		const auto &bdata = state.expr.Cast<BoundFunctionExpression>().bind_info->Cast<GeodesicBindData>();
+		const auto &bdata = state.expr.Cast<BoundFunctionExpression>().BindInfo()->Cast<GeodesicBindData>();
 
 		if (bdata.always_xy) {
 			GenericExecutor::ExecuteTernary<POINT_TYPE, POINT_TYPE, DISTANCE_TYPE, BOOL_TYPE>(
@@ -1473,7 +1458,7 @@ struct DuckDB_Proj_Version {
 		PJ_INFO pj_info = proj_info();
 		string_t version(pj_info.version);
 		auto val = Value(version);
-		result.Reference(val);
+		result.Reference(val, count_t(args.size()));
 	}
 
 	static constexpr auto DESCRIPTION = R"(
@@ -1486,7 +1471,7 @@ struct DuckDB_Proj_Version {
 	│ duckdb_proj_version() │
 	│        varchar        │
 	├───────────────────────┤
-	│ 9.1.1                 │geometry_always_xy
+	│ 9.1.1                 │
 	└───────────────────────┘
 	)";
 
@@ -1514,7 +1499,7 @@ struct DuckDB_Proj_Compiled_Version {
 		D_ASSERT(args.ColumnCount() == 0);
 		string_t version(pj_release);
 		auto val = Value(version);
-		result.Reference(val);
+		result.Reference(val, count_t(args.size()));
 	}
 
 	static constexpr auto DESCRIPTION = R"(
@@ -1576,14 +1561,14 @@ public:
 	}
 
 public:
-	unique_ptr<CatalogEntry> CreateDefaultEntry(ClientContext &context, const string &entry_name) override {
+	unique_ptr<CatalogEntry> CreateDefaultEntry(ClientContext &context, const Identifier &entry_name) override {
 
 		if (schema.name != DEFAULT_SCHEMA) {
 			return nullptr;
 		}
 
 		// Try to split name by ":"
-		auto parts = StringUtil::Split(entry_name, ":");
+		auto parts = StringUtil::Split(entry_name.GetIdentifierName(), ":");
 		if (parts.size() != 2) {
 			return nullptr;
 		}
@@ -1628,13 +1613,13 @@ public:
 		return std::move(result);
 	}
 
-	vector<string> GetDefaultEntries() override {
+	vector<Identifier> GetDefaultEntries() override {
 
 		if (schema.name != DEFAULT_SCHEMA) {
 			return {};
 		}
 
-		vector<string> entries;
+		vector<Identifier> entries;
 
 		auto scan_authority = [&](const char *auth) {
 			int ncrs = 0;
@@ -1649,7 +1634,7 @@ public:
 						continue;
 					}
 
-					entries.push_back(StringUtil::Format("%s:%s", auth_name, auth_code));
+					entries.emplace_back(StringUtil::Format("%s:%s", auth_name, auth_code));
 				}
 			}
 
@@ -1669,7 +1654,7 @@ public:
 		auto &db = loader.GetDatabaseInstance();
 		auto system_transaction = CatalogTransaction::GetSystemTransaction(db);
 		auto &catalog = Catalog::GetSystemCatalog(db);
-		auto &schema = catalog.GetSchema(system_transaction, DEFAULT_SCHEMA);
+		auto &schema = catalog.GetSchema(system_transaction, Identifier::DefaultSchema());
 		auto &duck_schema = schema.Cast<DuckSchemaEntry>();
 
 		auto &set = duck_schema.GetCatalogSet(CatalogType::COORDINATE_SYSTEM_ENTRY);

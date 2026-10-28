@@ -8,6 +8,9 @@
 require spatial
 
 statement ok
+SET profiling_renderer_settings = MAP {'operator_casing': 'upper'};
+
+statement ok
 PRAGMA threads=4;
 
 statement ok

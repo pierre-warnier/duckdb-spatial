@@ -1,5 +1,8 @@
+#include "duckdb/common/vector/map_vector.hpp"
+#include "duckdb/common/vector/struct_vector.hpp"
 #include "spatial/index/rtree/rtree_index.hpp"
 
+#include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
@@ -8,6 +11,8 @@
 #include "duckdb/execution/index/fixed_size_allocator.hpp"
 #include "duckdb/storage/table/scan_state.hpp"
 #include "duckdb/main/database.hpp"
+#include "duckdb/transaction/duck_transaction.hpp"
+#include "duckdb/transaction/duck_transaction_manager.hpp"
 #include "spatial/spatial_types.hpp"
 #include "spatial/geometry/geometry_serialization.hpp"
 
@@ -72,12 +77,13 @@ static RTreeConfig ParseOptions(const case_insensitive_map_t<Value> &options) {
 //------------------------------------------------------------------------------
 
 // Constructor
-RTreeIndex::RTreeIndex(const string &name, IndexConstraintType index_constraint_type,
+RTreeIndex::RTreeIndex(const Identifier &name, IndexConstraintType index_constraint_type,
                        const vector<column_t> &column_ids, TableIOManager &table_io_manager,
                        const vector<unique_ptr<Expression>> &unbound_expressions, AttachedDatabase &db,
                        const case_insensitive_map_t<Value> &options, ClientContext &context,
                        const IndexStorageInfo &info, idx_t estimated_cardinality)
-    : BoundIndex(name, TYPE_NAME, index_constraint_type, column_ids, table_io_manager, unbound_expressions, db) {
+    : BoundIndex(Identifier(name), TYPE_NAME, index_constraint_type, column_ids, table_io_manager, unbound_expressions,
+                 db) {
 
 	if (index_constraint_type != IndexConstraintType::NONE) {
 		throw NotImplementedException("RTree indexes do not support unique or primary key constraints");
@@ -108,16 +114,17 @@ RTreeIndex::RTreeIndex(const string &name, IndexConstraintType index_constraint_
 	}
 
 	// Construct the key expression executor
-	auto &source_type = unbound_expressions[0]->return_type;
+	auto &source_type = unbound_expressions[0]->GetReturnType();
 	auto &catalog = Catalog::GetSystemCatalog(context);
-	auto &entry = catalog.GetEntry<ScalarFunctionCatalogEntry>(context, DEFAULT_SCHEMA, "ST_Extent_Approx");
-	auto func = entry.functions.GetFunctionByArguments(context, {source_type});
+	auto &entry = catalog.GetEntry<ScalarFunctionCatalogEntry>(
+	    context, QualifiedName(catalog.GetName(), Identifier::DefaultSchema(), "ST_Extent_Approx"));
+	const auto &func = *entry.functions.GetFunctionByArguments(context, {source_type});
 	auto child_expr = make_uniq<BoundReferenceExpression>(source_type, 0);
 
 	vector<unique_ptr<Expression>> children;
 	children.push_back(std::move(child_expr));
 
-	key_expr = make_uniq<BoundFunctionExpression>(GeoTypes::BOX_2DF(), func, std::move(children), nullptr);
+	key_expr = func.Bind(context, std::move(children));
 	key_executor = make_uniq<ExpressionExecutor>(context);
 	key_executor->AddExpression(*key_expr);
 	key_chunk.Initialize(context, {GeoTypes::BOX_2DF()});
@@ -135,7 +142,7 @@ unique_ptr<IndexScanState> RTreeIndex::InitializeScan(const RTreeBounds &query) 
 
 idx_t RTreeIndex::Scan(IndexScanState &state, Vector &result) const {
 	auto &sstate = state.Cast<RTreeIndexScanState>();
-	const auto row_ids = FlatVector::GetData<row_t>(result);
+	const auto row_ids = FlatVector::GetDataMutable<row_t>(result);
 
 	idx_t output_idx = 0;
 	sstate.scanner.Scan(*tree, [&](const RTreeEntry &entry, const idx_t &) {
@@ -208,13 +215,30 @@ double RTreeIndex::EstimateSelectivity(const RTreeBounds &query) const {
 	return EstimateOverlap(*tree, tree->GetRoot(), query, node_budget);
 }
 
-bool RTreeIndex::ShouldUseIndexScan(ClientContext &context, const RTreeBounds &query, idx_t total_rows) const {
-	const auto estimated_rows = EstimateSelectivity(query) * static_cast<double>(total_rows);
+idx_t RTreeIndex::MaxIndexScanRows(ClientContext &context, idx_t total_rows) {
 	const auto max_ratio = SpatialSettings::RTreeIndexScanRatio(context);
 	const auto min_rows = SpatialSettings::RTreeIndexScanMinRows(context);
-	// Use the index if the estimated number of matching rows is below the ratio threshold, or small enough in absolute
-	// terms that the plan choice does not matter
-	return estimated_rows <= MaxValue(max_ratio * static_cast<double>(total_rows), static_cast<double>(min_rows));
+	// Below the ratio threshold, or small enough in absolute terms that the plan choice does not matter
+	return MaxValue<idx_t>(LossyNumericCast<idx_t>(max_ratio * static_cast<double>(total_rows)), min_rows);
+}
+
+bool RTreeIndex::ShouldUseIndexScan(ClientContext &context, const RTreeBounds &query, idx_t total_rows) const {
+	const auto estimated_rows = EstimateSelectivity(query) * static_cast<double>(total_rows);
+	return estimated_rows <= static_cast<double>(MaxIndexScanRows(context, total_rows));
+}
+
+bool RTreeIndex::MayMissVisibleRows(const DuckTransaction &transaction) const {
+	if (!has_deletes) {
+		return false;
+	}
+	// Start and commit timestamps are drawn from the same counter, and commits are serialized
+	const auto last_commit = DuckTransactionManager::Get(db).GetLastCommit();
+	if (last_commit == last_commit_before_delete) {
+		// The commit that performed the latest delete is still in progress, and started after this transaction
+		return true;
+	}
+	// Something committed after this transaction started, which may have deleted rows this transaction still sees
+	return last_commit > transaction.start_time;
 }
 
 void RTreeIndex::ResetStorage(IndexLock &index_lock) {
@@ -226,19 +250,18 @@ template <class CALLBACK = std::function<void(const RTreeEntry &)>>
 static void ConvertToEntries(Vector &box_vec, Vector &rowid_vec, idx_t count, CALLBACK &&callback) {
 	const auto &box_validity = FlatVector::Validity(box_vec);
 
-	const auto &box_entries = StructVector::GetEntries(box_vec);
-	const auto box_xmin_data = FlatVector::GetData<float>(*box_entries[0]);
-	const auto box_ymin_data = FlatVector::GetData<float>(*box_entries[1]);
-	const auto box_xmax_data = FlatVector::GetData<float>(*box_entries[2]);
-	const auto box_ymax_data = FlatVector::GetData<float>(*box_entries[3]);
+	auto &box_entries = StructVector::GetEntries(box_vec);
+	const auto box_xmin_data = FlatVector::GetData<float>(box_entries[0]);
+	const auto box_ymin_data = FlatVector::GetData<float>(box_entries[1]);
+	const auto box_xmax_data = FlatVector::GetData<float>(box_entries[2]);
+	const auto box_ymax_data = FlatVector::GetData<float>(box_entries[3]);
 
-	UnifiedVectorFormat rowid_format;
-	rowid_vec.ToUnifiedFormat(count, rowid_format);
-	const auto row_data = UnifiedVectorFormat::GetData<row_t>(rowid_format);
+	// The row ids are not necessarily flat (e.g. when replaying appends and deletes from the WAL)
+	const auto row_ids = rowid_vec.Values<row_t>();
 
 	for (idx_t i = 0; i < count; i++) {
-		const auto row_idx = rowid_format.sel->get_index(i);
-		if (!box_validity.RowIsValid(i) || !rowid_format.validity.RowIsValid(row_idx)) {
+		const auto row_entry = row_ids[i];
+		if (!box_validity.RowIsValid(i) || !row_entry.IsValid()) {
 			continue;
 		}
 
@@ -248,9 +271,7 @@ static void ConvertToEntries(Vector &box_vec, Vector &rowid_vec, idx_t count, CA
 		box.max.x = box_xmax_data[i];
 		box.max.y = box_ymax_data[i];
 
-		const auto row = row_data[row_idx];
-
-		RTreeEntry new_entry = {RTree::MakeRowId(row), box};
+		RTreeEntry new_entry = {RTree::MakeRowId(row_entry.GetValue()), box};
 
 		// Invoke the callback with the new entry
 		callback(new_entry);
@@ -262,7 +283,6 @@ ErrorData RTreeIndex::Insert(IndexLock &lock, DataChunk &input, Vector &row_vec)
 
 	key_chunk.Reset();
 	key_executor->ExecuteExpression(input, key_chunk.data[0]);
-	key_chunk.SetCardinality(count);
 	key_chunk.Flatten();
 
 	auto &box_vec = key_chunk.data[0];
@@ -288,11 +308,14 @@ void RTreeIndex::Delete(IndexLock &lock, DataChunk &input, Vector &row_vec) {
 
 	key_chunk.Reset();
 	key_executor->ExecuteExpression(expr_chunk, key_chunk.data[0]);
-	key_chunk.SetCardinality(count);
 	key_chunk.Flatten();
 
 	auto &box_vec = key_chunk.data[0];
 	ConvertToEntries(box_vec, row_vec, count, [&](const RTreeEntry &entry) { tree->Delete(entry); });
+
+	// Deletes are applied while their commit is in progress, i.e. before it is published as the last commit
+	has_deletes = true;
+	last_commit_before_delete = DuckTransactionManager::Get(db).GetLastCommit();
 }
 
 IndexStorageInfo RTreeIndex::SerializeToDisk(QueryContext context, const case_insensitive_map_t<Value> &options) {
@@ -341,7 +364,7 @@ IndexStorageInfo RTreeIndex::SerializeToWAL(const case_insensitive_map_t<Value> 
 	return info;
 }
 
-idx_t RTreeIndex::GetInMemorySize(IndexLock &state) {
+idx_t RTreeIndex::GetInMemorySize(IndexLock &state) const {
 	const auto &leaf_alloc = tree->GetLeafAllocator();
 	const auto &node_alloc = tree->GetNodeAllocator();
 	return leaf_alloc.GetInMemorySize() + node_alloc.GetInMemorySize();
