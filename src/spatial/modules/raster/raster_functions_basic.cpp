@@ -1,5 +1,6 @@
 #include "duckdb/common/vector/list_vector.hpp"
 #include "spatial/modules/raster/raster_core.hpp"
+#include "spatial/util/math.hpp"
 
 namespace duckdb {
 namespace raster {
@@ -150,7 +151,7 @@ void RotationExecute(Call &c) {
 	const GeoTransform gt(c.Raster());
 	const auto magnitude = std::sqrt(gt.c[1] * gt.c[1] + gt.c[4] * gt.c[4]);
 	auto theta = std::acos(gt.c[1] / magnitude);
-	if (std::acos(gt.c[4] / magnitude) < M_PI / 2) {
+	if (std::acos(gt.c[4] / magnitude) < MathUtil::PI / 2) {
 		theta = -theta;
 	}
 	c.Return<double>(theta);
