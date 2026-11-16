@@ -1,4 +1,5 @@
--- Start-up smoke test for a locally built spatial extension (used by the Windows release job).
+-- Start-up smoke test for a locally built spatial extension (used by the Windows release job):
+-- LOAD, ST_ReadOSM, pgr_dijkstra, pgr_drivingDistance and ST_KNN.
 -- Run from the repository root, with the extension copied there:
 --   EXPECTED_DUCKDB_VERSION=v1.5.6 duckdb -unsigned -bail -f test/smoke/startup.sql
 -- Every check raises an error on mismatch, so the CLI exits non-zero.
@@ -54,5 +55,23 @@ SELECT CASE WHEN list([node, edge] ORDER BY path_seq) = [[6, 4], [7, 8], [11, 9]
              AND max(agg_cost) = 5.0
             THEN 'pgr_dijkstra sample graph ok' ELSE error('pgr_dijkstra sample graph: unexpected path') END AS check_sample
 FROM pgr_dijkstra((SELECT id, source, target, cost, reverse_cost FROM sample), 6, 10);
+
+-- 4. pgr_drivingDistance on the same sample graph: every node within cost 3 of node 11 (pgRouting documentation).
+SELECT CASE WHEN list(node ORDER BY node) = [1, 3, 5, 6, 7, 8, 9, 10, 11, 12, 15, 16, 17] AND max(agg_cost) = 3.0
+            THEN 'pgr_drivingDistance ok' ELSE error('pgr_drivingDistance: unexpected reachable set') END AS check_driving_distance
+FROM pgr_drivingDistance((SELECT id, source, target, cost, reverse_cost FROM sample), 11, 3.0);
+
+-- 5. ST_KNN join: the 2 nearest build points of each probe point, against a brute-force answer and a fixed one.
+CREATE TABLE knn_probe AS SELECT * FROM (VALUES (1, ST_Point(0, 0)), (2, ST_Point(10, 0))) t(pid, geom);
+CREATE TABLE knn_build AS SELECT * FROM (VALUES
+    (1, ST_Point(1, 0)), (2, ST_Point(0, 2)), (3, ST_Point(3, 0)), (4, ST_Point(0, 4)), (5, ST_Point(9, 0)), (6, ST_Point(12.5, 0))
+) t(bid, geom);
+CREATE TABLE knn AS SELECT p.pid, b.bid FROM knn_probe p JOIN knn_build b ON ST_KNN(p.geom, b.geom, 2);
+SELECT CASE WHEN (SELECT list([pid, bid] ORDER BY pid, bid) FROM knn) = [[1, 1], [1, 2], [2, 5], [2, 6]]
+             AND (SELECT list([pid, bid] ORDER BY pid, bid) FROM knn)
+               = (SELECT list([pid, bid] ORDER BY pid, bid) FROM (
+                    SELECT p.pid, b.bid, row_number() OVER (PARTITION BY p.pid ORDER BY ST_Distance(p.geom, b.geom)) AS r
+                    FROM knn_probe p, knn_build b) WHERE r <= 2)
+            THEN 'ST_KNN ok' ELSE error('ST_KNN: unexpected nearest neighbours') END AS check_knn;
 
 SELECT 'ALL CHECKS PASSED' AS result;

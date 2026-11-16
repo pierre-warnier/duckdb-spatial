@@ -12,8 +12,12 @@
 - Portable C++ rules learnt from MSVC/macOS/wasm CI: this line is C++17 (v1.5-variegata is C++11: no structured bindings
   there, keep shared code C++11 so fixes cherry-pick both ways), include every std header you use (`<numeric>` for `std::iota`: MSVC's STL
   does not pull it in transitively), and give `MinValue`/`MaxValue` one explicit type (`idx_t` is not `size_t` on macOS/wasm).
-- The `windows-smoke` job loads the build in the official v2.0.0 CLI (`duckdb-cli-windows-amd64.tar.gz`, SHA-256 pinned) on `windows-latest` and runs `test/smoke/startup.sql`
-  (version, `LOAD`, `ST_ReadOSM` on `test/data/osm/tiny.osm.pbf`, `pgr_dijkstra` on a graph built from it and on the pgRouting sample graph).
+- The `windows-smoke` job loads the build in the official CLI of the same release on `windows-latest` and runs `test/smoke/startup.sql`
+  (version, `LOAD`, `ST_ReadOSM` on `test/data/osm/tiny.osm.pbf`, `pgr_dijkstra` on a graph built from it and on the pgRouting sample graph,
+  `pgr_drivingDistance`, `ST_KNN`).
+- The `pins` job derives the DuckDB version from the `duckdb/` submodule (it must be an official release tag with a Windows CLI,
+  else CI fails) and hands it, with the CLI asset and its release digest, to the build, smoke and release jobs. The CLI and the
+  build are therefore always the same release: moving to DuckDB v2.0.1 is only `scripts/rebuild.sh v2.0.1` (submodule bump) + PR.
 - On `main` and `v2.0-cyanoptera`, `windows-release` publishes `spatial.duckdb_extension` and its `.sha256` as a release tagged
   `<duckdb version>-fork.<n>` (e.g. `v2.0.0-fork.3`; the title names the fork commit). Releases are only made by the workflow, and an existing
   release is never overwritten.
@@ -24,4 +28,5 @@
 - The architecture notes live in `docs/architecture.md`.
 
 ## Next
-- Rebuild and re-release on every DuckDB patch release (an extension only loads in the exact DuckDB version it was built for).
+- DuckDB v2.0.1 (announced for 18/11): bump the submodule with `scripts/rebuild.sh v2.0.1`; CI builds, smoke-tests and releases
+  `v2.0.1-fork.1` by itself.

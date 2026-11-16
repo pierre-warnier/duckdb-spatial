@@ -1,6 +1,6 @@
 #
 # This workflow calls the main distribution pipeline from DuckDB to build and test the extension binaries,
-# then proves the windows_amd64 build in the official DuckDB v2.0.0 CLI on a real Windows runner and, on
+# then proves the windows_amd64 build in the official DuckDB CLI of the submodule's release on a real Windows runner and, on
 # main and v2.0-cyanoptera, publishes it as a GitHub release asset with its SHA-256.
 #
 # windows_amd64_mingw is excluded: it is the wrong ABI for the official (MSVC) CLI.
@@ -29,21 +29,50 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.head_ref || '' }}-${{ github.base_ref || '' }}-${{ github.ref != 'refs/heads/main' || github.sha }}
   cancel-in-progress: true
 
-env:
-  # Must match the duckdb/ submodule: d54cbbe3df17e8e5ce68312f483b4155836112aa is the v2.0.0 release tag.
-  DUCKDB_VERSION: v2.0.0
-  # SHA-256 of duckdb-cli-windows-amd64.tar.gz in the official v2.0.0 release (GitHub release asset digest).
-  DUCKDB_CLI_WINDOWS_ASSET: duckdb-cli-windows-amd64.tar.gz
-  DUCKDB_CLI_WINDOWS_SHA256: 91663c2f36c2a334b0e5e639006d8c29c29e013af0c477d80bb931df68870312
-
 jobs:
+  pins:
+    # The DuckDB version is derived from the duckdb/ submodule, never typed: the submodule must be an official
+    # release tag (an extension only loads in the exact DuckDB it was built for), and that release must ship a
+    # Windows x64 CLI. Moving to a new DuckDB release (e.g. v2.0.1) = moving the submodule (scripts/rebuild.sh v2.0.1).
+    name: DuckDB version and official CLI
+    runs-on: ubuntu-latest
+    outputs:
+      duckdb_version: ${{ steps.pin.outputs.duckdb_version }}
+      cli_asset: ${{ steps.pin.outputs.cli_asset }}
+      cli_sha256: ${{ steps.pin.outputs.cli_sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: pin
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          sub="$(git ls-tree HEAD duckdb | awk '{print $3}')"
+          tag="$(git ls-remote --tags https://github.com/duckdb/duckdb.git 'refs/tags/v*' \
+                 | awk -v s="$sub" '$1 == s {print $2}' | sed -e 's|^refs/tags/||' -e 's|\^{}$||' \
+                 | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)"
+          if [ -z "$tag" ]; then
+            echo "::error::duckdb/ submodule $sub is not an official DuckDB release tag: no official CLI can load this build"
+            exit 1
+          fi
+          asset="$(gh api "repos/duckdb/duckdb/releases/tags/$tag" --jq '.assets[] | select(.name == "duckdb-cli-windows-amd64.tar.gz" or .name == "duckdb_cli-windows-amd64.zip") | .name + " " + .digest' | head -n 1)"
+          if [ -z "$asset" ]; then
+            echo "::error::DuckDB $tag has no official Windows x64 CLI asset"
+            exit 1
+          fi
+          echo "DuckDB $tag (submodule $sub), Windows CLI: $asset"
+          echo "duckdb_version=$tag" >> "$GITHUB_OUTPUT"
+          echo "cli_asset=${asset%% *}" >> "$GITHUB_OUTPUT"
+          echo "cli_sha256=${asset##*sha256:}" >> "$GITHUB_OUTPUT"
+
   duckdb-latest-build:
     name: Build extension binaries
+    needs: pins
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@969bc76276acec1c0a3922ff500d2ec3a1a3b037 # v2.0-cyanoptera 2026-10-01 pin
     with:
-      # The tag, not the commit: DuckDB stamps the extension with this ref, and the official v2.0.0 CLI
-      # refuses a build stamped with the commit hash ("built specifically for DuckDB version d54cbbe3...").
-      duckdb_version: v2.0.0 # = d54cbbe3df17e8e5ce68312f483b4155836112aa, the duckdb/ submodule
+      # The release tag, not its commit: DuckDB stamps the extension with this ref, and the official CLI refuses a
+      # build stamped with a commit hash ("built specifically for DuckDB version d54cbbe3...").
+      duckdb_version: ${{ needs.pins.outputs.duckdb_version }}
       ci_tools_version: 969bc76276acec1c0a3922ff500d2ec3a1a3b037 # v2.0-cyanoptera 2026-10-01 pin
       extension_name: spatial
       vcpkg_commit: cd61e1e26a038e82d6550a3ebbe0fbbfe7da78e3 # Release 2026.06.24
@@ -51,8 +80,12 @@ jobs:
 
   windows-smoke:
     name: Windows start-up test (official CLI)
-    needs: duckdb-latest-build
+    needs: [pins, duckdb-latest-build]
     runs-on: windows-latest
+    env:
+      DUCKDB_VERSION: ${{ needs.pins.outputs.duckdb_version }}
+      DUCKDB_CLI_WINDOWS_ASSET: ${{ needs.pins.outputs.cli_asset }}
+      DUCKDB_CLI_WINDOWS_SHA256: ${{ needs.pins.outputs.cli_sha256 }}
     steps:
       - uses: actions/checkout@v4
 
@@ -63,22 +96,22 @@ jobs:
           merge-multiple: true
           path: artifact
 
-      - name: Download the pinned official DuckDB CLI
+      - name: Download the official DuckDB CLI of the same version
         shell: pwsh
         run: |
           $url = "https://github.com/duckdb/duckdb/releases/download/$env:DUCKDB_VERSION/$env:DUCKDB_CLI_WINDOWS_ASSET"
           Invoke-WebRequest -Uri $url -OutFile $env:DUCKDB_CLI_WINDOWS_ASSET
           $hash = (Get-FileHash $env:DUCKDB_CLI_WINDOWS_ASSET -Algorithm SHA256).Hash.ToLower()
-          if ($hash -ne $env:DUCKDB_CLI_WINDOWS_SHA256) { throw "CLI archive SHA-256 $hash does not match $env:DUCKDB_CLI_WINDOWS_SHA256" }
+          if ($hash -ne $env:DUCKDB_CLI_WINDOWS_SHA256) { throw "CLI archive SHA-256 $hash does not match the release digest $env:DUCKDB_CLI_WINDOWS_SHA256" }
           New-Item -ItemType Directory -Force cli | Out-Null
-          tar -xzf $env:DUCKDB_CLI_WINDOWS_ASSET -C cli
+          tar -xf $env:DUCKDB_CLI_WINDOWS_ASSET -C cli
           if ($LASTEXITCODE -ne 0) { throw "could not extract $env:DUCKDB_CLI_WINDOWS_ASSET" }
           $exe = Get-ChildItem -Recurse cli -Filter duckdb.exe | Select-Object -First 1
           if (-not $exe) { throw "duckdb.exe not found in $env:DUCKDB_CLI_WINDOWS_ASSET" }
           Copy-Item $exe.FullName .\duckdb.exe
           .\duckdb.exe --version
 
-      - name: Run the start-up test (LOAD, ST_ReadOSM, pgr_dijkstra)
+      - name: Run the start-up test (LOAD, ST_ReadOSM, pgr_dijkstra, pgr_drivingDistance, ST_KNN)
         shell: pwsh
         run: |
           $ext = Get-ChildItem -Recurse artifact -Filter spatial.duckdb_extension | Select-Object -First 1
@@ -90,7 +123,9 @@ jobs:
 
   windows-release:
     name: Publish the windows_amd64 release asset
-    needs: windows-smoke
+    needs: [pins, windows-smoke]
+    env:
+      DUCKDB_VERSION: ${{ needs.pins.outputs.duckdb_version }}
     if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/v2.0-cyanoptera')
     runs-on: ubuntu-latest
     permissions:
