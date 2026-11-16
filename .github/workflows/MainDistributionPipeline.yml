@@ -81,6 +81,9 @@ jobs:
   windows-smoke:
     name: Windows start-up test (official CLI)
     needs: [pins, duckdb-latest-build]
+    # Runs as soon as the build workflow ends, whatever happened to the other targets (GitHub cancels macOS jobs it
+    # cannot find a runner for): it needs only the windows_amd64 artifact, and fails if that is missing.
+    if: ${{ !cancelled() && needs.pins.result == 'success' }}
     runs-on: windows-latest
     env:
       DUCKDB_VERSION: ${{ needs.pins.outputs.duckdb_version }}
@@ -126,7 +129,7 @@ jobs:
     needs: [pins, windows-smoke]
     env:
       DUCKDB_VERSION: ${{ needs.pins.outputs.duckdb_version }}
-    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/v2.0-cyanoptera')
+    if: ${{ !cancelled() && needs.windows-smoke.result == 'success' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/v2.0-cyanoptera') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
