@@ -166,10 +166,14 @@ jobs:
           mkdir -p release
           cp "$(find artifact -name spatial.duckdb_extension | head -n 1)" release/spatial.duckdb_extension
           (cd release && sha256sum spatial.duckdb_extension > spatial.duckdb_extension.sha256 && cat spatial.duckdb_extension.sha256)
+          # The README promises no Visual C++ Redistributable: hold the binary to it.
+          if objdump -p release/spatial.duckdb_extension | grep -iE 'DLL Name: (vcruntime|msvcp|ucrtbase|api-ms-win-crt)'; then
+            echo "::error::the extension imports the Visual C++ runtime; fix the static runtime or the README"; exit 1
+          fi
           notes="Spatial extension for the official DuckDB ${DUCKDB_VERSION} CLI on Windows x64 (MSVC, windows_amd64), built from fork commit ${GITHUB_SHA}.
 
           Load it with \`duckdb -unsigned\`, then \`LOAD 'C:/path/to/spatial.duckdb_extension';\` (keep the file name: DuckDB derives the extension name from it).
-          It only loads in DuckDB ${DUCKDB_VERSION}. Requires the Microsoft Visual C++ Redistributable (x64).
+          It only loads in DuckDB ${DUCKDB_VERSION}. No Visual C++ Redistributable needed: the C/C++ runtime is linked statically.
           SHA-256: $(cut -d' ' -f1 release/spatial.duckdb_extension.sha256)
           Built, tested in the official CLI on windows-latest and published by run ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}."
           if gh release view "$tag" >/dev/null 2>&1; then
