@@ -1,5 +1,11 @@
 #
-# This workflow calls the main distribution pipeline from DuckDB to build, test and (optionally) release the extension
+# This workflow calls the main distribution pipeline from DuckDB to build and test the extension binaries,
+# then proves the windows_amd64 build in the official DuckDB CLI on a real Windows runner and, on the
+# default branch, publishes it as a GitHub release asset with its SHA-256.
+#
+# windows_amd64_mingw is excluded: it is the wrong ABI for the official (MSVC) CLI.
+# The upstream deploy job (duckdb-latest-deploy) was removed: it uploads to DuckDB's own S3 bucket with
+# secrets that only exist in the duckdb organisation, so it can never succeed on this fork.
 #
 
 name: Main Extension Distribution Pipeline
@@ -22,6 +28,11 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.head_ref || '' }}-${{ github.base_ref || '' }}-${{ github.ref != 'refs/heads/main' || github.sha }}
   cancel-in-progress: true
 
+env:
+  # Must match the duckdb/ submodule: 069cc9f9b5be802405797faecc284961b07c70ef is the v1.5.6 release tag.
+  DUCKDB_VERSION: v1.5.6
+  # SHA-256 of duckdb_cli-windows-amd64.zip in the official v1.5.6 release (GitHub release asset digest).
+  DUCKDB_CLI_WINDOWS_SHA256: 798eae475d07c645ff3b914f7b0e676d06502b5412dd7552638fafed81f9e916
 
 jobs:
   duckdb-latest-build:
@@ -32,16 +43,76 @@ jobs:
       ci_tools_version: v1.5.6
       extension_name: spatial
       vcpkg_commit: 84bab45d415d22042bd0b9081aea57f362da3f35
-      exclude_archs: 'linux_amd64_musl'
+      exclude_archs: 'linux_amd64_musl;windows_amd64_mingw'
 
-  duckdb-latest-deploy:
-    name: Deploy extension binaries
+  windows-smoke:
+    name: Windows start-up test (official CLI)
     needs: duckdb-latest-build
-    uses: duckdb/extension-ci-tools/.github/workflows/_extension_deploy.yml@v1.5.6
-    secrets: inherit
-    with:
-      duckdb_version: v1.5.6
-      ci_tools_version: v1.5.6
-      extension_name: spatial
-      deploy_latest: ${{ startsWith(github.ref, 'refs/heads/v') || github.ref == 'refs/heads/main' }}
-      exclude_archs: 'linux_amd64_musl'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download the windows_amd64 extension
+        uses: actions/download-artifact@v4
+        with:
+          name: spatial-${{ env.DUCKDB_VERSION }}-extension-windows_amd64
+          path: artifact
+
+      - name: Download the pinned official DuckDB CLI
+        shell: pwsh
+        run: |
+          $url = "https://github.com/duckdb/duckdb/releases/download/$env:DUCKDB_VERSION/duckdb_cli-windows-amd64.zip"
+          Invoke-WebRequest -Uri $url -OutFile duckdb_cli.zip
+          $hash = (Get-FileHash duckdb_cli.zip -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne $env:DUCKDB_CLI_WINDOWS_SHA256) { throw "CLI zip SHA-256 $hash does not match $env:DUCKDB_CLI_WINDOWS_SHA256" }
+          Expand-Archive duckdb_cli.zip -DestinationPath cli
+          .\cli\duckdb.exe --version
+
+      - name: Run the start-up test (LOAD, ST_ReadOSM, pgr_dijkstra)
+        shell: pwsh
+        run: |
+          $ext = Get-ChildItem -Recurse artifact -Filter spatial.duckdb_extension | Select-Object -First 1
+          if (-not $ext) { throw "spatial.duckdb_extension not found in the artifact" }
+          Copy-Item $ext.FullName .\spatial.duckdb_extension
+          $env:EXPECTED_DUCKDB_VERSION = $env:DUCKDB_VERSION
+          .\cli\duckdb.exe -unsigned -bail -list -f test/smoke/startup.sql
+          if ($LASTEXITCODE -ne 0) { throw "start-up test failed with exit code $LASTEXITCODE" }
+
+  windows-release:
+    name: Publish the windows_amd64 release asset
+    needs: windows-smoke
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/v1.5-variegata'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download the windows_amd64 extension
+        uses: actions/download-artifact@v4
+        with:
+          name: spatial-${{ env.DUCKDB_VERSION }}-extension-windows_amd64
+          path: artifact
+
+      - name: Create the release with the extension and its SHA-256
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          short_sha="${GITHUB_SHA::8}"
+          tag="spatial-windows_amd64-duckdb-${DUCKDB_VERSION}-${short_sha}"
+          mkdir -p release
+          cp "$(find artifact -name spatial.duckdb_extension | head -n 1)" release/spatial.duckdb_extension
+          (cd release && sha256sum spatial.duckdb_extension > spatial.duckdb_extension.sha256 && cat spatial.duckdb_extension.sha256)
+          notes="Spatial extension for the official DuckDB ${DUCKDB_VERSION} CLI on Windows x64 (MSVC, windows_amd64), built from ${GITHUB_SHA}.
+
+          Load it with \`duckdb -unsigned\`, then \`LOAD 'C:/path/to/spatial.duckdb_extension';\` (keep the file name: DuckDB derives the extension name from it).
+          Requires the Microsoft Visual C++ Redistributable (x64), like DuckDB itself.
+          SHA-256: $(cut -d' ' -f1 release/spatial.duckdb_extension.sha256)
+          Built, tested on windows-latest and published by run ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}."
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" release/spatial.duckdb_extension release/spatial.duckdb_extension.sha256 --clobber
+          else
+            gh release create "$tag" release/spatial.duckdb_extension release/spatial.duckdb_extension.sha256 \
+              --target "$GITHUB_SHA" --title "spatial windows_amd64 for DuckDB ${DUCKDB_VERSION} (${short_sha})" \
+              --notes "$notes" --latest=false
+          fi

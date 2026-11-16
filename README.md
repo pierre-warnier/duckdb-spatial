@@ -241,6 +241,21 @@ Other extensions (`parquet`, `httpfs`, ...) are installed into that directory as
 
 Do not copy `spatial.duckdb_extension` over an installed one by hand: the `.info` file next to it still describes the previous binary, and loading by name then fails with `Metadata mismatch detected when loading extension`.
 
+## Windows (x64)
+
+Every push to `v1.5-variegata` builds `windows_amd64` with MSVC on a GitHub-hosted runner, loads it in the official DuckDB v1.5.6 CLI on `windows-latest` (`LOAD`, `ST_ReadOSM` on `test/data/osm/tiny.osm.pbf` and `pgr_dijkstra`, see `test/smoke/startup.sql`), and publishes it as a release asset tagged `spatial-windows_amd64-duckdb-v1.5.6-<commit>`, next to its `.sha256`. No Windows build is made by hand.
+
+1. Install the latest supported **Microsoft Visual C++ v14 Redistributable (x64)** (`https://aka.ms/vc14/vc_redist.x64.exe`, the permanent link on Microsoft's "Latest supported Visual C++ Redistributable" page), the same requirement as DuckDB itself on Windows. Without it, DuckDB or the extension fails to start with a missing `VCRUNTIME140.dll` / `MSVCP140.dll`.
+2. Download `duckdb_cli-windows-amd64.zip` from the [DuckDB v1.5.6 release](https://github.com/duckdb/duckdb/releases/tag/v1.5.6), and `spatial.duckdb_extension` from this fork's latest `spatial-windows_amd64-duckdb-v1.5.6-*` release. Check it with `Get-FileHash spatial.duckdb_extension` against the `.sha256` file.
+3. Keep the file name `spatial.duckdb_extension` (DuckDB derives the extension name from it), then:
+
+```
+duckdb -unsigned
+LOAD 'C:/path/to/spatial.duckdb_extension';
+```
+
+The `windows_amd64_mingw` build is not produced: it targets a different ABI and does not load in the official CLI.
+
 # Example Usage
 
 See the [example](docs/example.md) for basic usage.

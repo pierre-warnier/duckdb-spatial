@@ -1,4 +1,5 @@
 #include "spatial/modules/raster/raster_core.hpp"
+#include "spatial/util/math.hpp"
 
 #include "gdal_alg.h"
 #include "gdal_utils.h"
@@ -526,7 +527,7 @@ void SlopeExecute(Call &c) {
 	if (units == TerrainUnits::RADIANS) {
 		for (auto &value : values) {
 			if (value != DEM_NODATA) {
-				value = value * M_PI / 180.0;
+				value = value * MathUtil::PI / 180.0;
 			}
 		}
 	}
@@ -549,7 +550,7 @@ void AspectExecute(Call &c) {
 	for (idx_t i = 0; i < values.size(); i++) {
 		if (values[i] != DEM_NODATA) {
 			if (units == TerrainUnits::RADIANS) {
-				values[i] = values[i] * M_PI / 180.0;
+				values[i] = values[i] * MathUtil::PI / 180.0;
 			}
 		} else if (source.IsValid(i)) {
 			values[i] = -1;

@@ -11647,8 +11647,8 @@ struct ST_Project_Func {
 		const auto az_data = UnifiedVectorFormat::GetData<double>(az_fmt);
 
 		constexpr double EARTH_RADIUS = 6371008.8; // meters
-		constexpr double DEG_TO_RAD = M_PI / 180.0;
-		constexpr double RAD_TO_DEG = 180.0 / M_PI;
+		constexpr double DEG_TO_RAD = MathUtil::PI / 180.0;
+		constexpr double RAD_TO_DEG = 180.0 / MathUtil::PI;
 
 		for (idx_t i = 0; i < count; i++) {
 			const auto pi = pt_fmt.sel->get_index(i);
