@@ -9,10 +9,13 @@
 ## Windows x64
 - `windows_amd64` is built with MSVC. `M_PI` is not ISO C++ and MSVC only defines it with `_USE_MATH_DEFINES`: use `MathUtil::PI`
   (`src/spatial/util/math.hpp`) instead.
+- Portable C++ rules learnt from MSVC/macOS/wasm CI: the code is C++11 (CMAKE_CXX_STANDARD 11; MSVC falls back to its C++14
+  default, so no structured bindings or other C++17), include every std header you use (`<numeric>` for `std::iota`: MSVC's STL
+  does not pull it in transitively), and give `MinValue`/`MaxValue` one explicit type (`idx_t` is not `size_t` on macOS/wasm).
 - The `windows-smoke` job loads the build in the official v1.5.6 CLI on `windows-latest` and runs `test/smoke/startup.sql`
   (version, `LOAD`, `ST_ReadOSM` on `test/data/osm/tiny.osm.pbf`, `pgr_dijkstra` on a graph built from it and on the pgRouting sample graph).
 - On the default branch, `windows-release` publishes `spatial.duckdb_extension` and its `.sha256` as a release tagged
-  `spatial-windows_amd64-duckdb-<duckdb version>-<commit>`. Releases are only made by the workflow.
+  `<duckdb version>-fork.<n>` (e.g. `v1.5.6-fork.2`; the title names the fork commit). Releases are only made by the workflow.
 - The official Windows CLI links the C runtime statically (it imports only KERNEL32, WS2_32 and RstrtMgr).
 
 ## Decisions

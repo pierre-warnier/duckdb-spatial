@@ -27,6 +27,8 @@
 // Extra
 #include "yyjson.h"
 
+#include <tuple>
+
 namespace duckdb {
 
 namespace {

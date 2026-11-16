@@ -243,10 +243,10 @@ Do not copy `spatial.duckdb_extension` over an installed one by hand: the `.info
 
 ## Windows (x64)
 
-Every push to `v1.5-variegata` builds `windows_amd64` with MSVC on a GitHub-hosted runner, loads it in the official DuckDB v1.5.6 CLI on `windows-latest` (`LOAD`, `ST_ReadOSM` on `test/data/osm/tiny.osm.pbf` and `pgr_dijkstra`, see `test/smoke/startup.sql`), and publishes it as a release asset tagged `spatial-windows_amd64-duckdb-v1.5.6-<commit>`, next to its `.sha256`. No Windows build is made by hand.
+Every push to `v1.5-variegata` builds `windows_amd64` with MSVC on a GitHub-hosted runner, loads it in the official DuckDB v1.5.6 CLI on `windows-latest` (`LOAD`, `ST_ReadOSM` on `test/data/osm/tiny.osm.pbf` and `pgr_dijkstra`, see `test/smoke/startup.sql`), and publishes it as a release asset tagged `v1.5.6-fork.<n>` (DuckDB version, then the fork build number; the release title names the fork commit), next to its `.sha256`. No Windows build is made by hand.
 
 1. Install the latest supported **Microsoft Visual C++ v14 Redistributable (x64)** (`https://aka.ms/vc14/vc_redist.x64.exe`, the permanent link on Microsoft's "Latest supported Visual C++ Redistributable" page), the same requirement as DuckDB itself on Windows. Without it, DuckDB or the extension fails to start with a missing `VCRUNTIME140.dll` / `MSVCP140.dll`.
-2. Download `duckdb_cli-windows-amd64.zip` from the [DuckDB v1.5.6 release](https://github.com/duckdb/duckdb/releases/tag/v1.5.6), and `spatial.duckdb_extension` from this fork's latest `spatial-windows_amd64-duckdb-v1.5.6-*` release. Check it with `Get-FileHash spatial.duckdb_extension` against the `.sha256` file.
+2. Download `duckdb_cli-windows-amd64.zip` from the [DuckDB v1.5.6 release](https://github.com/duckdb/duckdb/releases/tag/v1.5.6), and `spatial.duckdb_extension` from this fork's latest `v1.5.6-fork.*` release (an extension only loads in the exact DuckDB version it was built for). Check it with `Get-FileHash spatial.duckdb_extension` against the `.sha256` file.
 3. Keep the file name `spatial.duckdb_extension` (DuckDB derives the extension name from it), then:
 
 ```

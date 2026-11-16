@@ -478,7 +478,7 @@ static void KMeansWindowInit(AggregateInputData &aggr_input_data, const WindowPa
 	}
 	if (valid_indices.empty()) return;
 
-	auto effective_k = MinValue(static_cast<idx_t>(k), valid_indices.size());
+	auto effective_k = MinValue<idx_t>(static_cast<idx_t>(k), valid_indices.size());
 
 	// Deterministic farthest-first initialization: start from the first valid point,
 	// then repeatedly pick the valid point whose nearest existing centroid is farthest

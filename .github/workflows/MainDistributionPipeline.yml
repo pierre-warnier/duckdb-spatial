@@ -55,7 +55,8 @@ jobs:
       - name: Download the windows_amd64 extension
         uses: actions/download-artifact@v4
         with:
-          name: spatial-${{ env.DUCKDB_VERSION }}-extension-windows_amd64
+          pattern: spatial-*-extension-windows_amd64
+          merge-multiple: true
           path: artifact
 
       - name: Download the pinned official DuckDB CLI
@@ -86,10 +87,16 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
       - name: Download the windows_amd64 extension
         uses: actions/download-artifact@v4
         with:
-          name: spatial-${{ env.DUCKDB_VERSION }}-extension-windows_amd64
+          pattern: spatial-*-extension-windows_amd64
+          merge-multiple: true
           path: artifact
 
       - name: Create the release with the extension and its SHA-256
@@ -99,20 +106,26 @@ jobs:
         run: |
           set -euo pipefail
           short_sha="${GITHUB_SHA::8}"
-          tag="spatial-windows_amd64-duckdb-${DUCKDB_VERSION}-${short_sha}"
+          # Tag <duckdb version>-fork.<n>: reuse the tag already on this commit, else take the next free number.
+          tag="$(git tag --points-at "$GITHUB_SHA" -l "${DUCKDB_VERSION}-fork.*" | sort -V | tail -n 1)"
+          if [ -z "$tag" ]; then
+            last="$(git tag -l "${DUCKDB_VERSION}-fork.*" | sed "s/^${DUCKDB_VERSION}-fork\.//" | grep -E '^[0-9]+$' | sort -n | tail -n 1)"
+            tag="${DUCKDB_VERSION}-fork.$(( ${last:-0} + 1 ))"
+          fi
+          echo "release tag: $tag"
           mkdir -p release
           cp "$(find artifact -name spatial.duckdb_extension | head -n 1)" release/spatial.duckdb_extension
           (cd release && sha256sum spatial.duckdb_extension > spatial.duckdb_extension.sha256 && cat spatial.duckdb_extension.sha256)
-          notes="Spatial extension for the official DuckDB ${DUCKDB_VERSION} CLI on Windows x64 (MSVC, windows_amd64), built from ${GITHUB_SHA}.
+          notes="Spatial extension for the official DuckDB ${DUCKDB_VERSION} CLI on Windows x64 (MSVC, windows_amd64), built from fork commit ${GITHUB_SHA}.
 
           Load it with \`duckdb -unsigned\`, then \`LOAD 'C:/path/to/spatial.duckdb_extension';\` (keep the file name: DuckDB derives the extension name from it).
-          Requires the Microsoft Visual C++ Redistributable (x64), like DuckDB itself.
+          It only loads in DuckDB ${DUCKDB_VERSION}. Requires the Microsoft Visual C++ Redistributable (x64).
           SHA-256: $(cut -d' ' -f1 release/spatial.duckdb_extension.sha256)
-          Built, tested on windows-latest and published by run ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}."
+          Built, tested in the official CLI on windows-latest and published by run ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}."
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" release/spatial.duckdb_extension release/spatial.duckdb_extension.sha256 --clobber
           else
             gh release create "$tag" release/spatial.duckdb_extension release/spatial.duckdb_extension.sha256 \
-              --target "$GITHUB_SHA" --title "spatial windows_amd64 for DuckDB ${DUCKDB_VERSION} (${short_sha})" \
+              --target "$GITHUB_SHA" --title "spatial ${tag}: DuckDB ${DUCKDB_VERSION}, Windows x64, fork commit ${short_sha}" \
               --notes "$notes" --latest=false
           fi
