@@ -482,6 +482,21 @@ Other extensions (`parquet`, `httpfs`, ...) are installed into that directory as
 
 Do not copy `spatial.duckdb_extension` over an installed one by hand: the `.info` file next to it still describes the previous binary, and loading by name then fails with `Metadata mismatch detected when loading extension`.
 
+## Windows (x64)
+
+Every push to `main` or `v2.0-cyanoptera` builds `windows_amd64` with MSVC on a GitHub-hosted runner, loads it in the official DuckDB CLI of the same release (v2.0.0, derived from the `duckdb` submodule) on `windows-latest` (`LOAD`, `ST_ReadOSM` on `test/data/osm/tiny.osm.pbf`, `pgr_dijkstra`, `pgr_drivingDistance` and `ST_KNN`, see `test/smoke/startup.sql`), and publishes it as a release asset tagged `v2.0.0-fork.<n>` (the release title names the fork commit), next to its `.sha256`. No Windows build is made by hand. For DuckDB v1.5.6, use the `v1.5.6-fork.*` releases built from the `v1.5-variegata` maintenance branch.
+
+1. No **Microsoft Visual C++ Redistributable** is needed: the extension links the C/C++ runtime statically, like the official CLI, and imports only Windows system DLLs (KERNEL32, ADVAPI32, WS2_32, CRYPT32, bcrypt, ...; the release job fails if it ever imports `VCRUNTIME140.dll` or `MSVCP140.dll`). An installed Redistributable does no harm.
+2. Download `duckdb-cli-windows-amd64.tar.gz` from the [DuckDB v2.0.0 release](https://github.com/duckdb/duckdb/releases/tag/v2.0.0) (extract it with `tar -xzf`), and `spatial.duckdb_extension` from this fork's latest `v2.0.0-fork.*` release. Check it with `Get-FileHash spatial.duckdb_extension` against the `.sha256` file.
+3. Keep the file name `spatial.duckdb_extension` (DuckDB derives the extension name from it), then:
+
+```
+duckdb -unsigned
+LOAD 'C:/path/to/spatial.duckdb_extension';
+```
+
+The `windows_amd64_mingw` build is not produced: it targets a different ABI and does not load in the official CLI.
+
 # Example Usage
 
 See the [example](docs/example.md) for basic usage.

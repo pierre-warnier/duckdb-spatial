@@ -1,8 +1,9 @@
-#include <numeric>
-
 #include "duckdb/parallel/task_executor.hpp"
 #include "duckdb/parallel/task_scheduler.hpp"
 #include <atomic>
+#include <functional>
+#include <numeric>
+#include <unordered_map>
 #include "spatial/util/point_in_area.hpp"
 #include "spatial/modules/geos/geos_module.hpp"
 #include "spatial/modules/geos/geos_geometry.hpp"
@@ -4364,9 +4365,10 @@ struct ST_ClusterIntersecting {
 
 			// Build result: geometry collection of geometry collections
 			vector<GEOSGeometry *> cluster_geoms;
-			for (auto &[_, members] : clusters) {
-				auto gc = GEOSGeom_createCollection_r(state.context, GEOS_GEOMETRYCOLLECTION,
-				                                      members.data(), members.size());
+			for (auto &cluster : clusters) {
+				auto &members = cluster.second;
+				auto gc = GEOSGeom_createCollection_r(state.context, GEOS_GEOMETRYCOLLECTION, members.data(),
+				                                      static_cast<unsigned int>(members.size()));
 				cluster_geoms.push_back(gc);
 			}
 			state.geoms.clear(); // ownership transferred
@@ -4502,9 +4504,10 @@ struct ST_ClusterWithin {
 			}
 
 			vector<GEOSGeometry *> cluster_geoms;
-			for (auto &[_, members] : clusters) {
-				auto gc = GEOSGeom_createCollection_r(state.context, GEOS_GEOMETRYCOLLECTION,
-				                                      members.data(), members.size());
+			for (auto &cluster : clusters) {
+				auto &members = cluster.second;
+				auto gc = GEOSGeom_createCollection_r(state.context, GEOS_GEOMETRYCOLLECTION, members.data(),
+				                                      static_cast<unsigned int>(members.size()));
 				cluster_geoms.push_back(gc);
 			}
 			state.geoms.clear();

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<osm version="0.6" generator="handwritten-fixture">
+  <node id="1" version="1" timestamp="2026-01-01T00:00:00Z" lat="50.8500000" lon="4.3500000"/>
+  <node id="2" version="1" timestamp="2026-01-01T00:00:00Z" lat="50.8500000" lon="4.3600000"/>
+  <node id="3" version="1" timestamp="2026-01-01T00:00:00Z" lat="50.8500000" lon="4.3700000"/>
+  <node id="4" version="1" timestamp="2026-01-01T00:00:00Z" lat="50.8600000" lon="4.3600000"/>
+  <node id="5" version="1" timestamp="2026-01-01T00:00:00Z" lat="50.8600000" lon="4.3700000">
+    <tag k="amenity" v="cafe"/>
+    <tag k="name" v="Fixture Cafe"/>
+  </node>
+  <way id="10" version="1" timestamp="2026-01-01T00:00:00Z">
+    <nd ref="1"/><nd ref="2"/><nd ref="3"/>
+    <tag k="highway" v="residential"/><tag k="name" v="Rue Un"/>
+  </way>
+  <way id="11" version="1" timestamp="2026-01-01T00:00:00Z">
+    <nd ref="2"/><nd ref="4"/><nd ref="5"/>
+    <tag k="highway" v="residential"/><tag k="name" v="Rue Deux"/>
+  </way>
+  <way id="12" version="1" timestamp="2026-01-01T00:00:00Z">
+    <nd ref="3"/><nd ref="5"/>
+    <tag k="highway" v="service"/><tag k="oneway" v="yes"/>
+  </way>
+  <relation id="100" version="1" timestamp="2026-01-01T00:00:00Z">
+    <member type="way" ref="10" role=""/><member type="way" ref="11" role=""/>
+    <tag k="type" v="route"/><tag k="route" v="bus"/>
+  </relation>
+</osm>
