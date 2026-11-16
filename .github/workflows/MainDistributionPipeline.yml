@@ -86,6 +86,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    concurrency:
+      group: windows-release-${{ github.repository }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
         with:
@@ -123,7 +126,8 @@ jobs:
           SHA-256: $(cut -d' ' -f1 release/spatial.duckdb_extension.sha256)
           Built, tested in the official CLI on windows-latest and published by run ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}."
           if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" release/spatial.duckdb_extension release/spatial.duckdb_extension.sha256 --clobber
+            # Never replace a published binary: its SHA-256 is already in use.
+            echo "release $tag already exists for $GITHUB_SHA; nothing to publish"
           else
             gh release create "$tag" release/spatial.duckdb_extension release/spatial.duckdb_extension.sha256 \
               --target "$GITHUB_SHA" --title "spatial ${tag}: DuckDB ${DUCKDB_VERSION}, Windows x64, fork commit ${short_sha}" \
