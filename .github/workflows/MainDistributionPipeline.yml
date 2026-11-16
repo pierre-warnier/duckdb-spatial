@@ -48,6 +48,9 @@ jobs:
   windows-smoke:
     name: Windows start-up test (official CLI)
     needs: duckdb-latest-build
+    # Runs as soon as the build workflow ends, whatever happened to the other targets (GitHub cancels macOS jobs it
+    # cannot find a runner for): it needs only the windows_amd64 artifact, and fails if that is missing.
+    if: ${{ !cancelled() }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -82,7 +85,7 @@ jobs:
   windows-release:
     name: Publish the windows_amd64 release asset
     needs: windows-smoke
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/v1.5-variegata'
+    if: ${{ !cancelled() && needs.windows-smoke.result == 'success' && github.event_name != 'pull_request' && github.ref == 'refs/heads/v1.5-variegata' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
