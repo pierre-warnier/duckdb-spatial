@@ -8,6 +8,9 @@
 namespace duckdb {
 
 struct MathUtil {
+	// Portable pi: M_PI is POSIX, not ISO C++, and MSVC only defines it with _USE_MATH_DEFINES.
+	static constexpr double PI = 3.14159265358979323846;
+
 
 	static string format_coord(double d);
 	static string format_coord(double x, double y);
