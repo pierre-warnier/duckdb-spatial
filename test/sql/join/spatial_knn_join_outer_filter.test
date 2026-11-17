@@ -1,0 +1,129 @@
+# name: test/sql/join/spatial_knn_join_outer_filter.test
+# description: a filter on both sides above an ST_KNN join stays above the k-nearest search (issue #156)
+# group: [join]
+
+require spatial
+
+# Gaps that double, so that every point has exactly one nearest other point (no ties)
+statement ok
+CREATE TABLE pts AS SELECT * FROM (VALUES (0, ST_Point(0, 0)), (1, ST_Point(1, 0)), (3, ST_Point(3, 0)), (7, ST_Point(7, 0)), (15, ST_Point(15, 0))) t(id, geom);
+
+query I
+SELECT count(*) FROM pts a JOIN pts b ON ST_KNN(a.geom, b.geom, 2);
+----
+10
+
+# The nearest point other than myself: k = 2, drop the self-match, in one statement
+query II
+SELECT a.id, b.id FROM pts a JOIN pts b ON ST_KNN(a.geom, b.geom, 2) WHERE a.id <> b.id ORDER BY a.id;
+----
+0	1
+1	0
+3	1
+7	3
+15	7
+
+query I
+SELECT count(*) FROM pts a JOIN pts b ON ST_KNN(a.geom, b.geom, 2) WHERE a.id <> b.id;
+----
+5
+
+# Only the distance is selected: the ids are needed by the filter only
+query R
+SELECT sum(ST_Distance(a.geom, b.geom)) FROM pts a JOIN pts b ON ST_KNN(a.geom, b.geom, 2) WHERE a.id <> b.id;
+----
+16
+
+# The same condition in the ON clause filters the k rows found (INNER join)
+query II
+SELECT a.id, b.id FROM pts a JOIN pts b ON ST_KNN(a.geom, b.geom, 2) AND a.id <> b.id ORDER BY a.id;
+----
+0	1
+1	0
+3	1
+7	3
+15	7
+
+# A filter on a subquery
+query II
+SELECT x, y FROM (SELECT a.id AS x, b.id AS y FROM pts a JOIN pts b ON ST_KNN(a.geom, b.geom, 2)) WHERE x <> y ORDER BY x;
+----
+0	1
+1	0
+3	1
+7	3
+15	7
+
+# A filter on a CTE, inlined or materialized
+query I
+WITH k AS (SELECT a.id AS x, b.id AS y FROM pts a JOIN pts b ON ST_KNN(a.geom, b.geom, 2)) SELECT count(*) FROM k WHERE x <> y;
+----
+5
+
+query I
+WITH k AS MATERIALIZED (SELECT a.id AS x, b.id AS y FROM pts a JOIN pts b ON ST_KNN(a.geom, b.geom, 2)) SELECT count(*) FROM k WHERE x <> y;
+----
+5
+
+# The filter is applied after the search, never inside it: k = 1 finds only the point itself, so nothing is left
+query I
+SELECT count(*) FROM pts a JOIN pts b ON ST_KNN(a.geom, b.geom, 1) WHERE a.id <> b.id;
+----
+0
+
+# Other comparisons between both sides, and mixed with one-sided filters (pushed below the search)
+query I
+SELECT count(*) FROM pts a JOIN pts b ON ST_KNN(a.geom, b.geom, 2) WHERE a.id < b.id AND a.id > 0;
+----
+0
+
+query II
+SELECT a.id, b.id FROM pts a JOIN pts b ON ST_KNN(a.geom, b.geom, 3) WHERE a.id > b.id AND b.id > 0 ORDER BY a.id, b.id;
+----
+3	1
+7	1
+7	3
+15	3
+15	7
+
+# LEFT join with a filter above it: a filter rejecting NULLs makes it an INNER join
+query II
+SELECT a.id, b.id FROM pts a LEFT JOIN pts b ON ST_KNN(a.geom, b.geom, 2) WHERE a.id <> b.id ORDER BY a.id;
+----
+0	1
+1	0
+3	1
+7	3
+15	7
+
+# LEFT join with a filter above it that keeps the NULLs (empty searched side)
+query II
+SELECT x, y FROM (SELECT a.id AS x, b.id AS y FROM pts a LEFT JOIN (SELECT * FROM pts WHERE id < 0) b ON ST_KNN(a.geom, b.geom, 2)) WHERE y IS NULL OR x <> y ORDER BY x;
+----
+0	NULL
+1	NULL
+3	NULL
+7	NULL
+15	NULL
+
+query II
+SELECT x, y FROM (SELECT a.id AS x, b.id AS y FROM pts a LEFT JOIN pts b ON ST_KNN(a.geom, b.geom, 2)) WHERE y IS NULL OR x <> y ORDER BY x;
+----
+0	1
+1	0
+3	1
+7	3
+15	7
+
+# Partitioned search with a filter above
+query III
+SELECT a.id, b.id, b.id % 2 FROM pts a JOIN pts b ON ST_KNN(a.geom, b.geom, 2, b.id % 2) WHERE a.id <> b.id AND a.id = 0 ORDER BY b.id;
+----
+0	1	1
+0	3	1
+
+# An equality between both sides is still refused (use the partition argument)
+statement error
+SELECT count(*) FROM pts a JOIN pts b ON ST_KNN(a.geom, b.geom, 2) WHERE a.id = b.id;
+----
+ST_KNN cannot be used outside of a JOIN ON clause

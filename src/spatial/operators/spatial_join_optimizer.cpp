@@ -19,6 +19,9 @@
 #include "duckdb/planner/operator/logical_filter.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/planner/table_filter.hpp"
+#include "duckdb/planner/expression_iterator.hpp"
+
+#include <algorithm>
 
 namespace duckdb {
 
@@ -559,8 +562,42 @@ static bool TrySwapKNNAnyJoin(OptimizerExtensionInput &input, unique_ptr<Logical
 	knn_join->estimated_cardinality = any_join.estimated_cardinality;
 
 	if (!extra_predicates.empty()) {
-		// Wrap KNN join in a filter for extra AND predicates (INNER only)
+		// Wrap KNN join in a filter for extra AND predicates (INNER only).
+		// The join's projection maps were computed for the join's parent: a column used only by these predicates
+		// (e.g. `a.id <> b.id`) is not in them. Add the missing columns to the KNN join's output, and give the filter a
+		// projection map that restores exactly the join's original output for the parent.
+		const auto orig_bindings = knn_join->GetColumnBindings();
+		const auto extend_map = [&](LogicalOperator &child, vector<ProjectionIndex> &map) {
+			if (map.empty()) {
+				return; // all the columns of this side are output already
+			}
+			const auto child_bindings = child.GetColumnBindings();
+			for (auto &pred : extra_predicates) {
+				ExpressionIterator::VisitExpression<BoundColumnRefExpression>(
+				    *pred, [&](const BoundColumnRefExpression &colref) {
+					    for (idx_t i = 0; i < child_bindings.size(); i++) {
+						    if (child_bindings[i] == colref.Binding()) {
+							    if (std::find(map.begin(), map.end(), ProjectionIndex(i)) == map.end()) {
+								    map.emplace_back(i);
+							    }
+							    break;
+						    }
+					    }
+				    });
+			}
+		};
+		extend_map(*knn_join->children[0], knn_join->left_projection_map);
+		extend_map(*knn_join->children[1], knn_join->right_projection_map);
+
 		auto filter = make_uniq<LogicalFilter>();
+		const auto new_bindings = knn_join->GetColumnBindings();
+		if (new_bindings.size() != orig_bindings.size()) {
+			for (auto &binding : orig_bindings) {
+				const auto pos = std::find(new_bindings.begin(), new_bindings.end(), binding);
+				D_ASSERT(pos != new_bindings.end());
+				filter->projection_map.emplace_back(static_cast<idx_t>(pos - new_bindings.begin()));
+			}
+		}
 		filter->expressions = std::move(extra_predicates);
 		filter->children.push_back(std::move(knn_join));
 		plan = std::move(filter);
@@ -570,11 +607,89 @@ static bool TrySwapKNNAnyJoin(OptimizerExtensionInput &input, unique_ptr<Logical
 	return true;
 }
 
+// A filter that compares both sides (e.g. `WHERE a.id <> b.id` above `JOIN ... ON ST_KNN(...)`) is pushed into the
+// join by the filter pushdown, and the join then becomes a COMPARISON_JOIN whose conditions hold the comparison plus
+// ST_KNN as an arbitrary (non-comparison) condition. Such a join is turned back into an ANY_JOIN on the AND of its
+// conditions, so that TrySwapKNNAnyJoin replaces it with the KNN join and keeps the comparison as a filter ABOVE it
+// (it only filters the k rows found, it is never part of the search). An equality between both sides is still
+// refused (use the partition argument instead), exactly as in the ON clause.
+static bool TrySwapKNNComparisonJoin(OptimizerExtensionInput &input, unique_ptr<LogicalOperator> &plan) {
+	if (plan->type != LogicalOperatorType::LOGICAL_COMPARISON_JOIN) {
+		return false;
+	}
+	auto &cmp_join = plan->Cast<LogicalComparisonJoin>();
+	if (cmp_join.join_type != JoinType::INNER && cmp_join.join_type != JoinType::LEFT &&
+	    cmp_join.join_type != JoinType::RIGHT) {
+		return false;
+	}
+	if (!cmp_join.duplicate_eliminated_columns.empty()) {
+		return false;
+	}
+	// A join filter pushdown (min/max of a comparison column, pushed into the scans) is dropped with the comparison
+	// join when it is replaced: it would prune rows BEFORE the k-nearest search and change its result. The scans keep
+	// an empty dynamic filter set, which filters nothing.
+
+	unordered_set<TableIndex> left_bindings;
+	unordered_set<TableIndex> right_bindings;
+	LogicalJoin::GetTableReferences(*cmp_join.children[0], left_bindings);
+	LogicalJoin::GetTableReferences(*cmp_join.children[1], right_bindings);
+
+	bool has_knn = false;
+	for (auto &cond : cmp_join.conditions) {
+		if (cond.IsComparison()) {
+			const auto cmp = cond.GetComparisonType();
+			if (cmp == ExpressionType::COMPARE_EQUAL || cmp == ExpressionType::COMPARE_NOT_DISTINCT_FROM) {
+				return false;
+			}
+			continue;
+		}
+		vector<unique_ptr<Expression>> parts;
+		parts.push_back(cond.GetJoinExpression().Copy());
+		LogicalFilter::SplitPredicates(parts);
+		for (auto &part : parts) {
+			bool unused_flip = false;
+			int32_t unused_k = 0;
+			if (IsKNNJoinPredicate(part, left_bindings, right_bindings, unused_flip, unused_k)) {
+				has_knn = true;
+			}
+		}
+	}
+	if (!has_knn) {
+		return false;
+	}
+
+	vector<JoinCondition> conditions;
+	for (auto &cond : cmp_join.conditions) {
+		conditions.push_back(cond.Copy());
+	}
+	auto any_join = make_uniq<LogicalAnyJoin>(cmp_join.join_type);
+	any_join->condition = JoinCondition::CreateExpression(std::move(conditions));
+	any_join->children = std::move(cmp_join.children);
+	any_join->left_projection_map = cmp_join.left_projection_map;
+	any_join->right_projection_map = cmp_join.right_projection_map;
+	any_join->has_estimated_cardinality = cmp_join.has_estimated_cardinality;
+	any_join->estimated_cardinality = cmp_join.estimated_cardinality;
+
+	unique_ptr<LogicalOperator> candidate = std::move(any_join);
+	if (!TrySwapKNNAnyJoin(input, candidate)) {
+		// Not a valid KNN join (e.g. a LEFT join with another condition on both sides): leave the plan as it was, the
+		// ST_KNN condition then raises its error at execution time.
+		cmp_join.children = std::move(candidate->children);
+		return false;
+	}
+	plan = std::move(candidate);
+	return true;
+}
+
 //======================================================================================================================
 
 static void InsertSpatialJoin(OptimizerExtensionInput &input, unique_ptr<LogicalOperator> &plan) {
 	// Try KNN first (more specific)
 	if (TrySwapKNNAnyJoin(input, plan)) {
+		return;
+	}
+
+	if (TrySwapKNNComparisonJoin(input, plan)) {
 		return;
 	}
 
