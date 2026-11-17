@@ -18,10 +18,18 @@
 - The `pins` job derives the DuckDB version from the `duckdb/` submodule (it must be an official release tag with a Windows CLI,
   else CI fails) and hands it, with the CLI asset and its release digest, to the build, smoke and release jobs. The CLI and the
   build are therefore always the same release: moving to DuckDB v2.0.1 is only `scripts/rebuild.sh v2.0.1` (submodule bump) + PR.
-- On `main` and `v2.0-cyanoptera`, `windows-release` publishes `spatial.duckdb_extension` and its `.sha256` as a release tagged
+- On `main` and `v2.0-cyanoptera`, `windows-release` publishes `spatial.duckdb_extension` (Windows x64) and, since #155's PR,
+  `spatial.linux_amd64.duckdb_extension` (the CI linux_amd64 build; DuckDB names an extension after its file name up to the
+  first dot, so it loads as `spatial`), each with its `.sha256`, as a release tagged
   `<duckdb version>-fork.<n>` (e.g. `v2.0.0-fork.3`; the title names the fork commit). Releases are only made by the workflow, and an existing
   release is never overwritten.
 - The official Windows CLI links the C runtime statically (it imports only KERNEL32, WS2_32 and RstrtMgr).
+
+## ST_KNN join (17/11, #154 #155 #156)
+- Two-geometry functions check the CRS at bind time (`GeoTypes::PropagateCRS`); ST_KNN and 11 others lacked it (#154).
+- A both-sides filter (WHERE, subquery, CTE) is pushed into the join, which becomes a COMPARISON_JOIN holding ST_KNN: the optimizer
+  turns it back into the KNN join with the filter above it; equality on both sides stays refused (#156).
+- The KNN join keeps the output order of the join it replaces (`swap_output`): parents' projection maps are positional (#155).
 
 ## Decisions
 - The upstream deploy job was removed: it uploads to DuckDB's S3 bucket with secrets that only exist in the duckdb organisation.

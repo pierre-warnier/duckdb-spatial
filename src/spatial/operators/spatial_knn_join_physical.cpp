@@ -104,6 +104,14 @@ PhysicalSpatialKNNJoin::PhysicalSpatialKNNJoin(PhysicalPlan &physical_plan, Logi
 		build_side_output_types.push_back(rhs_type);
 	}
 
+	if (lop.swap_output) {
+		probe_side_output_offset = build_side_output_columns.size();
+		build_side_output_offset = 0;
+	} else {
+		probe_side_output_offset = 0;
+		build_side_output_offset = probe_side_output_columns.size();
+	}
+
 	vector<LogicalType> layout_types;
 	layout_types.insert(layout_types.end(), build_side_key_types.begin(), build_side_key_types.end());
 	layout_types.insert(layout_types.end(), build_side_payload_types.begin(), build_side_payload_types.end());
@@ -483,8 +491,15 @@ OperatorResultType PhysicalSpatialKNNJoin::ExecuteInternal(ExecutionContext &con
 		case KNNJoinState::START: {
 			if (gstate.rtrees.empty()) {
 				if (IsLeftOuterJoin(join_type)) {
+					// Empty build side: every probe row once, with NULL build columns (at the output offsets)
 					lstate.probe_side_row_chunk.ReferenceColumns(input, probe_side_output_columns);
-					PhysicalComparisonJoin::ConstructEmptyJoinResult(join_type, false, lstate.probe_side_row_chunk, chunk);
+					chunk.SetChildCardinality(input.size());
+					for (idx_t i = 0; i < probe_side_output_columns.size(); i++) {
+						chunk.data[probe_side_output_offset + i].Reference(lstate.probe_side_row_chunk.data[i]);
+					}
+					for (idx_t i = 0; i < build_side_output_columns.size(); i++) {
+						ConstantVector::SetNull(chunk.data[build_side_output_offset + i], count_t(input.size()));
+					}
 					return OperatorResultType::NEED_MORE_INPUT;
 				}
 				return OperatorResultType::FINISHED;
@@ -524,7 +539,7 @@ OperatorResultType PhysicalSpatialKNNJoin::ExecuteInternal(ExecutionContext &con
 			if (lstate.input_index == input.size()) {
 				// Flush any accumulated output before requesting more input
 				if (output_index > 0) {
-					chunk.Slice(lstate.probe_side_row_chunk, lstate.probe_side_source_sel, output_index);
+					chunk.Slice(lstate.probe_side_row_chunk, lstate.probe_side_source_sel, output_index, probe_side_output_offset);
 					chunk.SetCardinality(output_index);
 				}
 
@@ -649,7 +664,7 @@ OperatorResultType PhysicalSpatialKNNJoin::ExecuteInternal(ExecutionContext &con
 
 			// Gather build-side output columns
 			for (idx_t i = 0; i < build_side_output_columns.size(); i++) {
-				auto &target = chunk.data[probe_side_output_columns.size() + i];
+				auto &target = chunk.data[build_side_output_offset + i];
 				const auto build_side_col_idx = build_side_output_columns[i];
 				gstate.collection->Gather(row_pointers, lstate.build_side_source_sel, batch, build_side_col_idx,
 				                          target, lstate.build_side_target_sel, nullptr);
@@ -660,7 +675,7 @@ OperatorResultType PhysicalSpatialKNNJoin::ExecuteInternal(ExecutionContext &con
 
 			if (output_index >= output_count) {
 				// Output chunk is full
-				chunk.Slice(lstate.probe_side_row_chunk, lstate.probe_side_source_sel, output_index);
+				chunk.Slice(lstate.probe_side_row_chunk, lstate.probe_side_source_sel, output_index, probe_side_output_offset);
 				chunk.SetCardinality(output_index);
 				return OperatorResultType::HAVE_MORE_OUTPUT;
 			}
@@ -684,11 +699,11 @@ OperatorResultType PhysicalSpatialKNNJoin::ExecuteInternal(ExecutionContext &con
 			}
 
 			if (remaining_count > 0) {
-				chunk.Slice(lstate.probe_side_row_chunk, lstate.lhs_match_sel, remaining_count);
+				chunk.Slice(lstate.probe_side_row_chunk, lstate.lhs_match_sel, remaining_count, probe_side_output_offset);
 
 				// Null the build-side columns
 				for (idx_t i = 0; i < build_side_output_columns.size(); i++) {
-					auto &target = chunk.data[probe_side_output_columns.size() + i];
+					auto &target = chunk.data[build_side_output_offset + i];
 					target.SetVectorType(VectorType::CONSTANT_VECTOR);
 					ConstantVector::SetNull(target, true);
 				}
