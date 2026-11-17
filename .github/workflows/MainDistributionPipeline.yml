@@ -125,7 +125,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "start-up test failed with exit code $LASTEXITCODE" }
 
   windows-release:
-    name: Publish the windows_amd64 release asset
+    name: Publish the windows_amd64 and linux_amd64 release assets
     needs: [pins, windows-smoke]
     env:
       DUCKDB_VERSION: ${{ needs.pins.outputs.duckdb_version }}
@@ -149,7 +149,14 @@ jobs:
           merge-multiple: true
           path: artifact
 
-      - name: Create the release with the extension and its SHA-256
+      - name: Download the linux_amd64 extension
+        uses: actions/download-artifact@v4
+        with:
+          pattern: spatial-*-extension-linux_amd64
+          merge-multiple: true
+          path: artifact-linux
+
+      - name: Create the release with the extensions and their SHA-256
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -166,6 +173,12 @@ jobs:
           mkdir -p release
           cp "$(find artifact -name spatial.duckdb_extension | head -n 1)" release/spatial.duckdb_extension
           (cd release && sha256sum spatial.duckdb_extension > spatial.duckdb_extension.sha256 && cat spatial.duckdb_extension.sha256)
+          # Linux x64 (glibc, built and tested by the linux_amd64 job). DuckDB takes the extension name from the file name up
+          # to its first dot, so spatial.linux_amd64.duckdb_extension loads as spatial.
+          linux_ext="$(find artifact-linux -name spatial.duckdb_extension | head -n 1)"
+          [ -n "$linux_ext" ] || { echo "::error::linux_amd64 spatial.duckdb_extension not found in the artifact"; exit 1; }
+          cp "$linux_ext" release/spatial.linux_amd64.duckdb_extension
+          (cd release && sha256sum spatial.linux_amd64.duckdb_extension > spatial.linux_amd64.duckdb_extension.sha256 && cat spatial.linux_amd64.duckdb_extension.sha256)
           # The README promises no Visual C++ Redistributable: hold the binary to it.
           if objdump -p release/spatial.duckdb_extension | grep -iE 'DLL Name: (vcruntime|msvcp|ucrtbase|api-ms-win-crt)'; then
             echo "::error::the extension imports the Visual C++ runtime; fix the static runtime or the README"; exit 1
@@ -175,13 +188,18 @@ jobs:
           Load it with \`duckdb -unsigned\`, then \`LOAD 'C:/path/to/spatial.duckdb_extension';\` (keep the file name: DuckDB derives the extension name from it).
           It only loads in DuckDB ${DUCKDB_VERSION}. No Visual C++ Redistributable needed: the C/C++ runtime is linked statically.
           SHA-256: $(cut -d' ' -f1 release/spatial.duckdb_extension.sha256)
+
+          Linux x64 (glibc, linux_amd64): \`spatial.linux_amd64.duckdb_extension\`, \`LOAD '/path/to/spatial.linux_amd64.duckdb_extension';\` in \`duckdb -unsigned\` v${DUCKDB_VERSION}.
+          SHA-256: $(cut -d' ' -f1 release/spatial.linux_amd64.duckdb_extension.sha256)
+
           Built, tested in the official CLI on windows-latest and published by run ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}."
           if gh release view "$tag" >/dev/null 2>&1; then
             # Never replace a published binary: its SHA-256 is already in use.
             echo "release $tag already exists for $GITHUB_SHA; nothing to publish"
           else
             gh release create "$tag" release/spatial.duckdb_extension release/spatial.duckdb_extension.sha256 \
-              --target "$GITHUB_SHA" --title "spatial ${tag}: DuckDB ${DUCKDB_VERSION}, Windows x64, fork commit ${short_sha}" \
+              release/spatial.linux_amd64.duckdb_extension release/spatial.linux_amd64.duckdb_extension.sha256 \
+              --target "$GITHUB_SHA" --title "spatial ${tag}: DuckDB ${DUCKDB_VERSION}, Windows x64 and Linux x64, fork commit ${short_sha}" \
               --notes "$notes"
           fi
 
