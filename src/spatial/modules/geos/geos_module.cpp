@@ -2976,6 +2976,7 @@ struct ST_SymDifference {
 				variant.AddParameter("geom1", LogicalType::GEOMETRY());
 				variant.AddParameter("geom2", LogicalType::GEOMETRY());
 				variant.SetReturnType(LogicalType::GEOMETRY());
+				variant.SetResolveTypes(GeoTypes::PropagateCRS);
 
 				variant.SetInit(LocalState::Init);
 				variant.SetFunction(Execute);
@@ -4264,6 +4265,7 @@ struct ST_Split {
 				variant.AddParameter("geom", LogicalType::GEOMETRY());
 				variant.AddParameter("blade", LogicalType::GEOMETRY());
 				variant.SetReturnType(LogicalType::GEOMETRY());
+				variant.SetResolveTypes(GeoTypes::PropagateCRS);
 				variant.SetFunction(Execute);
 				variant.SetInit(LocalState::Init);
 				variant.CanThrowErrors();
