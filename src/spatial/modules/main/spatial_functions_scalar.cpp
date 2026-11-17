@@ -5428,6 +5428,7 @@ struct ST_LineLocatePoint {
 				variant.AddParameter("line", LogicalType::GEOMETRY());
 				variant.AddParameter("point", LogicalType::GEOMETRY());
 				variant.SetReturnType(LogicalType::DOUBLE);
+				variant.SetResolveTypes(GeoTypes::PropagateCRS);
 
 				variant.SetInit(LocalState::Init);
 				variant.SetFunction(ExecuteGeometry);
@@ -6633,6 +6634,7 @@ struct ST_Intersects {
 				variant.AddParameter("geom1", LogicalType::GEOMETRY());
 				variant.AddParameter("geom2", LogicalType::GEOMETRY());
 				variant.SetReturnType(LogicalType::BOOLEAN);
+				variant.SetResolveTypes(GeoTypes::PropagateCRS);
 
 				variant.SetFunction(ExecuteGeometry);
 				variant.SetInit(LocalState::Init);
@@ -7484,6 +7486,7 @@ struct ST_MakeBox2D {
 				variant.AddParameter("point1", LogicalType::GEOMETRY());
 				variant.AddParameter("point2", LogicalType::GEOMETRY());
 				variant.SetReturnType(GeoTypes::BOX_2D());
+				variant.SetResolveTypes(GeoTypes::PropagateCRS);
 
 				variant.SetInit(LocalState::Init);
 				variant.SetFunction(ExecuteBinary);
@@ -9710,6 +9713,7 @@ struct ST_AddPoint {
 				variant.AddParameter("line", LogicalType::GEOMETRY());
 				variant.AddParameter("point", LogicalType::GEOMETRY());
 				variant.SetReturnType(LogicalType::GEOMETRY());
+				variant.SetResolveTypes(GeoTypes::PropagateCRS);
 				variant.SetFunction(Execute);
 				variant.SetInit(LocalState::Init);
 				variant.CanThrowErrors();
@@ -9719,6 +9723,7 @@ struct ST_AddPoint {
 				variant.AddParameter("point", LogicalType::GEOMETRY());
 				variant.AddParameter("position", LogicalType::INTEGER);
 				variant.SetReturnType(LogicalType::GEOMETRY());
+				variant.SetResolveTypes(GeoTypes::PropagateCRS);
 				variant.SetFunction(ExecuteWithPosition);
 				variant.SetInit(LocalState::Init);
 				variant.CanThrowErrors();
@@ -9791,6 +9796,7 @@ struct ST_SetPoint {
 				variant.AddParameter("position", LogicalType::INTEGER);
 				variant.AddParameter("point", LogicalType::GEOMETRY());
 				variant.SetReturnType(LogicalType::GEOMETRY());
+				variant.SetResolveTypes(GeoTypes::PropagateCRS);
 				variant.SetFunction(Execute);
 				variant.SetInit(LocalState::Init);
 				variant.CanThrowErrors();
@@ -10135,6 +10141,7 @@ struct ST_Scroll {
 				variant.AddParameter("line", LogicalType::GEOMETRY());
 				variant.AddParameter("point", LogicalType::GEOMETRY());
 				variant.SetReturnType(LogicalType::GEOMETRY());
+				variant.SetResolveTypes(GeoTypes::PropagateCRS);
 				variant.SetFunction(Execute);
 				variant.SetInit(LocalState::Init);
 				variant.CanThrowErrors();
@@ -10447,6 +10454,7 @@ struct ST_3DDistance {
 				variant.AddParameter("geom1", LogicalType::GEOMETRY());
 				variant.AddParameter("geom2", LogicalType::GEOMETRY());
 				variant.SetReturnType(LogicalType::DOUBLE);
+				variant.SetResolveTypes(GeoTypes::PropagateCRS);
 				variant.SetFunction(Execute);
 				variant.SetInit(LocalState::Init);
 				variant.CanThrowErrors();
@@ -10531,6 +10539,7 @@ struct ST_DFullyWithin {
 				variant.AddParameter("geom2", LogicalType::GEOMETRY());
 				variant.AddParameter("distance", LogicalType::DOUBLE);
 				variant.SetReturnType(LogicalType::BOOLEAN);
+				variant.SetResolveTypes(GeoTypes::PropagateCRS);
 				variant.SetFunction(Execute);
 				variant.SetInit(LocalState::Init);
 				variant.CanThrowErrors();
@@ -10612,6 +10621,7 @@ struct ST_LongestLine {
 				variant.AddParameter("geom1", LogicalType::GEOMETRY());
 				variant.AddParameter("geom2", LogicalType::GEOMETRY());
 				variant.SetReturnType(LogicalType::GEOMETRY());
+				variant.SetResolveTypes(GeoTypes::PropagateCRS);
 				variant.SetFunction(Execute);
 				variant.SetInit(LocalState::Init);
 			});
@@ -11897,6 +11907,7 @@ struct ST_KNN {
 				variant.AddParameter("k", LogicalType::INTEGER);
 				variant.SetReturnType(LogicalType::BOOLEAN);
 				variant.SetBind(Bind);
+				variant.SetResolveTypes(GeoTypes::PropagateCRS);
 				variant.SetFunction(Execute);
 				variant.CanThrowErrors();
 			});
@@ -11907,6 +11918,7 @@ struct ST_KNN {
 				variant.AddParameter("partition", LogicalType::ANY);
 				variant.SetReturnType(LogicalType::BOOLEAN);
 				variant.SetBind(Bind);
+				variant.SetResolveTypes(GeoTypes::PropagateCRS);
 				variant.SetFunction(Execute);
 				variant.CanThrowErrors();
 			});

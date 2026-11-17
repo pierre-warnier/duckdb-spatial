@@ -1,0 +1,91 @@
+# name: test/sql/join/spatial_knn_join_crs.test
+# description: ST_KNN refuses geometries of different CRS at bind time, exactly like ST_Distance (issue #154)
+# group: [join]
+
+require spatial
+
+# Belgian Lambert 72 (EPSG:31370) probe side, Belgian Lambert 2008 (EPSG:3812) searched side: the coordinates of the
+# same place differ by about 500 km between the two, so mixing them silently gives the wrong neighbours.
+statement ok
+CREATE TABLE l72 AS SELECT i AS id, ST_Point(150000 + i * 1000, 170000)::GEOMETRY('EPSG:31370') AS geom FROM range(5) t(i);
+
+statement ok
+CREATE TABLE l08 AS SELECT i AS id, ST_Point(650000 + i * 1000, 670000)::GEOMETRY('EPSG:3812') AS geom FROM range(5) t(i);
+
+statement error
+SELECT ST_Distance(l72.geom, l08.geom) FROM l72, l08;
+----
+Binder Error: Cannot call function '"ST_Distance"' with geometries of different coordinate reference systems (CRS).
+
+statement error
+SELECT count(*) FROM l72 JOIN l08 ON ST_KNN(l72.geom, l08.geom, 1);
+----
+Binder Error: Cannot call function '"ST_KNN"' with geometries of different coordinate reference systems (CRS).
+
+# The message names both CRS
+statement error
+SELECT count(*) FROM l72 JOIN l08 ON ST_KNN(l72.geom, l08.geom, 1);
+----
+First geometry type is in 'EPSG:31370' which is not compatible with 'EPSG:3812'
+
+# Same for LEFT joins, the partitioned variant, and with the arguments the other way round
+statement error
+SELECT count(*) FROM l72 LEFT JOIN l08 ON ST_KNN(l72.geom, l08.geom, 1);
+----
+different coordinate reference systems
+
+statement error
+SELECT count(*) FROM l72 JOIN l08 ON ST_KNN(l08.geom, l72.geom, 1, l72.id % 2);
+----
+different coordinate reference systems
+
+# After ST_Transform to the same CRS the join binds and runs
+query I
+SELECT count(*) FROM l72 JOIN (SELECT id, ST_Transform(geom, 'EPSG:3812', 'EPSG:31370', always_xy := true) AS geom FROM l08) t
+  ON ST_KNN(l72.geom, t.geom, 1);
+----
+5
+
+# ... and finds the right neighbours: the same place, so the same id
+query I
+SELECT bool_and(l72.id = t.id) FROM l72 JOIN (SELECT id, ST_Transform(geom, 'EPSG:3812', 'EPSG:31370', always_xy := true) AS geom FROM l08) t
+  ON ST_KNN(l72.geom, t.geom, 1);
+----
+true
+
+# Same CRS on both sides, or no CRS on one side: no error (same rule as ST_Distance)
+query I
+SELECT count(*) FROM l72 a JOIN l72 b ON ST_KNN(a.geom, b.geom, 2);
+----
+10
+
+query I
+SELECT count(*) FROM l72 a JOIN (SELECT id, ST_Point(150000 + id * 1000, 170000) AS geom FROM l72) b ON ST_KNN(a.geom, b.geom, 1);
+----
+5
+
+# The other functions of two geometries refuse a CRS mix as well (they had no check before #154)
+foreach func ST_Intersects ST_3DDistance ST_LongestLine ST_SymDifference ST_LineLocatePoint ST_MakeBox2D ST_Scroll ST_AddPoint ST_Split
+
+statement error
+SELECT ${func}('LINESTRING(0 0, 1 1)'::GEOMETRY('EPSG:31370'), 'POINT(1 1)'::GEOMETRY('EPSG:3812'));
+----
+different coordinate reference systems
+
+endloop
+
+statement error
+SELECT ST_DFullyWithin('POINT(0 0)'::GEOMETRY('EPSG:31370'), 'POINT(1 1)'::GEOMETRY('EPSG:3812'), 10);
+----
+different coordinate reference systems
+
+statement error
+SELECT ST_SetPoint('LINESTRING(0 0, 1 1)'::GEOMETRY('EPSG:31370'), 0, 'POINT(1 1)'::GEOMETRY('EPSG:3812'));
+----
+different coordinate reference systems
+
+# and propagate the CRS to a geometry result
+query I
+SELECT ST_CRS(ST_LongestLine('POINT(0 0)'::GEOMETRY('EPSG:31370'), 'POINT(1 1)'::GEOMETRY('EPSG:31370')));
+----
+EPSG:31370
