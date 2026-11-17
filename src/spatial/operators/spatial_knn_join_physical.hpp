@@ -34,6 +34,10 @@ public:
 
 	int32_t k;
 
+	//! Output column offsets: the probe side columns come first, unless the logical join swapped its output order
+	idx_t probe_side_output_offset = 0;
+	idx_t build_side_output_offset = 0;
+
 public:
 	// Operator Interface
 	unique_ptr<OperatorState> GetOperatorState(ExecutionContext &context) const override;

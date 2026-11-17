@@ -14,6 +14,10 @@ LogicalSpatialKNNJoin::LogicalSpatialKNNJoin(JoinType join_type_p) : join_type(j
 vector<ColumnBinding> LogicalSpatialKNNJoin::GetColumnBindings() {
 	auto left_bindings = MapBindings(children[0]->GetColumnBindings(), left_projection_map);
 	auto right_bindings = MapBindings(children[1]->GetColumnBindings(), right_projection_map);
+	if (swap_output) {
+		right_bindings.insert(right_bindings.end(), left_bindings.begin(), left_bindings.end());
+		return right_bindings;
+	}
 	left_bindings.insert(left_bindings.end(), right_bindings.begin(), right_bindings.end());
 	return left_bindings;
 }
@@ -34,9 +38,15 @@ void LogicalSpatialKNNJoin::ResolveColumnBindings(ColumnBindingResolver &res, ve
 }
 
 void LogicalSpatialKNNJoin::ResolveTypes() {
-	types = MapTypes(children[0]->types, left_projection_map);
+	auto left_types = MapTypes(children[0]->types, left_projection_map);
 	auto right_types = MapTypes(children[1]->types, right_projection_map);
-	types.insert(types.end(), right_types.begin(), right_types.end());
+	if (swap_output) {
+		types = std::move(right_types);
+		types.insert(types.end(), left_types.begin(), left_types.end());
+	} else {
+		types = std::move(left_types);
+		types.insert(types.end(), right_types.begin(), right_types.end());
+	}
 }
 
 PhysicalOperator &LogicalSpatialKNNJoin::CreatePlan(ClientContext &context, PhysicalPlanGenerator &generator) {
@@ -56,6 +66,7 @@ void LogicalSpatialKNNJoin::Serialize(Serializer &writer) const {
 	writer.WritePropertyWithDefault<unique_ptr<Expression>>(404, "spatial_predicate", spatial_predicate);
 	writer.WritePropertyWithDefault<int32_t>(405, "k", k, 1);
 	writer.WritePropertyWithDefault<idx_t>(406, "build_child_idx", build_child_idx, static_cast<idx_t>(1));
+	writer.WritePropertyWithDefault<bool>(407, "swap_output", swap_output, false);
 }
 
 unique_ptr<LogicalExtensionOperator> LogicalSpatialKNNJoin::Deserialize(Deserializer &reader) {
@@ -65,6 +76,7 @@ unique_ptr<LogicalExtensionOperator> LogicalSpatialKNNJoin::Deserialize(Deserial
 	auto spatial_predicate = reader.ReadPropertyWithDefault<unique_ptr<Expression>>(404, "spatial_predicate");
 	auto k = reader.ReadPropertyWithExplicitDefault<int32_t>(405, "k", 1);
 	auto build_child_idx = reader.ReadPropertyWithExplicitDefault<idx_t>(406, "build_child_idx", static_cast<idx_t>(1));
+	auto swap_output = reader.ReadPropertyWithExplicitDefault<bool>(407, "swap_output", false);
 
 	auto result = make_uniq<LogicalSpatialKNNJoin>(join_type);
 	result->left_projection_map = std::move(left_projection_map);
@@ -72,6 +84,7 @@ unique_ptr<LogicalExtensionOperator> LogicalSpatialKNNJoin::Deserialize(Deserial
 	result->spatial_predicate = std::move(spatial_predicate);
 	result->k = k;
 	result->build_child_idx = build_child_idx;
+	result->swap_output = swap_output;
 
 	return std::move(result);
 }

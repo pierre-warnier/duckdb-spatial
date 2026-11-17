@@ -22,6 +22,11 @@ public:
 	// Set to 0 when the join order optimizer swapped children.
 	idx_t build_child_idx = 1;
 
+	// True when the optimizer swapped the children to put the build side (second ST_KNN argument) at children[1]:
+	// the join then still outputs the columns in the order of the original join (children[1] first, then
+	// children[0]), because the parent operators' projection maps index into that order (issue #155).
+	bool swap_output = false;
+
 	vector<ProjectionIndex> left_projection_map;
 	vector<ProjectionIndex> right_projection_map;
 	vector<unique_ptr<BaseStatistics>> join_stats;

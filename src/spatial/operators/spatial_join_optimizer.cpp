@@ -547,6 +547,8 @@ static bool TrySwapKNNAnyJoin(OptimizerExtensionInput &input, unique_ptr<Logical
 		std::swap(knn_join->children[0], knn_join->children[1]);
 		knn_join->left_projection_map = std::move(any_join.right_projection_map);
 		knn_join->right_projection_map = std::move(any_join.left_projection_map);
+		// Keep the output column order of the original join: the parents' projection maps are positional
+		knn_join->swap_output = true;
 	} else {
 		knn_join->left_projection_map = std::move(any_join.left_projection_map);
 		knn_join->right_projection_map = std::move(any_join.right_projection_map);
