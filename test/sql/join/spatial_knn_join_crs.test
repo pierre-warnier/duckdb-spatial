@@ -41,16 +41,17 @@ different coordinate reference systems
 
 # After ST_Transform to the same CRS the join binds and runs
 query I
-SELECT count(*) FROM l72 JOIN (SELECT id, ST_Transform(geom, 'EPSG:3812', 'EPSG:31370') AS geom FROM l08) t
+SELECT count(*) FROM l72 JOIN (SELECT id, ST_Transform(geom, 'EPSG:3812', 'EPSG:31370', always_xy := true) AS geom FROM l08) t
   ON ST_KNN(l72.geom, t.geom, 1);
 ----
 5
 
+# ... and finds the right neighbours: the same place, so the same id
 query I
-SELECT count(*) FROM l72 JOIN (SELECT id, ST_Transform(geom, 'EPSG:3812', 'EPSG:31370') AS geom FROM l08) t
-  ON ST_KNN(l72.geom, t.geom, 1) WHERE l72.id = t.id;
+SELECT bool_and(l72.id = t.id) FROM l72 JOIN (SELECT id, ST_Transform(geom, 'EPSG:3812', 'EPSG:31370', always_xy := true) AS geom FROM l08) t
+  ON ST_KNN(l72.geom, t.geom, 1);
 ----
-5
+true
 
 # Same CRS on both sides, or no CRS on one side: no error (same rule as ST_Distance)
 query I
