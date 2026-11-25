@@ -170,6 +170,50 @@ public:
 		    -1);
 	}
 
+#if GDAL_VERSION_MAJOR > 3 || (GDAL_VERSION_MAJOR == 3 && GDAL_VERSION_MINOR >= 13)
+	size_t Read(void *buffer, size_t size) override {
+		auto bytes_data = static_cast<char *>(buffer);
+		size_t bytes_left = size;
+
+		try {
+			while (bytes_left > 0) {
+				const auto bytes_read = file_handle->Read(bytes_data, bytes_left);
+				if (bytes_read == 0) {
+					is_eof = true;
+					break;
+				}
+				bytes_left -= bytes_read;
+				bytes_data += bytes_read;
+			}
+		} catch (std::exception &ex) {
+			// Never let the exception cross into GDAL (it is not exception-safe). A clean EOF is reported as EOF;
+			// otherwise record a VSI error and return the partial count. Note: GDAL 3.8.5 can't distinguish a short
+			// read from an error (fixed in 3.9.2), so a real error here may be observed as EOF by the caller.
+			if (file_handle->SeekPosition() == file_handle->GetFileSize()) {
+				is_eof = true;
+			} else {
+				is_error = true;
+				VSIError(VSIE_FileError, "%s", CleanGDALMessage(ex.what()).c_str());
+			}
+		} catch (...) {
+			is_error = true;
+			VSIError(VSIE_FileError, "Unknown error reading file");
+		}
+
+		return size - bytes_left;
+	}
+
+	size_t Write(const void *buffer, size_t size) override {
+		try {
+			return file_handle->Write(const_cast<void *>(buffer), size);
+		} catch (std::exception &ex) {
+			VSIError(VSIE_FileError, "%s", CleanGDALMessage(ex.what()).c_str());
+		} catch (...) {
+			VSIError(VSIE_FileError, "Unknown error writing file");
+		}
+		return 0;
+	}
+#else
 	size_t Read(void *buffer, size_t size, size_t count) override {
 		auto bytes_data = static_cast<char *>(buffer);
 		auto bytes_left = size * count;
@@ -202,6 +246,19 @@ public:
 		return count - (bytes_left / size);
 	}
 
+	size_t Write(const void *buffer, size_t size, size_t count) override {
+		size_t written_bytes = 0;
+		try {
+			written_bytes = file_handle->Write(const_cast<void *>(buffer), size * count);
+		} catch (std::exception &ex) {
+			VSIError(VSIE_FileError, "%s", CleanGDALMessage(ex.what()).c_str());
+		} catch (...) {
+			VSIError(VSIE_FileError, "Unknown error writing file");
+		}
+		return written_bytes / size;
+	}
+#endif
+
 	int Eof() override {
 		return is_eof ? TRUE : FALSE;
 	}
@@ -213,18 +270,6 @@ public:
 	void ClearErr() override {
 		is_eof = false;
 		is_error = false;
-	}
-
-	size_t Write(const void *buffer, size_t size, size_t count) override {
-		size_t written_bytes = 0;
-		try {
-			written_bytes = file_handle->Write(const_cast<void *>(buffer), size * count);
-		} catch (std::exception &ex) {
-			VSIError(VSIE_FileError, "%s", CleanGDALMessage(ex.what()).c_str());
-		} catch (...) {
-			VSIError(VSIE_FileError, "Unknown error writing file");
-		}
-		return written_bytes / size;
 	}
 
 	int Flush() override {
@@ -1236,7 +1281,7 @@ auto Statistics(ClientContext &context, const FunctionData *bind_data, column_t 
 			if ((geom_type >= 1) && (geom_type <= 7) && (vert_type >= 0) && (vert_type <= 3)) {
 				auto &types = GeometryStats::GetTypes(stats);
 				types.Clear();
-				types.AddWKBType(static_cast<int32_t>(geom_type));
+				types.TryAddWKBType(static_cast<int32_t>(geom_type));
 			}
 
 			return stats.ToUnique();

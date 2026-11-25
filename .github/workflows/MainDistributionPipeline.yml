@@ -68,12 +68,12 @@ jobs:
   duckdb-latest-build:
     name: Build extension binaries
     needs: pins
-    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@969bc76276acec1c0a3922ff500d2ec3a1a3b037 # v2.0-cyanoptera 2026-10-01 pin
+    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@ae971e03c1840a1c6c2d81b91d1ec851f297f720 # v2.0-cyanoptera 2026-11-06 pin (= upstream v2.0.1 bump)
     with:
       # The release tag, not its commit: DuckDB stamps the extension with this ref, and the official CLI refuses a
       # build stamped with a commit hash ("built specifically for DuckDB version d54cbbe3...").
       duckdb_version: ${{ needs.pins.outputs.duckdb_version }}
-      ci_tools_version: 969bc76276acec1c0a3922ff500d2ec3a1a3b037 # v2.0-cyanoptera 2026-10-01 pin
+      ci_tools_version: ae971e03c1840a1c6c2d81b91d1ec851f297f720 # v2.0-cyanoptera 2026-11-06 pin (= upstream v2.0.1 bump)
       extension_name: spatial
       vcpkg_commit: cd61e1e26a038e82d6550a3ebbe0fbbfe7da78e3 # Release 2026.06.24
       exclude_archs: 'linux_amd64_musl;windows_amd64_mingw'
