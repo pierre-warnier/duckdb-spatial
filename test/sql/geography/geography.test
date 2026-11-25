@@ -350,10 +350,12 @@ SELECT ST_AsText(ST_Point(1, 2)::GEOMETRY('EPSG:3812')::GEOMETRY::GEOG);
 ----
 POINT (1 2)
 
-statement error
-SELECT ST_Point(1, 2)::GEOMETRY('EPSG:3812')::POINT_2D;
+# DuckDB 2.0.1 also applies the planar GEOMETRY -> POINT_2D cast to a GEOMETRY with a CRS (2.0.0 failed with
+# "Unimplemented type for cast"): POINT_2D carries no CRS and keeps the coordinates, like ::GEOMETRY (upstream behaviour)
+query I
+SELECT ST_Point(1, 2)::GEOMETRY('EPSG:3812')::POINT_2D = {'x': 1, 'y': 2}::POINT_2D;
 ----
-Unimplemented type for cast
+true
 
 # Casting to and from BLOB goes through WKB
 query II
