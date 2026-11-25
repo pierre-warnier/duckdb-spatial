@@ -338,11 +338,15 @@ SELECT ST_Buffer('POINT EMPTY'::GEOG, 10), ST_Buffer(NULL::GEOG, 10);
 ----
 NULL	NULL
 
-# Geometries with a CRS should have to drop it first, as there is no reprojection. DuckDB 2.0.0 does not apply the
-# casts registered for GEOMETRY to a GEOMETRY with a CRS: such a cast falls back to the WKB conversion of the core,
-# which keeps the coordinates as they are
-query I
+# Geometries with a CRS have to drop it first, as there is no reprojection. DuckDB 2.0.1 applies the cast registered for
+# GEOMETRY to a GEOMETRY with a CRS and the binder refuses it (2.0.0 fell back to the WKB conversion and kept the coordinates)
+statement error
 SELECT ST_AsText(ST_Point(1, 2)::GEOMETRY('EPSG:3812')::GEOG);
+----
+Binder Error: Cannot cast GEOMETRY('EPSG:3812') to GEOG: drop the coordinate reference system first
+
+query I
+SELECT ST_AsText(ST_Point(1, 2)::GEOMETRY('EPSG:3812')::GEOMETRY::GEOG);
 ----
 POINT (1 2)
 
